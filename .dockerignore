@@ -6,3 +6,7 @@ packages/host/web
 .turbo
 coverage
 *.log
+
+# The Electron tray shell is not part of the headless server image. Leaving
+# it in pulls a 264 MB Electron binary into a build that will never run it.
+packages/desktop

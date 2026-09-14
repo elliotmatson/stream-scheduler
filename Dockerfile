@@ -6,19 +6,26 @@ WORKDIR /app
 
 RUN corepack enable
 
-# Copy manifests first so dependency installation caches independently of source.
-COPY package.json pnpm-lock.yaml pnpm-workspace.yaml turbo.json tsconfig.base.json ./
-COPY packages/plugin-sdk/package.json  packages/plugin-sdk/
-COPY packages/core/package.json        packages/core/
-COPY packages/plugin-mock/package.json packages/plugin-mock/
-COPY packages/host/package.json        packages/host/
-COPY packages/web/package.json         packages/web/
-RUN pnpm install --frozen-lockfile
+# Dependencies come from the lockfile alone, so this layer still caches on
+# the lockfile rather than on source.
+#
+# It used to copy each workspace manifest by hand, which is what broke this
+# image: five were listed, ten existed, and the five packages added later
+# installed nothing — `tsc` then could not resolve @scheduler/plugin-sdk.
+# A hand-written list goes stale the moment a package is added, and the
+# failure only ever surfaces inside Docker. `pnpm fetch` cannot go stale.
+COPY pnpm-lock.yaml ./
+RUN pnpm fetch
 
 COPY . .
+RUN pnpm install --frozen-lockfile --prefer-offline
 RUN pnpm run build
 
-# Production-only, so the runtime image carries no build tooling.
+# Prunes the root project only: pnpm leaves workspace devDependencies in
+# place, so this image still carries the build toolchain. Kept because it is
+# harmless and removing it would not shrink anything; genuinely slimming the
+# runtime image needs `pnpm deploy` or a hand-built production tree, which is
+# a change worth making on its own.
 RUN pnpm prune --prod
 
 # Load the entrypoint under native ESM without starting it. The module graph
