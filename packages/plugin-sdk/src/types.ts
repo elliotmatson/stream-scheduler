@@ -123,6 +123,15 @@ export interface NodeState {
        * in Mb/s — "9", or "7-9" for a range.
        */
       bitrate?: { minMbps: number; maxMbps: number; note?: string }
+      /**
+       * Set instead of either by a device that takes a name it cannot be
+       * asked to list. A HyperDeck is the case: the record codec is set by
+       * name over the protocol, but which codecs a given model has is not
+       * something the protocol will answer, and the set differs by model and
+       * firmware. `examples` are suggestions, not a contract — the device
+       * refuses one it does not have, and says so.
+       */
+      freeform?: { note?: string; examples?: string[] }
     }
   }
   raw?: JsonObject

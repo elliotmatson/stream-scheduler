@@ -31,6 +31,9 @@ interface FakeDeck {
     /** What the deck sees on the wire, as opposed to the clip it is on. */
     inputVideoFormat?: string
     videoInput: string
+    fileFormat: string
+    /** Codecs this fake deck will accept, as a real one has a subset. */
+    formats: string[]
     configurationReads: number
     formatted: number[]
     formatPending?: { slot: number; token: string }
@@ -51,6 +54,8 @@ function makeDeck(): FakeDeck {
     slotStatus: 'mounted',
     inputVideoFormat: '1080p50',
     videoInput: 'SDI',
+    fileFormat: 'QuickTimeProResHQ',
+    formats: ['QuickTimeProResHQ', 'QuickTimeProResLT'],
     configurationReads: 0,
     formatted: [] as number[],
   }
@@ -113,12 +118,27 @@ function makeDeck(): FakeDeck {
     // handler resolves with nothing.
     return undefined as unknown as { token: string }
   }
-  server.onConfiguration = async () => ({
-    ...((state.configurationReads += 1), {}),
-    'video input': state.videoInput,
-    'audio input': 'embedded',
-    'file format': 'QuickTimeProResHQ',
-  })
+  server.onConfiguration = async (command) => {
+    const params = command.parameters as Record<string, string | undefined>
+    // A write, not a read. The emulator answers `200 ok` when the handler
+    // resolves with nothing, which is what the deck does.
+    if (Object.keys(params).length > 0) {
+      const wanted = params['file format']
+      if (wanted !== undefined) {
+        // A deck refuses a codec its model does not have.
+        if (!state.formats.includes(wanted)) throw { code: 103, name: 'unsupported parameter' }
+        state.fileFormat = wanted
+      }
+      if (params['video input'] !== undefined) state.videoInput = params['video input']
+      return undefined as unknown as { 'video input': string }
+    }
+    state.configurationReads += 1
+    return {
+      'video input': state.videoInput,
+      'audio input': 'embedded',
+      'file format': state.fileFormat,
+    }
+  }
   server.onSlotInfo = async (command) => ({
     'slot id': String(command.parameters['slot id'] ?? state.selectedSlot),
     status: state.slotStatus,
@@ -264,6 +284,42 @@ describe('protocol errors', () => {
     await hyperdeck.invoke('record', 'formatStorage', { slot: 1 })
     await hyperdeck.invoke('record', 'formatStorage', { slot: 1, confirm: 'guessed' })
     expect(deck.state.formatted).toEqual([])
+  })
+
+  it('records in the codec an output asked for, and reports it back', async () => {
+    const hyperdeck = await connect()
+
+    const before = await hyperdeck.invoke('record', 'readState')
+    expect(before?.options?.quality?.current).toBe('QuickTimeProResHQ')
+    // Suggestions, not a contract: the deck will not say what it supports.
+    expect(before?.options?.quality?.choices).toEqual([])
+    expect(before?.options?.quality?.freeform?.examples).toContain('QuickTimeProResLT')
+
+    await hyperdeck.invoke('record', 'startRecording', {
+      filename: 'service',
+      quality: 'QuickTimeProResLT',
+    })
+    expect(deck.state.fileFormat).toBe('QuickTimeProResLT')
+    expect(deck.state.recording).toBe(true)
+
+    // Read fresh rather than from the cache the connection holds, or the
+    // planner would verify a setting against a stale answer.
+    expect((await hyperdeck.invoke('record', 'readState'))?.options?.quality?.current).toBe(
+      'QuickTimeProResLT',
+    )
+  })
+
+  it('will not start recording in a codec the deck refused', async () => {
+    const hyperdeck = await connect()
+
+    await expect(
+      hyperdeck.invoke('record', 'startRecording', { filename: 'service', quality: 'H.265High' }),
+    ).rejects.toMatchObject({ code: 'unknown-quality' })
+
+    // The refusal came before the record command: better no recording than
+    // one in the wrong codec.
+    expect(deck.state.recording).toBe(false)
+    expect(deck.state.fileFormat).toBe('QuickTimeProResHQ')
   })
 
   it('refuses to format a node that cannot', async () => {

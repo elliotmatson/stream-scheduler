@@ -25,6 +25,24 @@ import { Commands, FilesystemFormat, Hyperdeck, SlotStatus, TransportStatus } fr
 
 export const DEFAULT_PORT = 9993
 
+/**
+ * Codecs to suggest, not a list of what any particular deck has.
+ *
+ * These are the spellings in Blackmagic's own protocol documentation. A
+ * given model has some subset and newer firmware adds more, and there is no
+ * command that answers "what do you support", so this is offered alongside
+ * whatever the deck reports it is on — which is always a valid answer.
+ */
+const KNOWN_FILE_FORMATS = [
+  'QuickTimeProResHQ',
+  'QuickTimeProRes',
+  'QuickTimeProResLT',
+  'QuickTimeProResProxy',
+  'QuickTimeDNxHR220',
+  'DNxHR220',
+  'QuickTimeUncompressed',
+]
+
 const configSchema: ConfigField[] = [
   {
     type: 'textinput',
@@ -181,7 +199,7 @@ class HyperdeckDevice {
   actionsFor(nodeId: string): NodeActions | undefined {
     if (nodeId !== 'record') return undefined
     return {
-      startRecording: async ({ filename, slot }) => {
+      startRecording: async ({ filename, slot, quality }) => {
         // An event that names a slot beats the device's own default: the
         // device setting is the house rule, the event is the exception.
         const wanted = slot ?? this.slot
@@ -190,6 +208,9 @@ class HyperdeckDevice {
           select.slotId = wanted
           await this.send(select)
         }
+        // A deck's quality is its recording codec, set on the deck rather
+        // than carried with the record command, so it goes first.
+        if (quality !== undefined) await this.setFileFormat(quality)
         try {
           // The deck appends its own extension, and rejects some characters
           // the core sanitizer already removes.
@@ -247,6 +268,23 @@ class HyperdeckDevice {
         // there is somewhere for it to go.
         rollover: slots.filter((entry) => entry.status === SlotStatus.MOUNTED).length > 1,
       },
+      // A deck's quality is the codec it records in. It takes one by name
+      // and will not say which names it knows, so the current one is
+      // reported as fact and the rest offered as suggestions.
+      ...(config?.fileFormat === undefined
+        ? {}
+        : {
+            options: {
+              quality: {
+                current: config.fileFormat,
+                choices: [],
+                freeform: {
+                  note: 'The recording codec, spelled as the deck spells it.',
+                  examples: KNOWN_FILE_FORMATS,
+                },
+              },
+            },
+          }),
       input: {
         // `inputVideoFormat` is what the deck sees on the wire, as opposed
         // to `videoFormat`, which is the format of the clip it is on. Older
@@ -358,6 +396,41 @@ class HyperdeckDevice {
       }
     }
     return out
+  }
+
+  /**
+   * Put the deck on a recording codec.
+   *
+   * Which codecs a deck has depends on its model and firmware, and the
+   * protocol will not list them, so this cannot be checked before it is
+   * sent. A deck that does not have the one asked for refuses, and the
+   * refusal is turned into something that names both the codec and what the
+   * deck is on now — the alternative is a bare "unsupported parameter" at
+   * the moment a service starts.
+   */
+  private async setFileFormat(fileFormat: string): Promise<void> {
+    const before = (await this.configuration())?.fileFormat
+    const command = new Commands.ConfigurationCommand()
+    command.fileFormat = fileFormat
+    try {
+      await this.send(command)
+    } catch (error) {
+      const translated = error instanceof DeviceError ? error : toDeviceError(error)
+      throw new DeviceError(
+        'unknown-quality',
+        `This HyperDeck will not record as "${fileFormat}"${before ? `; it is on ${before}` : ''}.`,
+        {
+          cause: error,
+          retryable: translated.retryable,
+          remediation:
+            'Codecs differ by model and firmware, and the deck does not publish its list. Set the one ' +
+            'you want on the deck itself, read it back here, and use that spelling.',
+        },
+      )
+    }
+    // The cached read is now a lie, and the next state read is what proves
+    // the deck took it.
+    this.config = undefined
   }
 
   /** What the deck is set to record *from*. Older firmware may not answer. */

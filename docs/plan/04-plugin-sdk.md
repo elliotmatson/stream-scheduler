@@ -146,6 +146,23 @@ This is the `sink` for the recording half of the product. The filename comes fro
 the template engine, run through a filesystem sanitizer plus the HyperDeck's own
 filename constraints.
 
+Quality here is the recording codec, set with `configuration: file format:`
+before the record command. The protocol has no "what do you support", and the
+set differs by model and firmware, so the adapter reports the codec the deck is
+on, offers the documented spellings as suggestions, and turns the deck's refusal
+of one it does not have into a message naming both that codec and the current
+one. Rollover is *not* settable: there is only the one-shot `RecordSpillCommand`,
+the deck spilling onto the next mounted card being its own behaviour, so it is
+reported rather than offered.
+
+A **REST API** exists for current decks (firmware 8.4 and later) at
+`/control/api/v1/`, with a websocket at `/control/api/v1/event/websocket` pushing
+property changes. It is not what this adapter uses, deliberately: TCP 9993 works
+on every deck ever shipped, Blackmagic still maintains it, and it is the one with
+a protocol-level emulator to test against. REST would buy enumerable codecs and
+video formats, `supportedVideoFormats`, and NAS media — worth adding as a second
+transport for decks that have it, not worth losing the older ones over.
+
 Testing gets a gift here:
 [`hyperdeck-server-connection`](https://www.npmjs.com/package/hyperdeck-server-connection)
 already emulates a HyperDeck at the protocol level, so integration tests need no

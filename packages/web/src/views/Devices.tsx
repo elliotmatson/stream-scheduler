@@ -266,7 +266,10 @@ function NodeControls({ device, node }: { device: Device; node: DeviceNode }): R
   // keeps only a number, the names being a file on the computer running
   // ATEM Software Control.
   const bitrate = state?.options?.quality?.bitrate
+  // A name the device takes but will not list — a deck's recording codec.
+  const freeform = state?.options?.quality?.freeform
   const current = state?.options?.quality?.current
+  const qualityListId = `quality-${device.id}-${node.id}`
 
   return (
     <details
@@ -515,6 +518,23 @@ function NodeControls({ device, node }: { device: Device; node: DeviceNode }): R
                       placeholder={current ?? `${bitrate.minMbps}-${bitrate.maxMbps}`}
                       onChange={(event) => setQuality(event.target.value)}
                     />
+                  </Field>
+                ) : !canStream && freeform ? (
+                  <Field
+                    label="Quality"
+                    hint={`${freeform.note ? `${freeform.note} ` : ''}Now on ${current ?? 'whatever it was set to'}. The list is a suggestion; the deck refuses a codec it does not have.`}
+                  >
+                    <input
+                      list={qualityListId}
+                      value={quality}
+                      placeholder={current ?? ''}
+                      onChange={(event) => setQuality(event.target.value)}
+                    />
+                    <datalist id={qualityListId}>
+                      {(freeform.examples ?? []).map((example) => (
+                        <option key={example} value={example} />
+                      ))}
+                    </datalist>
                   </Field>
                 ) : null}
                 {slots.length > 0 ? (

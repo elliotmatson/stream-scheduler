@@ -266,13 +266,24 @@ CREATE INDEX quota_day ON quota_ledger (provider, client_ref, day);
   surfaces as a rejected command at 09:00.
 
   Quality is not spelled the same way on every box, and the setting says so
-  rather than flattening it. A Streaming Encoder has named profiles and
-  reports them, so the choice is a list. An ATEM has none: the names in ATEM
-  Software Control come out of a `Streaming.xml` on the computer running it,
-  and the switcher itself stores only a bitrate — so an ATEM asks for a
-  figure in Mb/s (3 to 70, one number or a low-high range) and reports back
-  what it is on in the same words. A device says which of the two it takes;
-  nothing in the core has to know one model from another.
+  rather than flattening it. There are three forms, and a device declares
+  which one it takes, so nothing in the core has to know one model from
+  another:
+
+  - **a list**, where the device reports its profiles — a Streaming Encoder;
+  - **a bitrate**, where it stores only numbers — an ATEM asks for Mb/s (3 to
+    70, one figure or a low-high range), the named qualities in ATEM Software
+    Control being a `Streaming.xml` on that computer rather than anything the
+    switcher knows;
+  - **a name it will not enumerate** — a HyperDeck's recording codec. It is
+    set by name over the protocol, but which codecs a model has is not
+    something the protocol answers, so the deck's current codec is reported as
+    fact, a documented set is offered as suggestions, and a codec the deck
+    does not have is refused by the deck with a message naming both it and
+    what the deck is on.
+
+  Whichever form, the device reports `current` in the same words it accepts,
+  which is what lets a write be verified at all.
 
   On an ATEM that bitrate is *one* setting for two users, because one H.264
   encoder feeds both the stream and the recording. Setting it is therefore

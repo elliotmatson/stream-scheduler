@@ -357,35 +357,36 @@ function DeviceSettings({
   }, [device?.device.id, device?.node.id])
 
   if (!device) return null
-  const qualities = state?.options?.quality?.choices ?? []
-  // A device with no named profiles may still take a bitrate. An ATEM is
-  // the case: the quality names live in ATEM Software Control, and the
-  // switcher itself stores a number.
-  const bitrate = state?.options?.quality?.bitrate
-  const current = state?.options?.quality?.current
+  // Three ways a device spells its quality, and it says which one it takes:
+  // named profiles (a Streaming Encoder), a bitrate (an ATEM, which stores
+  // only numbers), or a name it cannot enumerate (a HyperDeck's codec).
+  const quality = state?.options?.quality
+  const qualities = quality?.choices ?? []
+  const bitrate = quality?.bitrate
+  const freeform = quality?.freeform
+  const current = quality?.current
   const slots = state?.recording?.slots ?? []
-  if (qualities.length === 0 && !bitrate && slots.length === 0) return null
+  if (!quality && slots.length === 0) return null
+  const listId = `quality-${device.device.id}-${device.node.id}`
 
   return (
     <details>
       <summary>Device settings</summary>
       <div className="stack" style={{ marginTop: 8 }}>
-        {kind === 'stream' && qualities.length > 0 ? (
+        {qualities.length > 0 ? (
           <Field label="Quality" hint="The profiles this encoder reports for the service it is on.">
             <select value={draft.quality} onChange={(event) => set('quality', event.target.value)}>
               <option value="">Leave as it is{current ? ` (${current})` : ''}</option>
-              {qualities.map((quality) => (
-                <option key={quality} value={quality}>
-                  {quality}
+              {qualities.map((choice) => (
+                <option key={choice} value={choice}>
+                  {choice}
                 </option>
               ))}
             </select>
           </Field>
-        ) : null}
-
-        {/* Offered for a recording as well as a stream, because on a device
-            that takes a bitrate the two are the same encoder. */}
-        {qualities.length === 0 && bitrate ? (
+        ) : bitrate ? (
+          /* Offered for a recording as well as a stream: on a box that takes
+             a bitrate, the two come out of the same encoder. */
           <Field
             label="Bitrate (Mb/s)"
             hint={`${bitrate.note ? `${bitrate.note} ` : ''}Between ${bitrate.minMbps} and ${bitrate.maxMbps}, or a low-high range. Blank leaves it${current ? ` at ${current}` : ''}.`}
@@ -395,6 +396,23 @@ function DeviceSettings({
               placeholder={current ?? `${bitrate.minMbps}-${bitrate.maxMbps}`}
               onChange={(event) => set('quality', event.target.value)}
             />
+          </Field>
+        ) : freeform ? (
+          <Field
+            label="Quality"
+            hint={`${freeform.note ? `${freeform.note} ` : ''}The list is a suggestion — the device has its own set and refuses one it does not have. Blank leaves it${current ? ` on ${current}` : ''}.`}
+          >
+            <input
+              list={listId}
+              value={draft.quality}
+              placeholder={current ?? ''}
+              onChange={(event) => set('quality', event.target.value)}
+            />
+            <datalist id={listId}>
+              {(freeform.examples ?? []).map((example) => (
+                <option key={example} value={example} />
+              ))}
+            </datalist>
           </Field>
         ) : null}
 
