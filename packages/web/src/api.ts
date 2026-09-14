@@ -86,6 +86,8 @@ export interface NodeState {
   options?: {
     quality?: {
       current?: string
+      /** Other spellings of `current` that mean the same setting. */
+      aliases?: string[]
       choices: string[]
       bitrate?: { minMbps: number; maxMbps: number; note?: string }
       freeform?: { note?: string; examples?: string[] }

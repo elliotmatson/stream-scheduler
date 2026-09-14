@@ -340,12 +340,12 @@ class AtemDevice {
    */
   private qualityOption(state: Readonly<AtemState>): Pick<NodeState, 'options'> {
     if (!state.streaming && !state.recording) return {}
-    const current = formatQuality(state.streaming?.service.bitrates)
+    const described = describeQuality(state.streaming?.service.bitrates)
     return {
       options: {
         quality: {
-          ...(current === undefined ? {} : { current }),
-          choices: [],
+          ...(described === undefined ? {} : { current: described.current, aliases: described.aliases }),
+          choices: PRESETS.map((preset) => preset.name),
           bitrate: {
             minMbps: MIN_MBPS,
             maxMbps: MAX_MBPS,
@@ -448,7 +448,30 @@ function recordingErrorName(error: number | undefined): string {
 const MIN_MBPS = 3
 const MAX_MBPS = 70
 
+/**
+ * The presets ATEM Software Control offers, as the pairs it writes.
+ *
+ * The names live in a Streaming.xml on the computer running that app, not
+ * in the switcher, so they are kept here to save an operator translating
+ * "Streaming High" into a pair of numbers every time. Both lists are
+ * offered whatever the output is: one H.264 encoder serves the stream and
+ * the recording, so the HyperDeck figures are as applicable to a stream as
+ * the streaming ones are to a recording — the names say what they were
+ * meant for, not what they may be used for.
+ */
+const PRESETS: { name: string; bitrates: [number, number] }[] = [
+  { name: 'HyperDeck High', bitrates: [45_000_000, 70_000_000] },
+  { name: 'HyperDeck Medium', bitrates: [25_000_000, 45_000_000] },
+  { name: 'HyperDeck Low', bitrates: [12_000_000, 20_000_000] },
+  { name: 'Streaming High', bitrates: [6_000_000, 9_000_000] },
+  { name: 'Streaming Medium', bitrates: [4_500_000, 7_000_000] },
+  { name: 'Streaming Low', bitrates: [3_000_000, 4_500_000] },
+]
+
 export function parseQuality(quality: string): [number, number] {
+  const preset = PRESETS.find((entry) => entry.name.toLowerCase() === quality.trim().toLowerCase())
+  if (preset) return preset.bitrates
+
   const cleaned = quality.trim().replace(/mb\/?s$/i, '').trim()
   const parts = cleaned.split(/\s*[-–]\s*/)
   if (parts.length > 2) throw badQuality(quality)
@@ -471,12 +494,26 @@ export function parseQuality(quality: string): [number, number] {
   return [Math.round(low * 1_000_000), Math.round(high * 1_000_000)]
 }
 
-/** The inverse, in the same vocabulary, so a caller can compare the two. */
+/**
+ * The inverse: the preset's name where the pair is one, the figures
+ * otherwise. Both spellings are reported, so a caller that asked in either
+ * one can recognise its own setting coming back.
+ */
 export function formatQuality(bitrates: readonly [number, number] | undefined): string | undefined {
+  return describeQuality(bitrates)?.current
+}
+
+export function describeQuality(
+  bitrates: readonly [number, number] | undefined,
+): { current: string; aliases: string[] } | undefined {
   if (!bitrates) return undefined
   const [low, high] = bitrates.map((bps) => Math.round(bps / 10_000) / 100) as [number, number]
   if (!low && !high) return undefined
-  return low === high ? String(low) : `${low}-${high}`
+  const figures = low === high ? String(low) : `${low}-${high}`
+  const preset = PRESETS.find(
+    (entry) => entry.bitrates[0] === bitrates[0] && entry.bitrates[1] === bitrates[1],
+  )
+  return preset ? { current: preset.name, aliases: [figures] } : { current: figures, aliases: [] }
 }
 
 function badQuality(quality: string): DeviceError {

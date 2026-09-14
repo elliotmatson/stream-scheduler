@@ -292,6 +292,36 @@ describe('recording media', () => {
 })
 
 describe('encoder quality', () => {
+  it('speaks the names ATEM Software Control uses, and says what they are in Mb/s', async () => {
+    // The names live in a Streaming.xml on the computer running that app,
+    // not in the switcher, so an operator who knows "Streaming High" would
+    // otherwise have to translate it into a pair of numbers every time.
+    const client = new FakeAtem({ streaming: streamingBlock() } as Partial<AtemState>)
+    const atem = await connect(client)
+
+    await atem.invoke('stream', 'applyStreamTarget', {
+      url: 'rtmps://x/live2',
+      key: 'live_k',
+      quality: 'Streaming High',
+    })
+    expect(client.state?.streaming?.service.bitrates).toEqual([6_000_000, 9_000_000])
+
+    const state = await atem.invoke('stream', 'readState')
+    // Reported by name, with the figures alongside, so a caller that asked
+    // either way recognises its own setting coming back.
+    expect(state?.options?.quality?.current).toBe('Streaming High')
+    expect(state?.options?.quality?.aliases).toEqual(['6-9'])
+  })
+
+  it('takes the recording presets too, since one encoder serves both', async () => {
+    const client = new FakeAtem({ streaming: streamingBlock(), recording: recordingBlock() } as Partial<AtemState>)
+    const atem = await connect(client)
+
+    await atem.invoke('record', 'startRecording', { filename: 'service', quality: 'HyperDeck High' })
+    expect(client.state?.streaming?.service.bitrates).toEqual([45_000_000, 70_000_000])
+    expect((await atem.invoke('record', 'readState'))?.options?.quality?.current).toBe('HyperDeck High')
+  })
+
   // One H.264 encoder feeds the stream and the recording, so the bitrate is
   // one setting with two users. The named qualities an operator knows from
   // ATEM Software Control are a file on that computer, not something the
@@ -302,7 +332,9 @@ describe('encoder quality', () => {
     const atem = await connect(client)
 
     const stream = await atem.invoke('stream', 'readState')
-    expect(stream?.options?.quality).toMatchObject({ current: '7-9', choices: [] })
+    // A pair that is not one of the presets reads as the figures.
+    expect(stream?.options?.quality).toMatchObject({ current: '7-9', aliases: [] })
+    expect(stream?.options?.quality?.choices).toContain('Streaming High')
     expect(stream?.options?.quality?.bitrate).toMatchObject({ minMbps: 3, maxMbps: 70 })
 
     // Reported on the recorder too, because it is the recorder's quality

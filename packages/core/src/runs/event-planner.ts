@@ -1,5 +1,5 @@
 import { fingerprint } from '@scheduler/plugin-sdk'
-import type { Clock, DestinationMetadata, JsonObject } from '@scheduler/plugin-sdk'
+import type { Clock, DestinationMetadata, JsonObject, NodeState } from '@scheduler/plugin-sdk'
 import type { Db } from '../db/index.js'
 import type { ConnectionManager } from '../devices/connection-manager.js'
 import type { DestinationRegistry } from '../destinations/registry.js'
@@ -46,6 +46,15 @@ export interface OutputPreview {
  * one target at a time, so the target has to be applied at the moment that
  * service goes on air and not before.
  */
+/** Whether a device is on the quality that was asked for, whichever of its
+ *  spellings the asking used — "Streaming High" and "6-9" are one bitrate
+ *  on an ATEM. */
+function qualityMatches(state: NodeState, asked: string): boolean {
+  const quality = state.options?.quality
+  if (!quality) return false
+  return quality.current === asked || (quality.aliases ?? []).includes(asked)
+}
+
 export class EventPlanner implements RunPlanner {
   constructor(private readonly deps: EventPlannerDeps) {}
 
@@ -126,9 +135,10 @@ export class EventPlanner implements RunPlanner {
             satisfiedBy: (state) =>
               state.streaming?.targetUrl === target.url &&
               state.streaming?.keyFingerprint === fingerprint(target.key) &&
-              // A device reports `current` in the same vocabulary it takes,
-              // so the quality that was asked for can be read straight back.
-              (!output.settings.quality || state.options?.quality?.current === output.settings.quality),
+              // A device reports `current` in the vocabulary it takes, and
+              // may take more than one for the same setting — "Streaming
+              // High" and "6-9" are one bitrate on an ATEM.
+              (!output.settings.quality || qualityMatches(state, output.settings.quality)),
           },
         )
       },
@@ -298,7 +308,7 @@ export class EventPlanner implements RunPlanner {
               // transport status only once it has.
               satisfiedBy: (state) =>
                 state.recording?.active === true &&
-                (!output.settings.quality || state.options?.quality?.current === output.settings.quality),
+                (!output.settings.quality || qualityMatches(state, output.settings.quality)),
               settleMs: 10_000,
             },
           )

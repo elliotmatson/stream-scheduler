@@ -340,6 +340,8 @@ function DeviceSettings({
   device: { device: Device; node: DeviceNode } | undefined
 }): ReactNode {
   const [state, setState] = useState<NodeState | null>()
+  // Set when the operator asks to type a figure the list does not offer.
+  const [custom, setCustom] = useState(false)
 
   useEffect(() => {
     if (!device) {
@@ -374,28 +376,52 @@ function DeviceSettings({
   const slots = state?.recording?.slots ?? []
   if (!quality && slots.length === 0) return null
   const listId = `quality-${device.device.id}-${device.node.id}`
+  // Also on when what is already stored is a figure rather than a preset —
+  // otherwise reopening an output would show "leave as it is" over a
+  // setting it is going to apply.
+  const showCustom = custom || (draft.quality !== '' && qualities.length > 0 && !qualities.includes(draft.quality))
+  /** A mode, not a value: picking it shows the box rather than storing a
+   *  word the device would be asked to understand. */
+  const CUSTOM = '__custom__'
 
   return (
     <details>
       <summary>Device settings</summary>
       <div className="stack" style={{ marginTop: 8 }}>
         {qualities.length > 0 ? (
-          <Field label="Quality" hint="The profiles this encoder reports for the service it is on.">
-            <select value={draft.quality} onChange={(event) => set('quality', event.target.value)}>
+          <Field
+            label="Quality"
+            hint={
+              bitrate
+                ? `${bitrate.note ? `${bitrate.note} ` : ''}Blank leaves it${current ? ` on ${current}` : ''}.`
+                : 'The profiles this encoder reports for the service it is on.'
+            }
+          >
+            <select
+              value={showCustom ? CUSTOM : qualities.includes(draft.quality) ? draft.quality : ''}
+              onChange={(event) => {
+                setCustom(event.target.value === CUSTOM)
+                set('quality', event.target.value === CUSTOM ? '' : event.target.value)
+              }}
+            >
               <option value="">Leave as it is{current ? ` (${current})` : ''}</option>
               {qualities.map((choice) => (
                 <option key={choice} value={choice}>
                   {choice}
                 </option>
               ))}
+              {/* Only where the device takes a figure as well as a name. */}
+              {bitrate ? <option value={CUSTOM}>Custom…</option> : null}
             </select>
           </Field>
-        ) : bitrate ? (
-          /* Offered for a recording as well as a stream: on a box that takes
-             a bitrate, the two come out of the same encoder. */
+        ) : null}
+
+        {/* The figure, when the operator asked for one the list does not
+            have, or the device only takes numbers. */}
+        {bitrate && (qualities.length === 0 || showCustom) ? (
           <Field
             label="Bitrate (Mb/s)"
-            hint={`${bitrate.note ? `${bitrate.note} ` : ''}Between ${bitrate.minMbps} and ${bitrate.maxMbps}, or a low-high range. Blank leaves it${current ? ` at ${current}` : ''}.`}
+            hint={`Between ${bitrate.minMbps} and ${bitrate.maxMbps}, or a low-high range such as 6-9.`}
           >
             <input
               value={draft.quality}
@@ -403,7 +429,9 @@ function DeviceSettings({
               onChange={(event) => set('quality', event.target.value)}
             />
           </Field>
-        ) : freeform ? (
+        ) : null}
+
+        {freeform && qualities.length === 0 && !bitrate ? (
           <Field
             label="Quality"
             hint={`${freeform.note ? `${freeform.note} ` : ''}The list is a suggestion — the device has its own set and refuses one it does not have. Blank leaves it${current ? ` on ${current}` : ''}.`}

@@ -216,6 +216,8 @@ function NodeControls({ device, node }: { device: Device; node: DeviceNode }): R
   }, [open, pushed])
   const [credentialId, setCredentialId] = useState('')
   const [quality, setQuality] = useState('')
+  /** Typing a figure the preset list does not offer. A mode, not a value. */
+  const [typingQuality, setTypingQuality] = useState(false)
   // Only fetched for a node that can be pointed somewhere, and only once
   // the panel is open.
   const { data: credentials } = useResource(
@@ -310,6 +312,7 @@ function NodeControls({ device, node }: { device: Device; node: DeviceNode }): R
   const freeform = state?.options?.quality?.freeform
   const current = state?.options?.quality?.current
   const qualityListId = `quality-${device.id}-${node.id}`
+  const CUSTOM_QUALITY = '__custom__'
 
   return (
     <details
@@ -494,19 +497,27 @@ function NodeControls({ device, node }: { device: Device; node: DeviceNode }): R
                       nowhere else. */}
                   {qualityChoices.length > 0 ? (
                     <Field label="Quality" hint={current ? `Now on ${current}.` : undefined}>
-                      <select value={quality} onChange={(event) => setQuality(event.target.value)}>
+                      <select
+                        value={typingQuality ? CUSTOM_QUALITY : quality}
+                        onChange={(event) => {
+                          setTypingQuality(event.target.value === CUSTOM_QUALITY)
+                          setQuality(event.target.value === CUSTOM_QUALITY ? '' : event.target.value)
+                        }}
+                      >
                         <option value="">Leave as it is</option>
                         {qualityChoices.map((choice) => (
                           <option key={choice} value={choice}>
                             {choice}
                           </option>
                         ))}
+                        {bitrate ? <option value={CUSTOM_QUALITY}>Custom…</option> : null}
                       </select>
                     </Field>
-                  ) : bitrate ? (
+                  ) : null}
+                  {bitrate && (qualityChoices.length === 0 || typingQuality) ? (
                     <Field
                       label="Bitrate (Mb/s)"
-                      hint={`${bitrate.minMbps}–${bitrate.maxMbps}, or a low-high range.${current ? ` Now on ${current}.` : ''}`}
+                      hint={`${bitrate.minMbps}–${bitrate.maxMbps}, or a low-high range such as 6-9.${current ? ` Now on ${current}.` : ''}`}
                     >
                       <input
                         value={quality}

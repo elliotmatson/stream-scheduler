@@ -115,6 +115,15 @@ export interface NodeState {
      */
     quality?: {
       current?: string
+      /**
+       * Other spellings of `current` that mean the same setting.
+       *
+       * A device may take a figure and a name for the same thing — an ATEM
+       * on 6-9 Mb/s is on "Streaming High" — and whoever asked for it used
+       * one or the other. Without this, a write asking in one vocabulary
+       * would be read back in the other and called a failure.
+       */
+      aliases?: string[]
       /** Named profiles the device has. Empty when it takes a number. */
       choices: string[]
       /**
