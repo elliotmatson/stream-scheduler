@@ -55,7 +55,9 @@ export function SeriesList(): ReactNode {
 
         {(data ?? []).length === 0 && !adding ? (
           <Card>
-            <Empty>No events yet. An event is one service or programme, with the dates it falls on.</Empty>
+            <Empty>
+              No events yet. An event is one service or programme, with the dates it falls on.
+            </Empty>
           </Card>
         ) : null}
 
@@ -99,12 +101,18 @@ function SeriesCard({
       <div className="page-head" style={{ marginBottom: 8 }}>
         <div>
           <h2 style={{ marginBottom: 2 }}>{series.label}</h2>
-          <span className="muted" title="How often it repeats, the zone its times are read in, and how long its window is.">
+          <span
+            className="muted"
+            title="How often it repeats, the zone its times are read in, and how long its window is."
+          >
             {series.describes} · {series.timezone} · {duration(series.durationMs)}
           </span>
         </div>
         <div className="row">
-          <span className="muted" title="How far ahead the broadcast is created and the encoders are pointed at it.">
+          <span
+            className="muted"
+            title="How far ahead the broadcast is created and the encoders are pointed at it."
+          >
             prepares {duration(series.prepareLeadMs)} early
           </span>
           <button onClick={onEdit}>Edit</button>

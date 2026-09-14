@@ -145,7 +145,12 @@ export function findDestinationConflicts(
 
       const deviceA = deviceFor(a)
       const deviceB = deviceFor(b)
-      if (deviceA && deviceB && deviceA.deviceId === deviceB.deviceId && deviceA.nodeId === deviceB.nodeId) {
+      if (
+        deviceA &&
+        deviceB &&
+        deviceA.deviceId === deviceB.deviceId &&
+        deviceA.nodeId === deviceB.nodeId
+      ) {
         continue
       }
 
@@ -171,16 +176,15 @@ export function overlapsForSeries(db: Db, seriesId: string): OutputConflict[] {
   const outputs = outputsForSeries(db, seriesId)
   const labelFor = (deviceId: string): string => {
     const row = db.prepare('SELECT label FROM device WHERE id = ?').get(deviceId) as
-      | { label: string }
-      | undefined
+      { label: string } | undefined
     return row?.label ?? `device ${deviceId}`
   }
   const destinationFor = (
     destinationId: string,
   ): { label: string; sharesOneStream: boolean } | undefined => {
-    const row = db.prepare('SELECT label, config FROM destination WHERE id = ?').get(destinationId) as
-      | { label: string; config: string }
-      | undefined
+    const row = db
+      .prepare('SELECT label, config FROM destination WHERE id = ?')
+      .get(destinationId) as { label: string; config: string } | undefined
     if (!row) return undefined
     const config = JSON.parse(row.config) as { reusableStream?: unknown }
     // Absent means on: it is the default, and the one that shares a key.

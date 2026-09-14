@@ -73,12 +73,16 @@ class AtemDevice {
       const timer = setTimeout(() => {
         cleanup()
         reject(
-          new DeviceError('connect-timeout', `${this.host}:${this.port} did not answer within 10 seconds.`, {
-            retryable: true,
-            remediation:
-              'Check the address and that the ATEM is on the control network. ' +
-              'The ATEM protocol is UDP, so a firewall that allows TCP may still block it.',
-          }),
+          new DeviceError(
+            'connect-timeout',
+            `${this.host}:${this.port} did not answer within 10 seconds.`,
+            {
+              retryable: true,
+              remediation:
+                'Check the address and that the ATEM is on the control network. ' +
+                'The ATEM protocol is UDP, so a firewall that allows TCP may still block it.',
+            },
+          ),
         )
       }, CONNECT_TIMEOUT_MS)
 
@@ -90,9 +94,13 @@ class AtemDevice {
       const onError = (message: string): void => {
         cleanup()
         reject(
-          new DeviceError('connect-failed', `Could not reach ${this.host}:${this.port}: ${message}`, {
-            retryable: true,
-          }),
+          new DeviceError(
+            'connect-failed',
+            `Could not reach ${this.host}:${this.port}: ${message}`,
+            {
+              retryable: true,
+            },
+          ),
         )
       }
       const cleanup = (): void => {
@@ -103,7 +111,9 @@ class AtemDevice {
 
       this.client.on('connected', onConnected)
       this.client.on('error', onError)
-      this.client.connect(this.host, this.port).catch(onError as unknown as (reason: unknown) => void)
+      this.client
+        .connect(this.host, this.port)
+        .catch(onError as unknown as (reason: unknown) => void)
     })
 
     this.client.on('error', (message: string) => {
@@ -196,7 +206,15 @@ class AtemDevice {
         id: 'record',
         label: `${label} recorder`,
         roles: ['sink'],
-        ports: [{ id: 'in', direction: 'in', label: 'Record input', transport: ['sdi', 'hdmi'], maxLinks: 1 }],
+        ports: [
+          {
+            id: 'in',
+            direction: 'in',
+            label: 'Record input',
+            transport: ['sdi', 'hdmi'],
+            maxLinks: 1,
+          },
+        ],
         supports: ['startRecording', 'stopRecording'],
       })
     }
@@ -298,7 +316,9 @@ class AtemDevice {
                     status: diskStatusName(disk.status),
                     ...(disk.volumeName ? { volumeName: disk.volumeName } : {}),
                     remainingMs: disk.recordingTimeAvailable * 1000,
-                    ...(disk.diskId === recording?.properties.workingSet1DiskId ? { active: true } : {}),
+                    ...(disk.diskId === recording?.properties.workingSet1DiskId
+                      ? { active: true }
+                      : {}),
                   }))
                   .sort((a, b) => a.id - b.id),
               }),
@@ -344,7 +364,9 @@ class AtemDevice {
     return {
       options: {
         quality: {
-          ...(described === undefined ? {} : { current: described.current, aliases: described.aliases }),
+          ...(described === undefined
+            ? {}
+            : { current: described.current, aliases: described.aliases }),
           choices: PRESETS.map((preset) => preset.name),
           bitrate: {
             minMbps: MIN_MBPS,
@@ -472,7 +494,10 @@ export function parseQuality(quality: string): [number, number] {
   const preset = PRESETS.find((entry) => entry.name.toLowerCase() === quality.trim().toLowerCase())
   if (preset) return preset.bitrates
 
-  const cleaned = quality.trim().replace(/mb\/?s$/i, '').trim()
+  const cleaned = quality
+    .trim()
+    .replace(/mb\/?s$/i, '')
+    .trim()
   const parts = cleaned.split(/\s*[-–]\s*/)
   if (parts.length > 2) throw badQuality(quality)
 

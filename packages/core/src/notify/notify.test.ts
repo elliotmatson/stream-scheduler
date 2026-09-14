@@ -10,14 +10,18 @@ import { SecretVault } from '../secrets/vault.js'
 import { Notifier } from './notifier.js'
 import type { Fetch, Notification } from './types.js'
 
-const CHAT_WEBHOOK = 'https://chat.googleapis.com/v1/spaces/AAAA/messages?key=secret-key&token=secret-token'
+const CHAT_WEBHOOK =
+  'https://chat.googleapis.com/v1/spaces/AAAA/messages?key=secret-key&token=secret-token'
 
 let db: Db
 let clock: ManualClock
 let vault: SecretVault
 let dir: string
 let requests: { url: string; body: any }[]
-let respond: (url: string, body: any) => { ok: boolean; status: number; text?: string; retryAfter?: string }
+let respond: (
+  url: string,
+  body: any,
+) => { ok: boolean; status: number; text?: string; retryAfter?: string }
 
 const fetchImpl: Fetch = async (url, init) => {
   const body = init?.body ? JSON.parse(init.body) : undefined
@@ -27,7 +31,10 @@ const fetchImpl: Fetch = async (url, init) => {
     ok: result.ok,
     status: result.status,
     text: async () => result.text ?? '',
-    headers: { get: (name: string) => (name.toLowerCase() === 'retry-after' ? (result.retryAfter ?? null) : null) },
+    headers: {
+      get: (name: string) =>
+        name.toLowerCase() === 'retry-after' ? (result.retryAfter ?? null) : null,
+    },
   }
 }
 
@@ -35,7 +42,11 @@ beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), 'scheduler-notify-'))
   db = openTestDatabase()
   clock = new ManualClock('2026-03-07T18:00:00Z')
-  vault = new SecretVault(db, resolveMasterKey([keyFileSource(join(dir, 'k'), { create: true })]), new Scrubber())
+  vault = new SecretVault(
+    db,
+    resolveMasterKey([keyFileSource(join(dir, 'k'), { create: true })]),
+    new Scrubber(),
+  )
   requests = []
   respond = () => ({ ok: true, status: 200 })
 })
@@ -87,7 +98,9 @@ describe('Google Chat', () => {
     // The card format is the one thing here that could not be tested
     // against a real space, so a formatting mistake must not cost the alert.
     respond = (_url, body) =>
-      body.cardsV2 ? { ok: false, status: 400, text: '{"error":{"message":"Invalid card"}}' } : { ok: true, status: 200 }
+      body.cardsV2
+        ? { ok: false, status: 400, text: '{"error":{"message":"Invalid card"}}' }
+        : { ok: true, status: 200 }
 
     const n = notifier()
     n.create({ kind: 'google-chat', label: 'Tech team', config: { webhookUrl: CHAT_WEBHOOK } })
@@ -102,7 +115,11 @@ describe('Google Chat', () => {
 
   it('can be configured to send plain text only', async () => {
     const n = notifier()
-    n.create({ kind: 'google-chat', label: 'Tech team', config: { webhookUrl: CHAT_WEBHOOK, useCards: false } })
+    n.create({
+      kind: 'google-chat',
+      label: 'Tech team',
+      config: { webhookUrl: CHAT_WEBHOOK, useCards: false },
+    })
     n.enqueue(failure())
     await n.flush()
 
@@ -153,7 +170,11 @@ describe('Google Chat', () => {
     respond = () => ({ ok: false, status: 403, text: 'forbidden' })
 
     const n = notifier()
-    const id = n.create({ kind: 'google-chat', label: 'Tech team', config: { webhookUrl: CHAT_WEBHOOK } })
+    const id = n.create({
+      kind: 'google-chat',
+      label: 'Tech team',
+      config: { webhookUrl: CHAT_WEBHOOK },
+    })
     n.enqueue(failure())
     await n.flush()
 
@@ -168,8 +189,14 @@ describe('Google Chat', () => {
 
   it('stores the webhook URL encrypted, not in the row', async () => {
     const n = notifier()
-    const id = n.create({ kind: 'google-chat', label: 'Tech team', config: { webhookUrl: CHAT_WEBHOOK } })
-    const row = db.prepare('SELECT config FROM notification_channel WHERE id = ?').get(id) as { config: string }
+    const id = n.create({
+      kind: 'google-chat',
+      label: 'Tech team',
+      config: { webhookUrl: CHAT_WEBHOOK },
+    })
+    const row = db.prepare('SELECT config FROM notification_channel WHERE id = ?').get(id) as {
+      config: string
+    }
     expect(row.config).not.toContain('secret-token')
     expect(row.config).not.toContain('chat.googleapis.com')
   })
@@ -223,7 +250,7 @@ describe('the outbox', () => {
     await n.flush()
 
     expect(n.pending()).toBe(0)
-    const row = db.prepare("SELECT status, attempts FROM notification_outbox").get() as {
+    const row = db.prepare('SELECT status, attempts FROM notification_outbox').get() as {
       status: string
       attempts: number
     }
@@ -253,7 +280,11 @@ describe('the outbox', () => {
 
   it('sends everything to a channel that did not narrow its events', async () => {
     const n = notifier()
-    n.create({ kind: 'webhook', label: 'Everything', config: { url: 'https://example.invalid/all' } })
+    n.create({
+      kind: 'webhook',
+      label: 'Everything',
+      config: { url: 'https://example.invalid/all' },
+    })
     expect(n.enqueue(failure())).toBe(1)
     expect(n.enqueue(failure({ event: 'preflight.problem', dedupeKey: 'pf:1' }))).toBe(1)
   })
@@ -278,7 +309,11 @@ describe('the generic webhook', () => {
 describe('Slack', () => {
   it('sends blocks with a plain-text fallback for push notifications', async () => {
     const n = notifier()
-    n.create({ kind: 'slack', label: 'AV channel', config: { webhookUrl: 'https://hooks.slack.com/services/T/B/xyz' } })
+    n.create({
+      kind: 'slack',
+      label: 'AV channel',
+      config: { webhookUrl: 'https://hooks.slack.com/services/T/B/xyz' },
+    })
     n.enqueue(failure())
     await n.flush()
 
@@ -292,17 +327,25 @@ describe('Slack', () => {
 describe('configuration', () => {
   it('rejects a channel missing a required field', () => {
     const n = notifier()
-    expect(() => n.create({ kind: 'google-chat', label: 'Broken', config: {} })).toThrow(/Webhook URL is required/)
+    expect(() => n.create({ kind: 'google-chat', label: 'Broken', config: {} })).toThrow(
+      /Webhook URL is required/,
+    )
   })
 
   it('rejects an unknown channel kind, naming the ones it has', () => {
     const n = notifier()
-    expect(() => n.create({ kind: 'carrier-pigeon', label: 'x', config: {} })).toThrow(/google-chat/)
+    expect(() => n.create({ kind: 'carrier-pigeon', label: 'x', config: {} })).toThrow(
+      /google-chat/,
+    )
   })
 
   it('sends a test message immediately, bypassing the queue', async () => {
     const n = notifier()
-    const id = n.create({ kind: 'google-chat', label: 'Tech team', config: { webhookUrl: CHAT_WEBHOOK } })
+    const id = n.create({
+      kind: 'google-chat',
+      label: 'Tech team',
+      config: { webhookUrl: CHAT_WEBHOOK },
+    })
     await n.test(id)
 
     expect(requests).toHaveLength(1)
@@ -317,7 +360,12 @@ describe('configuration', () => {
   })
 
   it('offers Google Chat, Slack, a webhook and email', () => {
-    expect(notifier().kinds().map((c) => c.kind).sort()).toEqual(['email', 'google-chat', 'slack', 'webhook'])
+    expect(
+      notifier()
+        .kinds()
+        .map((c) => c.kind)
+        .sort(),
+    ).toEqual(['email', 'google-chat', 'slack', 'webhook'])
   })
 })
 
@@ -347,7 +395,11 @@ describe('a failed run reaching a channel', () => {
     ).run(start, start + 5_400_000)
 
     const n = notifier()
-    n.create({ kind: 'webhook', label: 'Tech team', config: { url: 'https://example.invalid/hook' } })
+    n.create({
+      kind: 'webhook',
+      label: 'Tech team',
+      config: { url: 'https://example.invalid/hook' },
+    })
 
     const store = new RunStore(db, clock, new Scrubber())
     const engine = new RunEngine({
@@ -422,7 +474,15 @@ describe('a failed run reaching a channel', () => {
       sleeper: immediateSleeper,
       planner: {
         plan: () => [
-          { kind: 'step', phase: 'prepare' as const, outputId: 'out1', retryable: false, execute: async () => { throw new Error('nope') } },
+          {
+            kind: 'step',
+            phase: 'prepare' as const,
+            outputId: 'out1',
+            retryable: false,
+            execute: async () => {
+              throw new Error('nope')
+            },
+          },
         ],
       },
       onFailure: () => {

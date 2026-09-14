@@ -9,7 +9,13 @@ import type {
   PrepareInput,
   PrepareResult,
 } from '@scheduler/plugin-sdk'
-import { YouTubeApi, YouTubeApiError, type Fetch, type LiveBroadcast, type LiveStream } from './api.js'
+import {
+  YouTubeApi,
+  YouTubeApiError,
+  type Fetch,
+  type LiveBroadcast,
+  type LiveStream,
+} from './api.js'
 import {
   beginAuthorization,
   exchangeCode,
@@ -42,7 +48,12 @@ const configSchema: ConfigField[] = [
       'Keeps the encoder stream key the same forever, which removes a whole failure mode and saves API ' +
       'quota. Turn off only if you want a fresh key per event.',
   },
-  { type: 'textinput', id: 'streamTitle', label: 'Ingestion stream name', default: 'Stream Scheduler' },
+  {
+    type: 'textinput',
+    id: 'streamTitle',
+    label: 'Ingestion stream name',
+    default: 'Stream Scheduler',
+  },
   {
     type: 'dropdown',
     id: 'playlistId',
@@ -129,7 +140,9 @@ class YouTubeDestination implements DestinationInstance {
         await this.wrap(() => this.api.insertPlaylistItem(this.settings.playlistId!, broadcast.id))
       } catch (error) {
         // A bad playlist id should not cost the service. Report and continue.
-        this.ctx.log('warn', 'could not add the broadcast to the playlist', { error: describe(error) })
+        this.ctx.log('warn', 'could not add the broadcast to the playlist', {
+          error: describe(error),
+        })
       }
     }
 
@@ -174,7 +187,9 @@ class YouTubeDestination implements DestinationInstance {
     // is refused, making it private is still a win.
     try {
       await this.api.deleteBroadcast(input.externalId)
-      this.ctx.log('info', 'deleted the broadcast left by an abandoned run', { broadcastId: input.externalId })
+      this.ctx.log('info', 'deleted the broadcast left by an abandoned run', {
+        broadcastId: input.externalId,
+      })
     } catch (error) {
       this.ctx.log('warn', 'could not delete the broadcast; making it private instead', {
         broadcastId: input.externalId,
@@ -195,7 +210,9 @@ class YouTubeDestination implements DestinationInstance {
     if (this.settings.autoStartStop) {
       // YouTube ends the broadcast itself when ingest stops, so forcing a
       // transition here races it and fails on an already-complete broadcast.
-      this.ctx.log('debug', 'leaving the broadcast for YouTube to complete', { broadcastId: input.externalId })
+      this.ctx.log('debug', 'leaving the broadcast for YouTube to complete', {
+        broadcastId: input.externalId,
+      })
       return
     }
     try {
@@ -212,7 +229,8 @@ class YouTubeDestination implements DestinationInstance {
   async status(): Promise<DestinationStatus> {
     const used = await this.ctx.quota.usedToday()
     const remaining = this.ctx.quota.dailyLimit() - used
-    if (this.lastError) return { state: 'error', message: this.lastError, quotaRemaining: remaining }
+    if (this.lastError)
+      return { state: 'error', message: this.lastError, quotaRemaining: remaining }
     if (remaining <= 0) return { state: 'quota_exhausted', quotaRemaining: 0 }
     return { state: 'ok', quotaRemaining: remaining }
   }
@@ -235,7 +253,9 @@ class YouTubeDestination implements DestinationInstance {
 
     const existing = await this.wrap(() => this.api.listStreams())
     const reusable = existing.find(
-      (stream) => stream.contentDetails?.isReusable === true && stream.snippet?.title === this.settings.streamTitle,
+      (stream) =>
+        stream.contentDetails?.isReusable === true &&
+        stream.snippet?.title === this.settings.streamTitle,
     )
     if (reusable) return reusable
     return this.wrap(() => this.api.insertStream(this.settings.streamTitle, true))
@@ -246,7 +266,11 @@ class YouTubeDestination implements DestinationInstance {
     const url = info?.rtmpsIngestionAddress ?? info?.ingestionAddress
     const key = info?.streamName
     if (!url || !key) {
-      throw new YouTubeApiError(500, 'noIngestionInfo', 'YouTube did not return an ingest address for the stream.')
+      throw new YouTubeApiError(
+        500,
+        'noIngestionInfo',
+        'YouTube did not return an ingest address for the stream.',
+      )
     }
     return {
       externalId: broadcast.id,
@@ -293,7 +317,8 @@ export function youtubeProvider(options: YouTubePluginOptions): DestinationProvi
     configSchema,
     providesIngest: true,
     oauth: {
-      begin: (client, redirectUri) => beginAuthorization({ ...client, clientSecret: '' }, redirectUri),
+      begin: (client, redirectUri) =>
+        beginAuthorization({ ...client, clientSecret: '' }, redirectUri),
       complete: async (client, pending, code) => {
         const tokens = await exchangeCode(client, pending, code, options.fetchImpl)
 
@@ -327,7 +352,10 @@ export function youtubeProvider(options: YouTubePluginOptions): DestinationProvi
         privacy: (ctx.config.privacy as 'public' | 'unlisted' | 'private') ?? 'public',
         reusableStream: ctx.config.reusableStream !== false,
         streamTitle: String(ctx.config.streamTitle ?? 'Stream Scheduler'),
-        playlistId: typeof ctx.config.playlistId === 'string' && ctx.config.playlistId ? ctx.config.playlistId : undefined,
+        playlistId:
+          typeof ctx.config.playlistId === 'string' && ctx.config.playlistId
+            ? ctx.config.playlistId
+            : undefined,
         autoStartStop: ctx.config.autoStartStop !== false,
       })
     },

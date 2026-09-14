@@ -19,7 +19,15 @@ export function StatusPill({ status }: { status: string }): ReactNode {
 }
 
 /** A label and a value, with the explanation on hover when it needs one. */
-export function Fact({ label, value, tip }: { label: string; value: string; tip?: string }): ReactNode {
+export function Fact({
+  label,
+  value,
+  tip,
+}: {
+  label: string
+  value: string
+  tip?: string
+}): ReactNode {
   return (
     <div title={tip}>
       <div className="muted" style={{ fontSize: 12 }}>
@@ -177,7 +185,9 @@ export function ConfigFields({
               <span className="row" style={{ gap: 8 }}>
                 <select
                   style={{ flex: 1 }}
-                  value={String(values[field.id] ?? field.default ?? (optional ? '' : (choices[0]?.id ?? '')))}
+                  value={String(
+                    values[field.id] ?? field.default ?? (optional ? '' : (choices[0]?.id ?? '')),
+                  )}
                   onChange={(event) => set(field.id, event.target.value || undefined)}
                 >
                   {optional ? <option value="">— none —</option> : null}
@@ -237,7 +247,13 @@ export function ConfigFields({
  * routinely reached over plain HTTP on a LAN, so there is a fallback and —
  * when even that is refused — the text stays selectable for copying by hand.
  */
-export function CopyButton({ value, label = 'Copy' }: { value: string; label?: string }): ReactNode {
+export function CopyButton({
+  value,
+  label = 'Copy',
+}: {
+  value: string
+  label?: string
+}): ReactNode {
   const [done, setDone] = useState(false)
 
   useEffect(() => {

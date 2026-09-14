@@ -51,13 +51,20 @@ export function registerOAuthRoutes(fastify: FastifyInstance, app: Application):
 
   fastify.get('/api/oauth/clients', async () =>
     (
-      app.db.prepare('SELECT id, provider, label, client_id FROM oauth_client ORDER BY label').all() as {
+      app.db
+        .prepare('SELECT id, provider, label, client_id FROM oauth_client ORDER BY label')
+        .all() as {
         id: string
         provider: string
         label: string
         client_id: string
       }[]
-    ).map((row) => ({ id: row.id, provider: row.provider, label: row.label, clientId: row.client_id })),
+    ).map((row) => ({
+      id: row.id,
+      provider: row.provider,
+      label: row.label,
+      clientId: row.client_id,
+    })),
   )
 
   fastify.post('/api/oauth/clients', async (request, reply) => {
@@ -76,7 +83,14 @@ export function registerOAuthRoutes(fastify: FastifyInstance, app: Application):
       .prepare(
         'INSERT INTO oauth_client (id, provider, label, client_id, secret_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)',
       )
-      .run(id, body.provider, body.label, body.clientId, app.vault.store(body.clientSecret), app.clock.now())
+      .run(
+        id,
+        body.provider,
+        body.label,
+        body.clientId,
+        app.vault.store(body.clientSecret),
+        app.clock.now(),
+      )
     return reply.code(201).send({ id })
   })
 
@@ -87,9 +101,9 @@ export function registerOAuthRoutes(fastify: FastifyInstance, app: Application):
     const provider = app.destinations.get(providerId)
     if (!provider.oauth) throw new Error(`${provider.displayName} does not connect through OAuth.`)
 
-    const client = app.db.prepare('SELECT client_id FROM oauth_client WHERE id = ?').get(clientRef) as
-      | { client_id: string }
-      | undefined
+    const client = app.db
+      .prepare('SELECT client_id FROM oauth_client WHERE id = ?')
+      .get(clientRef) as { client_id: string } | undefined
     if (!client) throw new Error(`No OAuth client with id "${clientRef}".`)
 
     sweep()
@@ -114,12 +128,19 @@ export function registerOAuthRoutes(fastify: FastifyInstance, app: Application):
    */
   fastify.get('/oauth/callback', async (request, reply) => {
     const query = z
-      .object({ code: z.string().optional(), state: z.string().optional(), error: z.string().optional() })
+      .object({
+        code: z.string().optional(),
+        state: z.string().optional(),
+        error: z.string().optional(),
+      })
       .parse(request.query)
 
-    if (query.error) return reply.type('text/html').send(page('Authorization cancelled', query.error))
+    if (query.error)
+      return reply.type('text/html').send(page('Authorization cancelled', query.error))
     if (!query.code || !query.state) {
-      return reply.type('text/html').send(page('Something went wrong', 'Google did not return a code.'))
+      return reply
+        .type('text/html')
+        .send(page('Something went wrong', 'Google did not return a code.'))
     }
 
     const entry = pending.get(query.state)
@@ -133,9 +154,9 @@ export function registerOAuthRoutes(fastify: FastifyInstance, app: Application):
 
     try {
       const provider = app.destinations.get(entry.provider)
-      const secret = app.db.prepare('SELECT client_id, secret_ref FROM oauth_client WHERE id = ?').get(
-        entry.clientRef,
-      ) as { client_id: string; secret_ref: string }
+      const secret = app.db
+        .prepare('SELECT client_id, secret_ref FROM oauth_client WHERE id = ?')
+        .get(entry.clientRef) as { client_id: string; secret_ref: string }
 
       const account = await provider.oauth!.complete(
         { clientId: secret.client_id, clientSecret: app.vault.reveal(secret.secret_ref) },
@@ -152,7 +173,9 @@ export function registerOAuthRoutes(fastify: FastifyInstance, app: Application):
       if (existing) {
         app.vault.store(account.refreshToken, existing.secret_ref)
         app.db
-          .prepare("UPDATE account SET display_name = ?, oauth_client_ref = ?, scopes = ?, status = 'ok' WHERE id = ?")
+          .prepare(
+            "UPDATE account SET display_name = ?, oauth_client_ref = ?, scopes = ?, status = 'ok' WHERE id = ?",
+          )
           .run(account.displayName, entry.clientRef, account.scopes.join(' '), existing.id)
       } else {
         app.db
@@ -172,10 +195,18 @@ export function registerOAuthRoutes(fastify: FastifyInstance, app: Application):
           )
       }
 
-      app.logger.info('connected an account', { provider: entry.provider, displayName: account.displayName })
+      app.logger.info('connected an account', {
+        provider: entry.provider,
+        displayName: account.displayName,
+      })
       return reply
         .type('text/html')
-        .send(page(`Connected ${account.displayName}`, 'You can close this tab and go back to the app.'))
+        .send(
+          page(
+            `Connected ${account.displayName}`,
+            'You can close this tab and go back to the app.',
+          ),
+        )
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       app.logger.error('could not complete the authorization', { error: message })
@@ -186,7 +217,9 @@ export function registerOAuthRoutes(fastify: FastifyInstance, app: Application):
   fastify.get('/api/accounts', async () =>
     (
       app.db
-        .prepare('SELECT id, provider, external_id, display_name, status, scopes FROM account ORDER BY display_name')
+        .prepare(
+          'SELECT id, provider, external_id, display_name, status, scopes FROM account ORDER BY display_name',
+        )
         .all() as {
         id: string
         provider: string
@@ -207,7 +240,9 @@ export function registerOAuthRoutes(fastify: FastifyInstance, app: Application):
 
   fastify.get('/api/destinations', async () =>
     (
-      app.db.prepare('SELECT id, plugin_id, label, account_id, config FROM destination ORDER BY label').all() as {
+      app.db
+        .prepare('SELECT id, plugin_id, label, account_id, config FROM destination ORDER BY label')
+        .all() as {
         id: string
         plugin_id: string
         label: string
@@ -262,7 +297,14 @@ export function registerOAuthRoutes(fastify: FastifyInstance, app: Application):
       .prepare(
         'INSERT INTO destination (id, plugin_id, label, account_id, config, created_at) VALUES (?, ?, ?, ?, ?, ?)',
       )
-      .run(id, body.providerId, body.label, body.accountId, JSON.stringify(body.config), app.clock.now())
+      .run(
+        id,
+        body.providerId,
+        body.label,
+        body.accountId,
+        JSON.stringify(body.config),
+        app.clock.now(),
+      )
     return reply.code(201).send({ id })
   })
 
@@ -310,7 +352,9 @@ export function registerOAuthRoutes(fastify: FastifyInstance, app: Application):
 
   fastify.delete('/api/accounts/:id', async (request) => {
     const { id } = z.object({ id: z.string() }).parse(request.params)
-    const users = app.db.prepare('SELECT label FROM destination WHERE account_id = ?').all(id) as { label: string }[]
+    const users = app.db.prepare('SELECT label FROM destination WHERE account_id = ?').all(id) as {
+      label: string
+    }[]
     if (users.length > 0) {
       throw new ConflictError(
         `This account still backs ${users.map((row) => `"${row.label}"`).join(', ')}. Remove those first.`,
@@ -319,8 +363,7 @@ export function registerOAuthRoutes(fastify: FastifyInstance, app: Application):
     // The refresh token goes with it: a disconnected account that leaves a
     // live token in the vault is a credential nobody knows they still hold.
     const row = app.db.prepare('SELECT secret_ref FROM account WHERE id = ?').get(id) as
-      | { secret_ref: string }
-      | undefined
+      { secret_ref: string } | undefined
     if (!row) throw new NotFoundError(`No account with id "${id}".`)
     app.vault.delete(row.secret_ref)
     app.db.prepare('DELETE FROM account WHERE id = ?').run(id)
@@ -349,12 +392,16 @@ function redirectUriFor(request: FastifyRequest): string {
   return `${originOf(request)}/oauth/callback`
 }
 
-
 /** Google allows a plain-HTTP callback only on loopback. */
 function isLoopbackUri(uri: string): boolean {
   try {
     const { hostname } = new URL(uri)
-    return hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1' || hostname === '[::1]'
+    return (
+      hostname === 'localhost' ||
+      hostname === '127.0.0.1' ||
+      hostname === '::1' ||
+      hostname === '[::1]'
+    )
   } catch {
     return false
   }

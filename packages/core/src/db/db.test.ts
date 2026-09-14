@@ -19,7 +19,11 @@ describe('migrations', () => {
   it('refuses to run against a database written by a newer build', () => {
     const db = new Database(':memory:')
     migrate(db)
-    db.prepare('INSERT INTO schema_migration (id, name, applied_at) VALUES (?, ?, ?)').run(9999, 'future', Date.now())
+    db.prepare('INSERT INTO schema_migration (id, name, applied_at) VALUES (?, ?, ?)').run(
+      9999,
+      'future',
+      Date.now(),
+    )
     expect(() => migrate(db)).toThrow(SchemaTooNewError)
   })
 
@@ -46,9 +50,15 @@ function seedSeries(db: Database.Database): void {
 describe('the event-output migration', () => {
   it('turns a pipeline into a source encoder and its outputs', () => {
     const db = openOldDatabase()
-    db.prepare("INSERT INTO device (id, plugin_id, label, config, created_at) VALUES ('enc', 'x', 'Web Presenter', '{}', 0)").run()
-    db.prepare("INSERT INTO device (id, plugin_id, label, config, created_at) VALUES ('deck', 'x', 'HyperDeck', '{}', 0)").run()
-    db.prepare("INSERT INTO destination (id, plugin_id, label, config, created_at) VALUES ('yt', 'youtube', 'Grace Anderson', '{}', 0)").run()
+    db.prepare(
+      "INSERT INTO device (id, plugin_id, label, config, created_at) VALUES ('enc', 'x', 'Web Presenter', '{}', 0)",
+    ).run()
+    db.prepare(
+      "INSERT INTO device (id, plugin_id, label, config, created_at) VALUES ('deck', 'x', 'HyperDeck', '{}', 0)",
+    ).run()
+    db.prepare(
+      "INSERT INTO destination (id, plugin_id, label, config, created_at) VALUES ('yt', 'youtube', 'Grace Anderson', '{}', 0)",
+    ).run()
     seedOldSeries(db, {
       nodes: [
         { id: 'n1', deviceId: 'enc', nodeId: 'stream', ingestFrom: 'd1' },
@@ -60,7 +70,9 @@ describe('the event-output migration', () => {
     migrate(db)
 
     const outputs = db
-      .prepare('SELECT kind, label, position, offset_ms, duration_ms, destination_id, device_id, node_id, templates FROM event_output ORDER BY position')
+      .prepare(
+        'SELECT kind, label, position, offset_ms, duration_ms, destination_id, device_id, node_id, templates FROM event_output ORDER BY position',
+      )
       .all()
     expect(outputs).toEqual([
       {
@@ -92,7 +104,9 @@ describe('the event-output migration', () => {
 
   it('converts a recorder-only pipeline, which has no streaming node to source from', () => {
     const db = openOldDatabase()
-    db.prepare("INSERT INTO device (id, plugin_id, label, config, created_at) VALUES ('deck', 'x', 'HyperDeck', '{}', 0)").run()
+    db.prepare(
+      "INSERT INTO device (id, plugin_id, label, config, created_at) VALUES ('deck', 'x', 'HyperDeck', '{}', 0)",
+    ).run()
     seedOldSeries(db, { nodes: [{ id: 'n1', deviceId: 'deck', nodeId: 'rec' }] })
 
     migrate(db)
@@ -106,7 +120,9 @@ describe('the event-output migration', () => {
 
   it('leaves an event whose graph is unreadable in place, with no outputs', () => {
     const db = openOldDatabase()
-    db.prepare("INSERT INTO pipeline (id, label, graph, created_at) VALUES ('p1', 'Main', 'not json', 0)").run()
+    db.prepare(
+      "INSERT INTO pipeline (id, label, graph, created_at) VALUES ('p1', 'Main', 'not json', 0)",
+    ).run()
     db.prepare(
       `INSERT INTO event_series (id, label, pipeline_id, timezone, dtstart, duration_ms, created_at, updated_at)
        VALUES ('s1', 'Sunday', 'p1', 'UTC', 0, 3600000, 0, 0)`,
@@ -122,7 +138,9 @@ describe('the event-output migration', () => {
 function openOldDatabase(): Database.Database {
   const db = new Database(':memory:')
   db.pragma('foreign_keys = ON')
-  db.exec(`CREATE TABLE schema_migration (id INTEGER PRIMARY KEY, name TEXT NOT NULL, applied_at INTEGER NOT NULL)`)
+  db.exec(
+    `CREATE TABLE schema_migration (id INTEGER PRIMARY KEY, name TEXT NOT NULL, applied_at INTEGER NOT NULL)`,
+  )
   const record = db.prepare('INSERT INTO schema_migration (id, name, applied_at) VALUES (?, ?, ?)')
   for (const migration of migrations.filter((m) => m.id <= 4)) {
     db.exec(migration.sql)

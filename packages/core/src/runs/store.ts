@@ -97,7 +97,8 @@ export class RunStore {
   }
 
   getRun(runId: string): RunRecord {
-    const row = this.db.prepare('SELECT * FROM run WHERE id = ?').get(runId) as RunRecord | undefined
+    const row = this.db.prepare('SELECT * FROM run WHERE id = ?').get(runId) as
+      RunRecord | undefined
     if (!row) throw new Error(`No run with id "${runId}".`)
     return row
   }
@@ -111,18 +112,22 @@ export class RunStore {
   /** Every run the engine still has work to do on. */
   listActiveRuns(): RunRecord[] {
     return this.db
-      .prepare("SELECT * FROM run WHERE state NOT IN ('completed', 'failed', 'cancelled') ORDER BY created_at")
+      .prepare(
+        "SELECT * FROM run WHERE state NOT IN ('completed', 'failed', 'cancelled') ORDER BY created_at",
+      )
       .all() as RunRecord[]
   }
 
   steps(runId: string): StepRecord[] {
-    return this.db.prepare('SELECT * FROM run_step WHERE run_id = ? ORDER BY seq').all(runId) as StepRecord[]
+    return this.db
+      .prepare('SELECT * FROM run_step WHERE run_id = ? ORDER BY seq')
+      .all(runId) as StepRecord[]
   }
 
   step(runId: string, seq: number): StepRecord {
-    const row = this.db.prepare('SELECT * FROM run_step WHERE run_id = ? AND seq = ?').get(runId, seq) as
-      | StepRecord
-      | undefined
+    const row = this.db
+      .prepare('SELECT * FROM run_step WHERE run_id = ? AND seq = ?')
+      .get(runId, seq) as StepRecord | undefined
     if (!row) throw new Error(`Run "${runId}" has no step ${seq}.`)
     return row
   }
@@ -161,16 +166,22 @@ export class RunStore {
 
   markStepRunning(runId: string, seq: number): void {
     this.db
-      .prepare("UPDATE run_step SET state = 'running', attempts = attempts + 1, started_at = ? WHERE run_id = ? AND seq = ?")
+      .prepare(
+        "UPDATE run_step SET state = 'running', attempts = attempts + 1, started_at = ? WHERE run_id = ? AND seq = ?",
+      )
       .run(this.clock.now(), runId, seq)
   }
 
   markStepDone(runId: string, seq: number, output: StepOutput | void): void {
     this.db
-      .prepare("UPDATE run_step SET state = 'done', external_id = ?, response = ?, error = NULL, ended_at = ? WHERE run_id = ? AND seq = ?")
+      .prepare(
+        "UPDATE run_step SET state = 'done', external_id = ?, response = ?, error = NULL, ended_at = ? WHERE run_id = ? AND seq = ?",
+      )
       .run(
         output?.externalId ?? null,
-        output?.response === undefined ? null : JSON.stringify(this.scrubber.redactValue(output.response)),
+        output?.response === undefined
+          ? null
+          : JSON.stringify(this.scrubber.redactValue(output.response)),
         this.clock.now(),
         runId,
         seq,
@@ -179,21 +190,27 @@ export class RunStore {
 
   markStepFailed(runId: string, seq: number, error: string): void {
     this.db
-      .prepare("UPDATE run_step SET state = 'failed', error = ?, ended_at = ? WHERE run_id = ? AND seq = ?")
+      .prepare(
+        "UPDATE run_step SET state = 'failed', error = ?, ended_at = ? WHERE run_id = ? AND seq = ?",
+      )
       .run(this.scrubber.redact(error), this.clock.now(), runId, seq)
   }
 
   /** Leaves the step's recorded work in place but marks it undone. */
   markStepCompensated(runId: string, seq: number): void {
     this.db
-      .prepare("UPDATE run_step SET state = 'compensated', ended_at = ? WHERE run_id = ? AND seq = ?")
+      .prepare(
+        "UPDATE run_step SET state = 'compensated', ended_at = ? WHERE run_id = ? AND seq = ?",
+      )
       .run(this.clock.now(), runId, seq)
   }
 
   /** Resets a step left mid-flight by a crash so it can be retried. */
   resetStep(runId: string, seq: number): void {
     this.db
-      .prepare("UPDATE run_step SET state = 'pending', started_at = NULL WHERE run_id = ? AND seq = ?")
+      .prepare(
+        "UPDATE run_step SET state = 'pending', started_at = NULL WHERE run_id = ? AND seq = ?",
+      )
       .run(runId, seq)
   }
 

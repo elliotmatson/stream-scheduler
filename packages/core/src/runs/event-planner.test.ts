@@ -32,9 +32,20 @@ beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), 'scheduler-planner-'))
   db = openTestDatabase()
   clock = new ManualClock(START - HOUR)
-  vault = new SecretVault(db, resolveMasterKey([keyFileSource(join(dir, 'k'), { create: true })]), new Scrubber())
+  vault = new SecretVault(
+    db,
+    resolveMasterKey([keyFileSource(join(dir, 'k'), { create: true })]),
+    new Scrubber(),
+  )
   const registry = new PluginRegistry().register(mockPlugin({ now: () => clock.now() }))
-  connections = new ConnectionManager({ db, registry, clock, random: () => 0.5, sleep: async () => {}, enforceSerialization: true })
+  connections = new ConnectionManager({
+    db,
+    registry,
+    clock,
+    random: () => 0.5,
+    sleep: async () => {},
+    enforceSerialization: true,
+  })
   store = new RunStore(db, clock, new Scrubber())
 })
 afterEach(async () => {
@@ -45,13 +56,9 @@ afterEach(async () => {
 
 function addDevice(config: Record<string, unknown>, label = 'Encoder'): string {
   const id = randomUUID()
-  db.prepare('INSERT INTO device (id, plugin_id, label, config, enabled, created_at) VALUES (?, ?, ?, ?, 1, ?)').run(
-    id,
-    'mock',
-    label,
-    JSON.stringify(config),
-    clock.now(),
-  )
+  db.prepare(
+    'INSERT INTO device (id, plugin_id, label, config, enabled, created_at) VALUES (?, ?, ?, ?, 1, ?)',
+  ).run(id, 'mock', label, JSON.stringify(config), clock.now())
   return id
 }
 
@@ -176,7 +183,9 @@ describe('EventPlanner', () => {
     })
 
     const plan = plannerFor().plan(occurrenceId)
-    const targets = plan.filter((s) => s.label?.endsWith('point the encoder at it')).map((s) => s.request)
+    const targets = plan
+      .filter((s) => s.label?.endsWith('point the encoder at it'))
+      .map((s) => s.request)
     expect(targets).toEqual([
       { device: encoder, node: 'stream' },
       { device: other, node: 'stream' },
@@ -205,7 +214,13 @@ describe('EventPlanner', () => {
       ],
     })
 
-    const engine = new RunEngine({ db, store, clock, planner: plannerFor(), sleeper: immediateSleeper })
+    const engine = new RunEngine({
+      db,
+      store,
+      clock,
+      planner: plannerFor(),
+      sleeper: immediateSleeper,
+    })
 
     clock.set(START - 30 * MINUTE)
     const runId = (await engine.tick()).created[0]!
@@ -223,8 +238,12 @@ describe('EventPlanner', () => {
     clock.set(START + WINDOW)
     await engine.tick()
     expect(store.getRun(runId).state).toBe('completed')
-    expect((await connections.invoke(encoder, 'stream', 'readState'))?.streaming?.active).toBe(false)
-    expect((await connections.invoke(recorder, 'record', 'readState'))?.recording?.active).toBe(false)
+    expect((await connections.invoke(encoder, 'stream', 'readState'))?.streaming?.active).toBe(
+      false,
+    )
+    expect((await connections.invoke(recorder, 'record', 'readState'))?.recording?.active).toBe(
+      false,
+    )
     expect(occurrenceStatus(occurrenceId)).toBe('done')
   })
 
@@ -256,13 +275,21 @@ describe('EventPlanner', () => {
     })
     expect(occurrenceId).toBeTruthy()
 
-    const engine = new RunEngine({ db, store, clock, planner: plannerFor(), sleeper: immediateSleeper })
+    const engine = new RunEngine({
+      db,
+      store,
+      clock,
+      planner: plannerFor(),
+      sleeper: immediateSleeper,
+    })
     clock.set(START - 30 * MINUTE)
     await engine.tick()
     clock.set(START)
     await engine.tick()
 
-    expect((await connections.invoke(encoder, 'stream', 'readState'))?.options?.quality?.current).toBe('high')
+    expect(
+      (await connections.invoke(encoder, 'stream', 'readState'))?.options?.quality?.current,
+    ).toBe('high')
     const record = await connections.invoke(recorder, 'record', 'readState')
     expect(record?.options?.quality?.current).toBe('low')
     expect(record?.recording?.slots?.find((slot) => slot.active)?.id).toBe(2)
@@ -287,7 +314,13 @@ describe('EventPlanner', () => {
       ],
     })
 
-    const engine = new RunEngine({ db, store, clock, planner: plannerFor(), sleeper: immediateSleeper })
+    const engine = new RunEngine({
+      db,
+      store,
+      clock,
+      planner: plannerFor(),
+      sleeper: immediateSleeper,
+    })
     clock.set(START)
     const runId = (await engine.tick()).created[0]!
 
@@ -321,7 +354,13 @@ describe('EventPlanner', () => {
       ],
     })
 
-    const engine = new RunEngine({ db, store, clock, planner: plannerFor(), sleeper: immediateSleeper })
+    const engine = new RunEngine({
+      db,
+      store,
+      clock,
+      planner: plannerFor(),
+      sleeper: immediateSleeper,
+    })
     clock.set(START - 30 * MINUTE)
     const runId = (await engine.tick()).created[0]!
 
@@ -334,7 +373,9 @@ describe('EventPlanner', () => {
 
     clock.set(START + HOUR)
     await engine.tick()
-    expect((await connections.invoke(encoder, 'stream', 'readState'))?.streaming?.active).toBe(false)
+    expect((await connections.invoke(encoder, 'stream', 'readState'))?.streaming?.active).toBe(
+      false,
+    )
 
     clock.set(START + 2 * HOUR)
     await engine.tick()
@@ -359,11 +400,22 @@ describe('EventPlanner', () => {
       source: { deviceId: good, nodeId: 'stream' },
       outputs: [
         { label: 'Works', credentialId: addCredential('rtmps://x/a', 'live_a') },
-        { label: 'Broken', credentialId: addCredential('rtmps://x/b', 'live_b'), deviceId: deaf, nodeId: 'stream' },
+        {
+          label: 'Broken',
+          credentialId: addCredential('rtmps://x/b', 'live_b'),
+          deviceId: deaf,
+          nodeId: 'stream',
+        },
       ],
     })
 
-    const engine = new RunEngine({ db, store, clock, planner: plannerFor(), sleeper: immediateSleeper })
+    const engine = new RunEngine({
+      db,
+      store,
+      clock,
+      planner: plannerFor(),
+      sleeper: immediateSleeper,
+    })
     clock.set(START)
     const runId = (await engine.tick()).created[0]!
 
@@ -381,10 +433,18 @@ describe('EventPlanner', () => {
     await connections.open(encoder)
     seed({
       source: { deviceId: encoder, nodeId: 'stream' },
-      outputs: [{ label: 'Main', credentialId: addCredential('rtmps://x/live2', 'live_key-value-here') }],
+      outputs: [
+        { label: 'Main', credentialId: addCredential('rtmps://x/live2', 'live_key-value-here') },
+      ],
     })
 
-    const engine = new RunEngine({ db, store, clock, planner: plannerFor(), sleeper: immediateSleeper })
+    const engine = new RunEngine({
+      db,
+      store,
+      clock,
+      planner: plannerFor(),
+      sleeper: immediateSleeper,
+    })
     clock.set(START)
     const runId = (await engine.tick()).created[0]!
     expect(store.getRun(runId).state).toBe('running')
@@ -396,10 +456,18 @@ describe('EventPlanner', () => {
     await connections.open(encoder)
     seed({
       source: { deviceId: encoder, nodeId: 'stream' },
-      outputs: [{ label: 'Main', credentialId: addCredential('rtmps://x/live2', 'live_super-secret-key') }],
+      outputs: [
+        { label: 'Main', credentialId: addCredential('rtmps://x/live2', 'live_super-secret-key') },
+      ],
     })
 
-    const engine = new RunEngine({ db, store, clock, planner: plannerFor(), sleeper: immediateSleeper })
+    const engine = new RunEngine({
+      db,
+      store,
+      clock,
+      planner: plannerFor(),
+      sleeper: immediateSleeper,
+    })
     clock.set(START)
     const runId = (await engine.tick()).created[0]!
 
@@ -411,7 +479,12 @@ describe('EventPlanner', () => {
     const { occurrenceId } = seed({
       templates: { title: '{{event.name}} - {{date "EEEE, MMMM d"}}' },
       outputs: [
-        { label: 'Main', credentialId: addCredential('rtmps://x/a', 'live_a'), deviceId: recorder, nodeId: 'record' },
+        {
+          label: 'Main',
+          credentialId: addCredential('rtmps://x/a', 'live_a'),
+          deviceId: recorder,
+          nodeId: 'record',
+        },
         {
           label: 'Worship',
           credentialId: addCredential('rtmps://x/b', 'live_b'),
@@ -423,10 +496,11 @@ describe('EventPlanner', () => {
     })
 
     clock.set(Date.parse('2027-01-01T00:00:00Z')) // rendering much later must not matter
-    expect(plannerFor().previewOutputs(occurrenceId).map((o) => o.title)).toEqual([
-      'Sunday Service - Sunday, March 8',
-      'Worship - March 8',
-    ])
+    expect(
+      plannerFor()
+        .previewOutputs(occurrenceId)
+        .map((o) => o.title),
+    ).toEqual(['Sunday Service - Sunday, March 8', 'Worship - March 8'])
   })
 
   it('reports a bad template on an output rather than publishing it', () => {
@@ -447,5 +521,7 @@ describe('EventPlanner', () => {
 })
 
 function occurrenceStatus(occurrenceId: string): string {
-  return (db.prepare('SELECT status FROM occurrence WHERE id = ?').get(occurrenceId) as { status: string }).status
+  return (
+    db.prepare('SELECT status FROM occurrence WHERE id = ?').get(occurrenceId) as { status: string }
+  ).status
 }

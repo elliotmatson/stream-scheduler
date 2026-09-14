@@ -1,7 +1,15 @@
 import { useState } from 'react'
 import type { ReactNode } from 'react'
 import { api, useResource, type ChannelKind, type NotificationChannel } from '../api.ts'
-import { Card, ConfigFields, ConfirmButton, Empty, ErrorBanner, Field, StatusPill } from '../components.tsx'
+import {
+  Card,
+  ConfigFields,
+  ConfirmButton,
+  Empty,
+  ErrorBanner,
+  Field,
+  StatusPill,
+} from '../components.tsx'
 import { relative } from '../format.ts'
 
 /**
@@ -19,7 +27,11 @@ export function Notifications(): ReactNode {
   const [actionError, setActionError] = useState<string>()
   const [tested, setTested] = useState<string>()
 
-  const act = async (id: string, action: () => Promise<unknown>, thenTested = false): Promise<void> => {
+  const act = async (
+    id: string,
+    action: () => Promise<unknown>,
+    thenTested = false,
+  ): Promise<void> => {
     setBusy(id)
     setActionError(undefined)
     setTested(undefined)
@@ -42,8 +54,8 @@ export function Notifications(): ReactNode {
         <div>
           <h1>Notifications</h1>
           <p className="muted" style={{ margin: '4px 0 0' }}>
-            Where to be told when a run fails — or, the evening before, when something would stop Sunday
-            working.
+            Where to be told when a run fails — or, the evening before, when something would stop
+            Sunday working.
           </p>
         </div>
         <button className="primary" onClick={() => setAdding((open) => !open)}>
@@ -67,8 +79,8 @@ export function Notifications(): ReactNode {
         {channels.length === 0 && !adding ? (
           <Card>
             <Empty>
-              Nothing is set up, so a failed run passes in silence. Google Chat takes about a minute: add a webhook
-              to your space and paste the URL here.
+              Nothing is set up, so a failed run passes in silence. Google Chat takes about a
+              minute: add a webhook to your space and paste the URL here.
             </Empty>
           </Card>
         ) : null}
@@ -84,7 +96,9 @@ export function Notifications(): ReactNode {
                 </span>
               </div>
               <div className="row">
-                <StatusPill status={channel.lastError ? 'failed' : channel.enabled ? 'ok' : 'off'} />
+                <StatusPill
+                  status={channel.lastError ? 'failed' : channel.enabled ? 'ok' : 'off'}
+                />
                 <button
                   disabled={busy === channel.id}
                   title="Sends a message now, so you can see it arrive."
@@ -101,7 +115,9 @@ export function Notifications(): ReactNode {
             </div>
 
             {tested === channel.id ? (
-              <div className="banner info">Sent. If it did not arrive, the webhook URL is probably wrong.</div>
+              <div className="banner info">
+                Sent. If it did not arrive, the webhook URL is probably wrong.
+              </div>
             ) : null}
             {channel.lastError ? <div className="banner error">{channel.lastError}</div> : null}
             <p className="muted" style={{ margin: '8px 0 0' }}>
@@ -112,7 +128,8 @@ export function Notifications(): ReactNode {
 
         {data && data.pending > 0 ? (
           <div className="banner info">
-            {data.pending} {data.pending === 1 ? 'message is' : 'messages are'} waiting to be delivered.
+            {data.pending} {data.pending === 1 ? 'message is' : 'messages are'} waiting to be
+            delivered.
           </div>
         ) : null}
       </div>
@@ -120,7 +137,13 @@ export function Notifications(): ReactNode {
   )
 }
 
-function AddNotification({ kinds, onAdded }: { kinds: ChannelKind[]; onAdded: () => void }): ReactNode {
+function AddNotification({
+  kinds,
+  onAdded,
+}: {
+  kinds: ChannelKind[]
+  onAdded: () => void
+}): ReactNode {
   const [kind, setKind] = useState(kinds[0]?.kind ?? 'google-chat')
   const [label, setLabel] = useState('')
   const [config, setConfig] = useState<Record<string, unknown>>({})

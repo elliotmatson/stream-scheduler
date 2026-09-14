@@ -42,11 +42,22 @@ beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), 'scheduler-yt-'))
   db = openTestDatabase()
   clock = new ManualClock(START - 60 * MINUTE)
-  vault = new SecretVault(db, resolveMasterKey([keyFileSource(join(dir, 'k'), { create: true })]), new Scrubber())
+  vault = new SecretVault(
+    db,
+    resolveMasterKey([keyFileSource(join(dir, 'k'), { create: true })]),
+    new Scrubber(),
+  )
   youtube = new FakeYouTube()
 
   const plugins = new PluginRegistry().register(mockPlugin({ now: () => clock.now() }))
-  connections = new ConnectionManager({ db, registry: plugins, clock, random: () => 0.5, sleep: async () => {}, enforceSerialization: true })
+  connections = new ConnectionManager({
+    db,
+    registry: plugins,
+    clock,
+    random: () => 0.5,
+    sleep: async () => {},
+    enforceSerialization: true,
+  })
 
   destinations = new DestinationRegistry({ db, clock, vault })
   destinations.register(
@@ -75,7 +86,8 @@ function withTokenEndpoint(inner: typeof youtube.fetch): typeof youtube.fetch {
       return {
         ok: true,
         status: 200,
-        text: async () => JSON.stringify({ access_token: 'at-1', expires_in: 3600, refresh_token: 'rt-1' }),
+        text: async () =>
+          JSON.stringify({ access_token: 'at-1', expires_in: 3600, refresh_token: 'rt-1' }),
       }
     }
     return inner(url, init)
@@ -87,24 +99,44 @@ function connectAccount(): string {
   const clientRowId = randomUUID()
   db.prepare(
     'INSERT INTO oauth_client (id, provider, label, client_id, secret_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)',
-  ).run(clientRowId, 'youtube', 'My Google Cloud project', 'client-id', vault.store('client-secret'), clock.now())
+  ).run(
+    clientRowId,
+    'youtube',
+    'My Google Cloud project',
+    'client-id',
+    vault.store('client-secret'),
+    clock.now(),
+  )
 
   const accountId = randomUUID()
   db.prepare(
     `INSERT INTO account (id, provider, external_id, display_name, secret_ref, oauth_client_ref, scopes, created_at)
      VALUES (?, 'youtube', 'UC123', 'Test Church', ?, ?, ?, ?)`,
-  ).run(accountId, vault.store('refresh-token-value'), clientRowId, 'youtube.force-ssl', clock.now())
+  ).run(
+    accountId,
+    vault.store('refresh-token-value'),
+    clientRowId,
+    'youtube.force-ssl',
+    clock.now(),
+  )
   return accountId
 }
 
 function addDestination(accountId: string, config: Record<string, unknown> = {}): string {
   const id = randomUUID()
-  db.prepare('INSERT INTO destination (id, plugin_id, label, account_id, config, created_at) VALUES (?, ?, ?, ?, ?, ?)').run(
+  db.prepare(
+    'INSERT INTO destination (id, plugin_id, label, account_id, config, created_at) VALUES (?, ?, ?, ?, ?, ?)',
+  ).run(
     id,
     'youtube',
     'Church YouTube',
     accountId,
-    JSON.stringify({ privacy: 'public', reusableStream: true, streamTitle: 'Scheduler', ...config }),
+    JSON.stringify({
+      privacy: 'public',
+      reusableStream: true,
+      streamTitle: 'Scheduler',
+      ...config,
+    }),
     clock.now(),
   )
   return id
@@ -112,20 +144,18 @@ function addDestination(accountId: string, config: Record<string, unknown> = {})
 
 function addEncoder(): string {
   const id = randomUUID()
-  db.prepare('INSERT INTO device (id, plugin_id, label, config, enabled, created_at) VALUES (?, ?, ?, ?, 1, ?)').run(
-    id,
-    'mock',
-    'Sanctuary encoder',
-    JSON.stringify({ kind: 'encoder' }),
-    clock.now(),
-  )
+  db.prepare(
+    'INSERT INTO device (id, plugin_id, label, config, enabled, created_at) VALUES (?, ?, ?, ?, 1, ?)',
+  ).run(id, 'mock', 'Sanctuary encoder', JSON.stringify({ kind: 'encoder' }), clock.now())
   return id
 }
 
 /** One event: one encoder, one stream to YouTube for the whole window. */
-function seedEvent(
-  options: { encoderId: string; destinationId: string; templates: Record<string, string> },
-): { occurrenceId: string; outputId: string } {
+function seedEvent(options: {
+  encoderId: string
+  destinationId: string
+  templates: Record<string, string>
+}): { occurrenceId: string; outputId: string } {
   const seriesId = randomUUID()
   const occurrenceId = randomUUID()
   const outputId = randomUUID()
@@ -135,14 +165,7 @@ function seedEvent(
        (id, label, timezone, rrule, dtstart, duration_ms, prepare_lead_ms,
         preroll_ms, postroll_ms, late_start_grace_ms, templates, created_at, updated_at)
      VALUES (?, 'Sunday Service', 'America/Chicago', NULL, ?, ?, ?, 0, 0, ?, ?, 0, 0)`,
-  ).run(
-    seriesId,
-    START,
-    DURATION,
-    30 * MINUTE,
-    30 * MINUTE,
-    JSON.stringify(options.templates),
-  )
+  ).run(seriesId, START, DURATION, 30 * MINUTE, 30 * MINUTE, JSON.stringify(options.templates))
   db.prepare(
     `INSERT INTO event_output
        (id, series_id, kind, label, position, offset_ms, duration_ms, destination_id, device_id, node_id,
@@ -189,7 +212,9 @@ describe('a scheduled event delivering to YouTube', () => {
 
     // Nothing has touched the encoder yet: it holds one target at a time,
     // so it is pointed at this key when this output goes on, not now.
-    expect((await connections.invoke(encoderId, 'stream', 'readState'))?.streaming?.targetUrl).toBeUndefined()
+    expect(
+      (await connections.invoke(encoderId, 'stream', 'readState'))?.streaming?.targetUrl,
+    ).toBeUndefined()
 
     clock.set(START)
     await engine.tick()
@@ -203,7 +228,9 @@ describe('a scheduled event delivering to YouTube', () => {
     clock.set(START + DURATION)
     await engine.tick()
     expect(store.getRun(runId).state).toBe('completed')
-    expect((await connections.invoke(encoderId, 'stream', 'readState'))?.streaming?.active).toBe(false)
+    expect((await connections.invoke(encoderId, 'stream', 'readState'))?.streaming?.active).toBe(
+      false,
+    )
   })
 
   it('never writes the issued stream key into the run timeline', async () => {
@@ -265,7 +292,9 @@ describe('failure and recovery', () => {
     // An encoder that accepts the key and silently ignores it: the classic
     // Web Presenter mid-reboot case.
     const encoderId = randomUUID()
-    db.prepare('INSERT INTO device (id, plugin_id, label, config, enabled, created_at) VALUES (?, ?, ?, ?, 1, ?)').run(
+    db.prepare(
+      'INSERT INTO device (id, plugin_id, label, config, enabled, created_at) VALUES (?, ?, ?, ?, 1, ?)',
+    ).run(
       encoderId,
       'mock',
       'Broken encoder',
@@ -274,7 +303,11 @@ describe('failure and recovery', () => {
     )
     await connections.open(encoderId)
 
-    const { outputId } = seedEvent({ encoderId, destinationId, templates: { title: '{{event.name}}' } })
+    const { outputId } = seedEvent({
+      encoderId,
+      destinationId,
+      templates: { title: '{{event.name}}' },
+    })
 
     const planner = new EventPlanner({ db, connections, vault, clock, destinations })
     const engine = new RunEngine({ db, store, clock, planner, sleeper: immediateSleeper })
@@ -353,7 +386,10 @@ describe('failure and recovery', () => {
           status: 400,
           text: async () => JSON.stringify({ error: 'invalid_grant' }),
         }),
-        resolveClient: async () => ({ client: { clientId: 'c', clientSecret: 's' }, refreshToken: 'rt' }),
+        resolveClient: async () => ({
+          client: { clientId: 'c', clientSecret: 's' },
+          refreshToken: 'rt',
+        }),
       }),
     )
     const planner = new EventPlanner({ db, connections, vault, clock, destinations })

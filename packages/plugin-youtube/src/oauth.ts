@@ -97,7 +97,7 @@ export async function exchangeCode(
   if (!tokens.refresh_token) {
     throw new ReauthRequiredError(
       'Google did not return a refresh token, so the connection would stop working as soon as the ' +
-        'access token expired. Remove this app from the account\'s third-party access and connect again.',
+        "access token expired. Remove this app from the account's third-party access and connect again.",
     )
   }
   return tokens

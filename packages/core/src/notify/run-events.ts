@@ -41,7 +41,11 @@ export function runFailedNotification(
   }
 }
 
-export function accountReauthNotification(account: { id: string; displayName: string; provider: string }): Notification {
+export function accountReauthNotification(account: {
+  id: string
+  displayName: string
+  provider: string
+}): Notification {
   return {
     event: 'account.reauth_required',
     severity: 'error',

@@ -16,7 +16,10 @@ const KEY = 'live_abcd-1234-efgh'
 let encoder: FakeStreamingEncoder
 let device: DeviceInstance | undefined
 
-async function connect(config: Record<string, unknown> = {}, options: FakeOptions = {}): Promise<DeviceInstance> {
+async function connect(
+  config: Record<string, unknown> = {},
+  options: FakeOptions = {},
+): Promise<DeviceInstance> {
   encoder.options = { ...encoder.options, ...options }
   const plugin = streamingEncoderPlugin({ now: () => 1_700_000_000_000, timeoutMs: 2_000 })
   const ctx: DeviceContext = {
@@ -93,7 +96,10 @@ describe('connecting', () => {
 describe('pointing the encoder at a destination', () => {
   it('uses the customizable platform so a run can choose the URL', async () => {
     const enc = await connect()
-    await enc.invoke('stream', 'applyStreamTarget', { url: 'rtmps://live.example.com/app', key: KEY })
+    await enc.invoke('stream', 'applyStreamTarget', {
+      url: 'rtmps://live.example.com/app',
+      key: KEY,
+    })
 
     // This is the whole reason the customizable platform is preferred: the
     // ingest YouTube issues this morning is not in any built-in preset.
@@ -108,7 +114,10 @@ describe('pointing the encoder at a destination', () => {
 
   it('reads back a fingerprint, never the key', async () => {
     const enc = await connect()
-    await enc.invoke('stream', 'applyStreamTarget', { url: 'rtmps://live.example.com/app', key: KEY })
+    await enc.invoke('stream', 'applyStreamTarget', {
+      url: 'rtmps://live.example.com/app',
+      key: KEY,
+    })
 
     const state = await enc.invoke('stream', 'readState')
     expect(state?.streaming?.targetUrl).toBe('rtmps://live.example.com/app')
@@ -116,7 +125,7 @@ describe('pointing the encoder at a destination', () => {
     expect(JSON.stringify(state)).not.toContain(KEY)
   })
 
-  it('uses a platform\'s own server when it already points there', async () => {
+  it("uses a platform's own server when it already points there", async () => {
     // No platform is named anywhere any more, so this is the encoder's own
     // preset being matched by address rather than chosen by configuration.
     const enc = await connect({}, { noCustomizablePlatform: true })
@@ -155,7 +164,10 @@ describe('pointing the encoder at a destination', () => {
 
   it('leaves the encoder on its own profile when nothing asks for one', async () => {
     const enc = await connect()
-    await enc.invoke('stream', 'applyStreamTarget', { url: 'rtmps://live.example.com/app', key: KEY })
+    await enc.invoke('stream', 'applyStreamTarget', {
+      url: 'rtmps://live.example.com/app',
+      key: KEY,
+    })
     expect(encoder.active?.quality).toBe('Streaming High')
   })
 
@@ -176,7 +188,10 @@ describe('pointing the encoder at a destination', () => {
   it('explains itself when no platform can reach the requested URL', async () => {
     const enc = await connect({}, { noCustomizablePlatform: true })
     await expect(
-      enc.invoke('stream', 'applyStreamTarget', { url: 'rtmps://nowhere.example.com/app', key: KEY }),
+      enc.invoke('stream', 'applyStreamTarget', {
+        url: 'rtmps://nowhere.example.com/app',
+        key: KEY,
+      }),
     ).rejects.toMatchObject({ code: 'no-usable-platform' })
   })
 
@@ -190,7 +205,10 @@ describe('pointing the encoder at a destination', () => {
 describe('starting and stopping', () => {
   it('starts, and the read-back confirms it', async () => {
     const enc = await connect()
-    await enc.invoke('stream', 'applyStreamTarget', { url: 'rtmps://live.example.com/app', key: KEY })
+    await enc.invoke('stream', 'applyStreamTarget', {
+      url: 'rtmps://live.example.com/app',
+      key: KEY,
+    })
     await enc.invoke('stream', 'startStreaming')
 
     const state = await enc.invoke('stream', 'readState')
@@ -200,7 +218,9 @@ describe('starting and stopping', () => {
 
   it('refuses to start before a destination is set', async () => {
     const enc = await connect()
-    await expect(enc.invoke('stream', 'startStreaming')).rejects.toMatchObject({ code: 'no-stream-target' })
+    await expect(enc.invoke('stream', 'startStreaming')).rejects.toMatchObject({
+      code: 'no-stream-target',
+    })
     expect(encoder.requests).not.toContain('PUT /livestreams/0/start')
   })
 
@@ -209,7 +229,10 @@ describe('starting and stopping', () => {
     // still-active would make the stop step retry while the encoder drains,
     // which can take a while on a large cache.
     const enc = await connect()
-    await enc.invoke('stream', 'applyStreamTarget', { url: 'rtmps://live.example.com/app', key: KEY })
+    await enc.invoke('stream', 'applyStreamTarget', {
+      url: 'rtmps://live.example.com/app',
+      key: KEY,
+    })
     await enc.invoke('stream', 'startStreaming')
     await enc.invoke('stream', 'stopStreaming')
 
@@ -219,7 +242,10 @@ describe('starting and stopping', () => {
 
   it('counts connecting as active, so a start verifies immediately', async () => {
     const enc = await connect()
-    await enc.invoke('stream', 'applyStreamTarget', { url: 'rtmps://live.example.com/app', key: KEY })
+    await enc.invoke('stream', 'applyStreamTarget', {
+      url: 'rtmps://live.example.com/app',
+      key: KEY,
+    })
     encoder.status = 'Connecting'
     expect((await enc.invoke('stream', 'readState'))?.streaming?.active).toBe(true)
   })
@@ -295,7 +321,10 @@ describe('API errors', () => {
 describe('the wire', () => {
   it('talks to the documented paths under /control/api/v1', async () => {
     const enc = await connect()
-    await enc.invoke('stream', 'applyStreamTarget', { url: 'rtmps://live.example.com/app', key: KEY })
+    await enc.invoke('stream', 'applyStreamTarget', {
+      url: 'rtmps://live.example.com/app',
+      key: KEY,
+    })
     await enc.invoke('stream', 'startStreaming')
     await enc.invoke('stream', 'stopStreaming')
 

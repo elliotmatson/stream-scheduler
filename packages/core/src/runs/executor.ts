@@ -127,7 +127,11 @@ async function executeStep(
  * Never re-executes blind: a step that may have created something asks the
  * outside world whether it exists, and adopts it if so.
  */
-export async function reconcileRun(runId: string, plan: RunPlan, deps: ExecutorDeps): Promise<void> {
+export async function reconcileRun(
+  runId: string,
+  plan: RunPlan,
+  deps: ExecutorDeps,
+): Promise<void> {
   const { store } = deps
   const logger = (deps.logger ?? silentLogger).child({ runId })
 
@@ -168,11 +172,21 @@ export async function reconcileRun(runId: string, plan: RunPlan, deps: ExecutorD
         })
       } else {
         store.resetStep(runId, record.seq)
-        logger.info('interrupted step never landed; will retry', { kind: step.kind, seq: record.seq })
+        logger.info('interrupted step never landed; will retry', {
+          kind: step.kind,
+          seq: record.seq,
+        })
       }
     } catch (error) {
-      logger.error('could not reconcile an interrupted step', { kind: step.kind, error: describe(error) })
-      store.markStepFailed(runId, record.seq, `Could not determine whether this step landed: ${describe(error)}`)
+      logger.error('could not reconcile an interrupted step', {
+        kind: step.kind,
+        error: describe(error),
+      })
+      store.markStepFailed(
+        runId,
+        record.seq,
+        `Could not determine whether this step landed: ${describe(error)}`,
+      )
     }
   }
 }
@@ -183,7 +197,11 @@ export async function reconcileRun(runId: string, plan: RunPlan, deps: ExecutorD
  * Without this, a run that failed after creating a broadcast leaves the
  * channel accumulating empty public "Sunday Service" entries.
  */
-export async function compensateRun(runId: string, plan: RunPlan, deps: ExecutorDeps): Promise<void> {
+export async function compensateRun(
+  runId: string,
+  plan: RunPlan,
+  deps: ExecutorDeps,
+): Promise<void> {
   await compensateSelected(runId, plan, () => true, deps)
 }
 
@@ -207,7 +225,11 @@ async function compensateSelected(
     } catch (error) {
       // Compensation is best-effort: report it and keep unwinding the rest
       // rather than leaving even more behind.
-      logger.error('compensation failed', { kind: step.kind, seq: record.seq, error: describe(error) })
+      logger.error('compensation failed', {
+        kind: step.kind,
+        seq: record.seq,
+        error: describe(error),
+      })
     }
   }
 }
@@ -231,7 +253,12 @@ function contextFor(
   }
 }
 
-function failureFrom(step: StepDefinition, error: unknown, retryable: boolean, attempts: number): RunFailure {
+function failureFrom(
+  step: StepDefinition,
+  error: unknown,
+  retryable: boolean,
+  attempts: number,
+): RunFailure {
   const base: RunFailure = {
     code: codeOf(error) ?? 'step-failed',
     message: describe(error),
@@ -240,18 +267,27 @@ function failureFrom(step: StepDefinition, error: unknown, retryable: boolean, a
   const remediation = remediationOf(error)
   if (remediation) return { ...base, remediation }
   if (!retryable) {
-    return { ...base, remediation: 'This step is not safe to repeat automatically. Check the destination by hand.' }
+    return {
+      ...base,
+      remediation: 'This step is not safe to repeat automatically. Check the destination by hand.',
+    }
   }
   return { ...base, remediation: `Failed after ${attempts} attempts.` }
 }
 
 function codeOf(error: unknown): string | undefined {
-  if (error && typeof error === 'object' && 'code' in error && typeof error.code === 'string') return error.code
+  if (error && typeof error === 'object' && 'code' in error && typeof error.code === 'string')
+    return error.code
   return undefined
 }
 
 function remediationOf(error: unknown): string | undefined {
-  if (error && typeof error === 'object' && 'remediation' in error && typeof error.remediation === 'string') {
+  if (
+    error &&
+    typeof error === 'object' &&
+    'remediation' in error &&
+    typeof error.remediation === 'string'
+  ) {
     return error.remediation
   }
   return undefined

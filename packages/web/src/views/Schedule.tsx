@@ -36,7 +36,10 @@ export function Schedule({ navigate }: { navigate: (path: string) => void }): Re
           from: Date.UTC(anchor.getFullYear(), anchor.getMonth() - 1, 1),
           to: Date.UTC(anchor.getFullYear(), anchor.getMonth() + 2, 1),
         }
-  const { data, error, reload } = useResource(() => api.occurrences(range.from, range.to), [range.from, range.to])
+  const { data, error, reload } = useResource(
+    () => api.occurrences(range.from, range.to),
+    [range.from, range.to],
+  )
   // A run starting or finishing changes what the chips say, and somebody
   // watching this screen on a Sunday should not have to press anything.
   useLiveRefresh(reload)
@@ -74,13 +77,21 @@ export function Schedule({ navigate }: { navigate: (path: string) => void }): Re
           </div>
           {view === 'list' ? null : (
             <div className="row">
-              <button onClick={() => shift(-1)} aria-label={view === 'week' ? 'Previous week' : 'Previous month'}>
+              <button
+                onClick={() => shift(-1)}
+                aria-label={view === 'week' ? 'Previous week' : 'Previous month'}
+              >
                 ←
               </button>
               <strong style={{ minWidth: 150, textAlign: 'center' }}>
-                {view === 'week' ? weekLabel(weekStart) : monthLabel(anchor.getFullYear(), anchor.getMonth())}
+                {view === 'week'
+                  ? weekLabel(weekStart)
+                  : monthLabel(anchor.getFullYear(), anchor.getMonth())}
               </strong>
-              <button onClick={() => shift(1)} aria-label={view === 'week' ? 'Next week' : 'Next month'}>
+              <button
+                onClick={() => shift(1)}
+                aria-label={view === 'week' ? 'Next week' : 'Next month'}
+              >
                 →
               </button>
               <button onClick={() => setAnchor(new Date())}>Today</button>
@@ -165,7 +176,10 @@ function CalendarGrid({
         const key = keyOf(date)
         const events = byDay.get(key) ?? []
         return (
-          <div key={key} className={`day${outside ? ' outside' : ''}${key === todayKey ? ' today' : ''}`}>
+          <div
+            key={key}
+            className={`day${outside ? ' outside' : ''}${key === todayKey ? ' today' : ''}`}
+          >
             <span className="daynum">{date.getDate()}</span>
             {events.map((occurrence) => (
               <button
@@ -176,7 +190,9 @@ function CalendarGrid({
               >
                 {/* Two lines: at a glance you want the time, and the name
                     would otherwise be cut off in a narrow cell. */}
-                <span className="event-time">{timeIn(occurrence.scheduledStart, occurrence.timezone)}</span>
+                <span className="event-time">
+                  {timeIn(occurrence.scheduledStart, occurrence.timezone)}
+                </span>
                 <span className="event-name">{occurrence.seriesLabel}</span>
               </button>
             ))}
@@ -234,7 +250,10 @@ function WeekGrid({
       // An event running past midnight is clipped at the end of its own day
       // rather than drawn into the next one, which would claim it starts
       // there.
-      const to = Math.min(from + Math.round((occurrence.scheduledEnd - occurrence.scheduledStart) / 60_000), 24 * 60)
+      const to = Math.min(
+        from + Math.round((occurrence.scheduledEnd - occurrence.scheduledStart) / 60_000),
+        24 * 60,
+      )
       const list = byDay.get(key) ?? []
       list.push({ occurrence, from, to: Math.max(to, from + 15) })
       byDay.set(key, list)
@@ -266,7 +285,10 @@ function WeekGrid({
       <div className="week-head">
         <div className="week-gutter" />
         {days.map((day) => (
-          <div key={keyOf(day)} className={`week-day-head${keyOf(day) === todayKey ? ' today' : ''}`}>
+          <div
+            key={keyOf(day)}
+            className={`week-day-head${keyOf(day) === todayKey ? ' today' : ''}`}
+          >
             {dayLabel(day)}
           </div>
         ))}
@@ -406,7 +428,9 @@ function ScheduleList({
             <tr>
               <th>When</th>
               <th>Event</th>
-              <th title="How long the event's window is. Its streams and recordings sit inside it.">Length</th>
+              <th title="How long the event's window is. Its streams and recordings sit inside it.">
+                Length
+              </th>
               <th>Status</th>
               <th />
             </tr>
@@ -419,14 +443,19 @@ function ScheduleList({
                   {isForeignZone(occurrence.timezone) ? (
                     // The event's own zone, shown because the engine schedules
                     // in it and an operator elsewhere would otherwise misread.
-                    <span className="muted">{shortZone(occurrence.scheduledStart, occurrence.timezone)}</span>
+                    <span className="muted">
+                      {shortZone(occurrence.scheduledStart, occurrence.timezone)}
+                    </span>
                   ) : null}
                   <div className="muted">{relative(occurrence.scheduledStart)}</div>
                 </td>
                 <td>
                   {occurrence.seriesLabel}
                   {occurrence.detached ? (
-                    <div className="muted" title="This date was edited on its own, so later changes to the event leave it alone.">
+                    <div
+                      className="muted"
+                      title="This date was edited on its own, so later changes to the event leave it alone."
+                    >
                       edited on its own
                     </div>
                   ) : null}
@@ -453,7 +482,9 @@ function ScheduleList({
                         <button
                           disabled={busy === occurrence.id}
                           title="Creates the broadcast now, so the link can go out ahead of the day. Nothing goes on air."
-                          onClick={() => void act(occurrence.id, () => api.prepareNow(occurrence.id))}
+                          onClick={() =>
+                            void act(occurrence.id, () => api.prepareNow(occurrence.id))
+                          }
                         >
                           Prepare now
                         </button>

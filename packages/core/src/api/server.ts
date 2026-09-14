@@ -21,7 +21,13 @@ import { isValidTimeZone, zonedWallTimeToUtc } from '../schedule/zoned.js'
 import { ConfigInvalidError, UnknownPluginError } from '../plugins/registry.js'
 import { renderTemplate, TemplateError } from '../template/render.js'
 import { sanitizeFilename } from '../template/index.js'
-import { outputsForSeries, requiredAction, toOutput, type EventOutput, type OutputKind } from '../events/outputs.js'
+import {
+  outputsForSeries,
+  requiredAction,
+  toOutput,
+  type EventOutput,
+  type OutputKind,
+} from '../events/outputs.js'
 import { describeConflict, overlapsForSeries } from '../events/overlap.js'
 import { assertUnreferenced, ConflictError, NotFoundError } from './errors.js'
 import { buildDashboard } from './dashboard.js'
@@ -127,14 +133,16 @@ function registerRoutes(fastify: FastifyInstance, app: Application): void {
     const rows = db.prepare('SELECT * FROM device ORDER BY label').all() as DeviceRowShape[]
     // Which events are mid-run on each device, so the manual controls can
     // say whose stream they are about to interfere with.
-    const busy = db.prepare(
-      `SELECT DISTINCT r.id AS run_id, s.label AS label, eo.device_id AS device_id
+    const busy = db
+      .prepare(
+        `SELECT DISTINCT r.id AS run_id, s.label AS label, eo.device_id AS device_id
          FROM run r
          JOIN occurrence o ON o.id = r.occurrence_id
          JOIN event_series s ON s.id = o.series_id
          JOIN event_output eo ON eo.series_id = s.id AND eo.enabled = 1
         WHERE r.state NOT IN ('completed', 'failed', 'cancelled')`,
-    ).all() as { run_id: string; label: string; device_id: string | null }[]
+      )
+      .all() as { run_id: string; label: string; device_id: string | null }[]
 
     return rows.map((row) => {
       const connection = app.connections.get(row.id)
@@ -173,7 +181,14 @@ function registerRoutes(fastify: FastifyInstance, app: Application): void {
     const id = randomUUID()
     db.prepare(
       'INSERT INTO device (id, plugin_id, label, config, enabled, created_at) VALUES (?, ?, ?, ?, ?, ?)',
-    ).run(id, body.pluginId, body.label, JSON.stringify(config), body.enabled ? 1 : 0, app.clock.now())
+    ).run(
+      id,
+      body.pluginId,
+      body.label,
+      JSON.stringify(config),
+      body.enabled ? 1 : 0,
+      app.clock.now(),
+    )
     return reply.code(201).send({ id })
   })
 
@@ -210,9 +225,12 @@ function registerRoutes(fastify: FastifyInstance, app: Application): void {
   fastify.post('/api/devices/:id/connect', async (request) => {
     const { id } = z.object({ id: z.string() }).parse(request.params)
     const connection = await app.connections.open(id)
-    return { capabilities: connection.capabilities, nodes: connection.nodes, health: connection.health }
+    return {
+      capabilities: connection.capabilities,
+      nodes: connection.nodes,
+      health: connection.health,
+    }
   })
-
 
   /**
    * Drive a device by hand.
@@ -277,7 +295,8 @@ function registerRoutes(fastify: FastifyInstance, app: Application): void {
   const selectedSlotCheck = (slot: number): VerifyCheck => ({
     what: 'Selected card',
     expected: `slot ${slot}`,
-    satisfiedBy: (state: NodeState) => state.recording?.slots?.find((entry) => entry.active)?.id === slot,
+    satisfiedBy: (state: NodeState) =>
+      state.recording?.slots?.find((entry) => entry.active)?.id === slot,
     settleMs: 10_000,
   })
 
@@ -338,12 +357,15 @@ function registerRoutes(fastify: FastifyInstance, app: Application): void {
     // event starts.
     const busy = eventMidRunOn(id)
     if (busy) {
-      throw new ConflictError(`"${busy}" is mid-run on this device. Stop the run before re-pointing it.`)
+      throw new ConflictError(
+        `"${busy}" is mid-run on this device. Stop the run before re-pointing it.`,
+      )
     }
 
     const credential = db
       .prepare('SELECT label, ingest_url, secret_ref FROM stream_credential WHERE id = ?')
-      .get(body.credentialId) as { label: string; ingest_url: string | null; secret_ref: string } | undefined
+      .get(body.credentialId) as
+      { label: string; ingest_url: string | null; secret_ref: string } | undefined
     if (!credential) throw new NotFoundError(`No stream credential with id "${body.credentialId}".`)
     if (!credential.ingest_url) {
       throw new ConflictError(`"${credential.label}" has no ingest URL to point anything at.`)
@@ -400,7 +422,9 @@ function registerRoutes(fastify: FastifyInstance, app: Application): void {
     // out about afterwards.
     const busy = eventMidRunOn(id)
     if (busy) {
-      throw new ConflictError(`"${busy}" is mid-run on this device. Stop the run before formatting.`)
+      throw new ConflictError(
+        `"${busy}" is mid-run on this device. Stop the run before formatting.`,
+      )
     }
 
     const state = await app.connections.invoke(id, nodeId, 'formatStorage', {
@@ -409,7 +433,11 @@ function registerRoutes(fastify: FastifyInstance, app: Application): void {
     })
     const confirm = (state?.raw as { confirm?: unknown } | undefined)?.confirm
     if (body.confirm) {
-      app.logger.warn('an operator formatted device storage', { deviceId: id, nodeId, slot: body.slot })
+      app.logger.warn('an operator formatted device storage', {
+        deviceId: id,
+        nodeId,
+        slot: body.slot,
+      })
       return { formatted: true }
     }
     return { formatted: false, confirm: typeof confirm === 'string' ? confirm : undefined }
@@ -455,7 +483,11 @@ function registerRoutes(fastify: FastifyInstance, app: Application): void {
         { slot: body.slot },
         selectedSlotCheck(body.slot),
       )
-      app.logger.info('an operator selected a card by hand', { deviceId: id, nodeId, slot: body.slot })
+      app.logger.info('an operator selected a card by hand', {
+        deviceId: id,
+        nodeId,
+        slot: body.slot,
+      })
       return { state }
     }
 
@@ -484,7 +516,11 @@ function registerRoutes(fastify: FastifyInstance, app: Application): void {
 
   fastify.get('/api/credentials', async () =>
     (
-      db.prepare('SELECT id, label, source, ingest_url, external_id FROM stream_credential ORDER BY label').all() as {
+      db
+        .prepare(
+          'SELECT id, label, source, ingest_url, external_id FROM stream_credential ORDER BY label',
+        )
+        .all() as {
         id: string
         label: string
         source: string
@@ -596,17 +632,27 @@ function registerRoutes(fastify: FastifyInstance, app: Application): void {
     /** The wall time the operator actually means, resolved in `timezone`. */
     dtstartLocal: LOCAL_START.optional(),
     durationMs: z.number().int().positive(),
-    prepareLeadMs: z.number().int().nonnegative().default(30 * 60_000),
+    prepareLeadMs: z
+      .number()
+      .int()
+      .nonnegative()
+      .default(30 * 60_000),
     prerollMs: z.number().int().nonnegative().default(0),
     postrollMs: z.number().int().nonnegative().default(0),
-    lateStartGraceMs: z.number().int().nonnegative().default(5 * 60_000),
+    lateStartGraceMs: z
+      .number()
+      .int()
+      .nonnegative()
+      .default(5 * 60_000),
     templates: z.record(z.string()).default({}),
     exdates: z.array(z.number().int()).default([]),
     enabled: z.boolean().default(true),
   })
 
   fastify.get('/api/series', async () =>
-    (db.prepare('SELECT * FROM event_series ORDER BY label').all() as SeriesRowShape[]).map(toSeriesDto),
+    (db.prepare('SELECT * FROM event_series ORDER BY label').all() as SeriesRowShape[]).map(
+      toSeriesDto,
+    ),
   )
 
   fastify.post('/api/series', async (request, reply) => {
@@ -646,13 +692,15 @@ function registerRoutes(fastify: FastifyInstance, app: Application): void {
   fastify.patch('/api/series/:id', async (request) => {
     const { id } = z.object({ id: z.string() }).parse(request.params)
     const body = seriesBody.partial().parse(request.body)
-    const row = db.prepare('SELECT * FROM event_series WHERE id = ?').get(id) as SeriesRowShape | undefined
+    const row = db.prepare('SELECT * FROM event_series WHERE id = ?').get(id) as
+      SeriesRowShape | undefined
     if (!row) throw new NotFoundError(`No series with id "${id}".`)
 
     const merged = { ...toSeriesDto(row), ...body, dtstart: body.dtstart ?? row.dtstart }
     // A local start only makes sense against a timezone, and an edit may be
     // changing both at once, so it is resolved against the merged pair.
-    if (body.dtstartLocal) merged.dtstart = resolveDtstart({ ...merged, dtstartLocal: body.dtstartLocal })
+    if (body.dtstartLocal)
+      merged.dtstart = resolveDtstart({ ...merged, dtstartLocal: body.dtstartLocal })
     assertSchedulable(merged)
 
     db.prepare(
@@ -690,7 +738,9 @@ function registerRoutes(fastify: FastifyInstance, app: Application): void {
     // Renders the next few occurrences so a template mistake — including a
     // timezone one — is visible while typing rather than after it airs.
     const upcoming = db
-      .prepare("SELECT id FROM occurrence WHERE series_id = ? AND status = 'pending' ORDER BY scheduled_start LIMIT 3")
+      .prepare(
+        "SELECT id FROM occurrence WHERE series_id = ? AND status = 'pending' ORDER BY scheduled_start LIMIT 3",
+      )
       .all(id) as { id: string }[]
     return upcoming.map((row) => {
       try {
@@ -699,11 +749,13 @@ function registerRoutes(fastify: FastifyInstance, app: Application): void {
         // anybody actually sees on a channel.
         return { occurrenceId: row.id, outputs: app.planner.previewOutputs(row.id) }
       } catch (error) {
-        return { occurrenceId: row.id, error: error instanceof Error ? error.message : String(error) }
+        return {
+          occurrenceId: row.id,
+          error: error instanceof Error ? error.message : String(error),
+        }
       }
     })
   })
-
 
   // -- outputs ------------------------------------------------------------
 
@@ -732,7 +784,10 @@ function registerRoutes(fastify: FastifyInstance, app: Application): void {
     templates: z.record(z.string()).default({}),
     /** Absent keys mean "leave the device as it is". */
     settings: z
-      .object({ quality: z.string().min(1).optional(), slot: z.number().int().positive().optional() })
+      .object({
+        quality: z.string().min(1).optional(),
+        slot: z.number().int().positive().optional(),
+      })
       .default({}),
     enabled: z.boolean().default(true),
     position: z.number().int().nonnegative().optional(),
@@ -761,10 +816,13 @@ function registerRoutes(fastify: FastifyInstance, app: Application): void {
 
     const next =
       body.position ??
-      ((db.prepare('SELECT COALESCE(MAX(position), -1) AS p FROM event_output WHERE series_id = ?').get(id) as {
-        p: number
-      }).p +
-        1)
+      (
+        db
+          .prepare('SELECT COALESCE(MAX(position), -1) AS p FROM event_output WHERE series_id = ?')
+          .get(id) as {
+          p: number
+        }
+      ).p + 1
 
     const outputId = randomUUID()
     db.prepare(
@@ -799,8 +857,7 @@ function registerRoutes(fastify: FastifyInstance, app: Application): void {
   fastify.patch('/api/outputs/:id', async (request) => {
     const { id } = z.object({ id: z.string() }).parse(request.params)
     const row = db.prepare('SELECT * FROM event_output WHERE id = ?').get(id) as
-      | Record<string, unknown>
-      | undefined
+      Record<string, unknown> | undefined
     if (!row) throw new NotFoundError(`No output with id "${id}".`)
 
     const current = toOutput(row as never)
@@ -836,8 +893,7 @@ function registerRoutes(fastify: FastifyInstance, app: Application): void {
   fastify.delete('/api/outputs/:id', async (request) => {
     const { id } = z.object({ id: z.string() }).parse(request.params)
     const row = db.prepare('SELECT series_id FROM event_output WHERE id = ?').get(id) as
-      | { series_id: string }
-      | undefined
+      { series_id: string } | undefined
     if (!row) throw new NotFoundError(`No output with id "${id}".`)
     db.prepare('DELETE FROM event_output WHERE id = ?').run(id)
     bumpSeriesVersion(db, row.series_id, app.clock)
@@ -895,13 +951,17 @@ function registerRoutes(fastify: FastifyInstance, app: Application): void {
 
   fastify.post('/api/occurrences/:id/skip', async (request) => {
     const { id } = z.object({ id: z.string() }).parse(request.params)
-    db.prepare("UPDATE occurrence SET status = 'skipped' WHERE id = ? AND status = 'pending'").run(id)
+    db.prepare("UPDATE occurrence SET status = 'skipped' WHERE id = ? AND status = 'pending'").run(
+      id,
+    )
     return { ok: true }
   })
 
   fastify.post('/api/occurrences/:id/unskip', async (request) => {
     const { id } = z.object({ id: z.string() }).parse(request.params)
-    db.prepare("UPDATE occurrence SET status = 'pending' WHERE id = ? AND status = 'skipped'").run(id)
+    db.prepare("UPDATE occurrence SET status = 'pending' WHERE id = ? AND status = 'skipped'").run(
+      id,
+    )
     return { ok: true }
   })
 
@@ -939,7 +999,9 @@ function registerRoutes(fastify: FastifyInstance, app: Application): void {
   // -- runs ---------------------------------------------------------------
 
   fastify.get('/api/runs', async (request) => {
-    const { limit } = z.object({ limit: z.coerce.number().int().positive().max(200).default(50) }).parse(request.query)
+    const { limit } = z
+      .object({ limit: z.coerce.number().int().positive().max(200).default(50) })
+      .parse(request.query)
     return (
       db
         .prepare(
@@ -1029,7 +1091,6 @@ function registerWebsocket(fastify: FastifyInstance, app: Application): void {
 
 // -- helpers --------------------------------------------------------------
 
-
 /** Renders whichever name templates are set, reporting a bad one inline. */
 function renderNames(
   templates: Record<string, string>,
@@ -1069,7 +1130,10 @@ function watchLinks(app: Application, runId: string): { label: string; url: stri
     if (typeof response.watchUrl !== 'string') continue
     // The step label reads "Main: create the broadcast"; the half before
     // the colon is the output an operator named.
-    links.push({ label: (step.label ?? '').split(':')[0]?.trim() || 'Stream', url: response.watchUrl })
+    links.push({
+      label: (step.label ?? '').split(':')[0]?.trim() || 'Stream',
+      url: response.watchUrl,
+    })
   }
   return links
 }
@@ -1084,7 +1148,11 @@ function statusFor(error: Error): number {
   // The device refused: busy, not pointed anywhere, wrong mode. Its own
   // message is the useful one.
   if (error instanceof DeviceError) return 409
-  if (error instanceof ConfigInvalidError || error instanceof InvalidScheduleError || error instanceof TemplateError) {
+  if (
+    error instanceof ConfigInvalidError ||
+    error instanceof InvalidScheduleError ||
+    error instanceof TemplateError
+  ) {
     return 400
   }
   if (error instanceof z.ZodError) return 400
@@ -1094,7 +1162,10 @@ function statusFor(error: Error): number {
 
 function detailsFor(error: Error): Record<string, unknown> {
   if (error instanceof DeviceError) {
-    return { code: error.code, ...(error.remediation === undefined ? {} : { remediation: error.remediation }) }
+    return {
+      code: error.code,
+      ...(error.remediation === undefined ? {} : { remediation: error.remediation }),
+    }
   }
   if (error instanceof z.ZodError) return { issues: error.issues }
   if (error instanceof ConfigInvalidError) return { issues: error.issues }
@@ -1225,7 +1296,11 @@ function resolveDtstart(body: {
     throw new InvalidScheduleError(`"${body.timezone}" is not a known IANA time zone.`)
   }
 
-  const [year, month, day] = body.dtstartLocal.date.split('-').map(Number) as [number, number, number]
+  const [year, month, day] = body.dtstartLocal.date.split('-').map(Number) as [
+    number,
+    number,
+    number,
+  ]
   const [hour, minute] = body.dtstartLocal.time.split(':').map(Number) as [number, number]
   const resolved = zonedWallTimeToUtc({ year, month, day, hour, minute, second: 0 }, body.timezone)
   if (resolved.resolution === 'skipped') {
@@ -1352,7 +1427,9 @@ function assertRightKindOfDevice(
  * app gets to resolve, and one with neither is a stream that would silently
  * do nothing at 09:00.
  */
-function assertDeliverable(output: Pick<EventOutput, 'kind' | 'destinationId' | 'credentialId' | 'label'>): void {
+function assertDeliverable(
+  output: Pick<EventOutput, 'kind' | 'destinationId' | 'credentialId' | 'label'>,
+): void {
   if (output.kind !== 'stream') return
   if (output.destinationId && output.credentialId) {
     throw new ConflictError(
@@ -1360,7 +1437,9 @@ function assertDeliverable(output: Pick<EventOutput, 'kind' | 'destinationId' | 
     )
   }
   if (!output.destinationId && !output.credentialId) {
-    throw new ConflictError(`"${output.label}" has nowhere to stream to. Pick a streaming service or a stream key.`)
+    throw new ConflictError(
+      `"${output.label}" has nowhere to stream to. Pick a streaming service or a stream key.`,
+    )
   }
 }
 

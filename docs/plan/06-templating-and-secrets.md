@@ -66,11 +66,11 @@ actually hurts: a stream key lets a stranger broadcast on the user's channel.
 Envelope encryption. Secrets are AES-256-GCM encrypted with a data key; the master
 key comes from a platform-appropriate backend:
 
-| Platform | Master key source |
-|---|---|
-| macOS | Keychain, via Electron `safeStorage` |
-| Windows | DPAPI, via Electron `safeStorage` |
-| Linux desktop | libsecret where available |
+| Platform          | Master key source                                                       |
+| ----------------- | ----------------------------------------------------------------------- |
+| macOS             | Keychain, via Electron `safeStorage`                                    |
+| Windows           | DPAPI, via Electron `safeStorage`                                       |
+| Linux desktop     | libsecret where available                                               |
 | Docker / headless | a key file, or a key derived from a required `SCHEDULER_SECRET` env var |
 
 `secret.key_id` records which master key encrypted each row, so rotation is a

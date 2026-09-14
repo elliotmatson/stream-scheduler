@@ -4,11 +4,20 @@
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
-  "exports": { ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" } },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
-  "dependencies": { "@scheduler/plugin-sdk": "workspace:*" },
-  "devDependencies": { "typescript": "^5.7.2" }
+  "dependencies": {
+    "@scheduler/plugin-sdk": "workspace:*"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.2"
+  }
 }

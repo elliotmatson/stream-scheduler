@@ -7,7 +7,12 @@ import { openTestDatabase, type Db } from '../db/index.js'
 import { keyFileSource, resolveMasterKey } from '../secrets/master-key.js'
 import { Scrubber } from '../secrets/scrubber.js'
 import { SecretVault } from '../secrets/vault.js'
-import { ConfigInvalidError, IncompatiblePluginError, PluginRegistry, UnknownPluginError } from '../plugins/registry.js'
+import {
+  ConfigInvalidError,
+  IncompatiblePluginError,
+  PluginRegistry,
+  UnknownPluginError,
+} from '../plugins/registry.js'
 import { ConnectionManager, type ConnectionEvent } from './connection-manager.js'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -29,16 +34,34 @@ afterEach(() => {
   rmSync(dir, { recursive: true, force: true })
 })
 
-function addDevice(config: ConfigValues = {}, over: { pluginId?: string; enabled?: boolean } = {}): string {
+function addDevice(
+  config: ConfigValues = {},
+  over: { pluginId?: string; enabled?: boolean } = {},
+): string {
   const id = randomUUID()
   db.prepare(
     'INSERT INTO device (id, plugin_id, label, config, enabled, created_at) VALUES (?, ?, ?, ?, ?, ?)',
-  ).run(id, over.pluginId ?? 'mock', 'Test device', JSON.stringify(config), over.enabled === false ? 0 : 1, clock.now())
+  ).run(
+    id,
+    over.pluginId ?? 'mock',
+    'Test device',
+    JSON.stringify(config),
+    over.enabled === false ? 0 : 1,
+    clock.now(),
+  )
   return id
 }
 
 const managerFor = (over: Partial<ConstructorParameters<typeof ConnectionManager>[0]> = {}) =>
-  new ConnectionManager({ db, registry, clock, random: () => 0.5, sleep: async () => {}, enforceSerialization: true, ...over })
+  new ConnectionManager({
+    db,
+    registry,
+    clock,
+    random: () => 0.5,
+    sleep: async () => {},
+    enforceSerialization: true,
+    ...over,
+  })
 
 describe('PluginRegistry', () => {
   it('refuses a plugin built against a different SDK major', () => {
@@ -53,7 +76,9 @@ describe('PluginRegistry', () => {
 
   it('validates device config against the plugin schema', () => {
     expect(() => registry.assertValidConfig('mock', { kind: 'encoder' })).not.toThrow()
-    expect(() => registry.assertValidConfig('mock', { kind: 'toaster' })).toThrow(ConfigInvalidError)
+    expect(() => registry.assertValidConfig('mock', { kind: 'toaster' })).toThrow(
+      ConfigInvalidError,
+    )
   })
 
   it('rejects registering the same plugin twice', () => {
@@ -117,7 +142,10 @@ describe('ConnectionManager', () => {
 
     // The fault is configuration, so clear it the way a user fixing the
     // address would, then let the backoff expire.
-    db.prepare('UPDATE device SET config = ? WHERE id = ?').run(JSON.stringify({ fault: 'none' }), id)
+    db.prepare('UPDATE device SET config = ? WHERE id = ?').run(
+      JSON.stringify({ fault: 'none' }),
+      id,
+    )
     clock.advance(60_000)
     await manager.tick()
     expect(manager.get(id)?.capabilities.model).toBe('Mock both')
@@ -132,7 +160,11 @@ describe('ConnectionManager', () => {
   })
 
   it('hands plugins the plaintext secret, never the storage reference', async () => {
-    const vault = new SecretVault(db, resolveMasterKey([keyFileSource(join(dir, 'k'), { create: true })]), new Scrubber())
+    const vault = new SecretVault(
+      db,
+      resolveMasterKey([keyFileSource(join(dir, 'k'), { create: true })]),
+      new Scrubber(),
+    )
     const ref = vault.store('hunter2-the-device-password')
     const id = addDevice({ password: ref })
 
@@ -166,7 +198,10 @@ describe('ConnectionManager', () => {
     const events: ConnectionEvent[] = []
     manager.on((event) => events.push(event))
 
-    await manager.invoke(id, 'stream', 'applyStreamTarget', { url: 'rtmps://x/live2', key: 'live_abcdefgh' })
+    await manager.invoke(id, 'stream', 'applyStreamTarget', {
+      url: 'rtmps://x/live2',
+      key: 'live_abcdefgh',
+    })
     await manager.invoke(id, 'stream', 'startStreaming')
 
     const states = events.filter((e) => e.type === 'state')
@@ -256,11 +291,17 @@ describe('applyAndVerify', () => {
       { what: 'Stream target', expected: 'set', satisfiedBy: () => true },
     )
 
-    const state = await manager.applyAndVerify(id, 'stream', 'startStreaming', {}, {
-      what: 'Streaming',
-      expected: 'active',
-      satisfiedBy: (s) => s.streaming?.active === true,
-    })
+    const state = await manager.applyAndVerify(
+      id,
+      'stream',
+      'startStreaming',
+      {},
+      {
+        what: 'Streaming',
+        expected: 'active',
+        satisfiedBy: (s) => s.streaming?.active === true,
+      },
+    )
     expect(state.streaming?.active).toBe(true)
     await manager.closeAll()
   })
@@ -271,12 +312,18 @@ describe('applyAndVerify', () => {
     const manager = managerFor()
 
     await expect(
-      manager.applyAndVerify(id, 'record', 'startRecording', { filename: 'take 1' }, {
-        what: 'Recording',
-        expected: 'active',
-        satisfiedBy: (s) => s.recording?.active === true,
-        settleMs: 500,
-      }),
+      manager.applyAndVerify(
+        id,
+        'record',
+        'startRecording',
+        { filename: 'take 1' },
+        {
+          what: 'Recording',
+          expected: 'active',
+          satisfiedBy: (s) => s.recording?.active === true,
+          settleMs: 500,
+        },
+      ),
     ).rejects.toThrow(/did not take effect within 0.5s/)
     await manager.closeAll()
   })
@@ -301,7 +348,9 @@ describe('serialization discipline', () => {
     const id = addDevice({}, { pluginId: 'leaky' })
 
     const manager = managerFor()
-    await expect(manager.invoke(id, 'x', 'readState')).rejects.toBeInstanceOf(SerializationViolation)
+    await expect(manager.invoke(id, 'x', 'readState')).rejects.toBeInstanceOf(
+      SerializationViolation,
+    )
   })
 })
 
@@ -323,9 +372,14 @@ describe('mock plugin', () => {
   it('records with the filename it was given', async () => {
     const id = addDevice({ kind: 'recorder' })
     const manager = managerFor()
-    await manager.invoke(id, 'record', 'startRecording', { filename: '2026-03-08 Sunday Service.mp4' })
+    await manager.invoke(id, 'record', 'startRecording', {
+      filename: '2026-03-08 Sunday Service.mp4',
+    })
     const state = await manager.invoke(id, 'record', 'readState')
-    expect(state?.recording).toMatchObject({ active: true, filename: '2026-03-08 Sunday Service.mp4' })
+    expect(state?.recording).toMatchObject({
+      active: true,
+      filename: '2026-03-08 Sunday Service.mp4',
+    })
     await manager.closeAll()
   })
 })

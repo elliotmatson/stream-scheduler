@@ -77,7 +77,10 @@ export class RunEngine {
     for (const run of this.deps.store.listActiveRuns()) {
       await reconcileRun(run.id, await this.planFor(run), this.executorDeps())
       recovered.push(run.id)
-      this.logger.info('recovered a run interrupted by a restart', { runId: run.id, state: run.state })
+      this.logger.info('recovered a run interrupted by a restart', {
+        runId: run.id,
+        state: run.state,
+      })
     }
     return recovered
   }
@@ -87,8 +90,13 @@ export class RunEngine {
     const now = this.deps.clock.now()
 
     for (const occurrenceId of this.dueOccurrences(now)) {
-      const run = this.deps.store.createRun(occurrenceId, await this.deps.planner.plan(occurrenceId))
-      this.deps.db.prepare("UPDATE occurrence SET status = 'running' WHERE id = ?").run(occurrenceId)
+      const run = this.deps.store.createRun(
+        occurrenceId,
+        await this.deps.planner.plan(occurrenceId),
+      )
+      this.deps.db
+        .prepare("UPDATE occurrence SET status = 'running' WHERE id = ?")
+        .run(occurrenceId)
       report.created.push(run.id)
       this.logger.info('created a run', { runId: run.id, occurrenceId })
     }
@@ -155,13 +163,15 @@ export class RunEngine {
           `Scheduled for ${new Date(timeline.windowStart).toISOString()} but the app was not running until ` +
           `${new Date(now).toISOString()}, past the ${Math.round(timeline.lateStartGraceMs / 60_000)} minute ` +
           'grace period on every output.',
-        remediation: 'Start it manually if it is still wanted, or widen the late-start grace on the event.',
+        remediation:
+          'Start it manually if it is still wanted, or widen the late-start grace on the event.',
       })
       return true
     }
 
     if (run.state === 'scheduled' || run.state === 'preparing') {
-      if (!(run.forced_at !== null || now >= timeline.windowStart - timeline.prepareLeadMs)) return false
+      if (!(run.forced_at !== null || now >= timeline.windowStart - timeline.prepareLeadMs))
+        return false
       return this.prepare(run, plan, timeline)
     }
 
@@ -182,12 +192,15 @@ export class RunEngine {
         await this.markMissed(run, plan, entry, now, timeline)
         return true
       }
-      if (this.deps.store.getRun(run.id).state === 'ready') this.deps.store.transition(run.id, 'running')
+      if (this.deps.store.getRun(run.id).state === 'ready')
+        this.deps.store.transition(run.id, 'running')
       await this.runOutputPhase(run, plan, entry, 'start')
       return true
     }
 
-    const outstanding = [...progress.values()].some((state) => state === 'pending' || state === 'started')
+    const outstanding = [...progress.values()].some(
+      (state) => state === 'pending' || state === 'started',
+    )
     if (!outstanding && now >= timelineEnd(timeline) + timeline.postrollMs) {
       return this.complete(run, plan, timeline, progress)
     }
@@ -292,7 +305,9 @@ export class RunEngine {
     }
 
     this.deps.store.transition(run.id, 'completed')
-    this.deps.db.prepare("UPDATE occurrence SET status = 'done' WHERE id = ?").run(run.occurrence_id)
+    this.deps.db
+      .prepare("UPDATE occurrence SET status = 'done' WHERE id = ?")
+      .run(run.occurrence_id)
     return true
   }
 
@@ -375,7 +390,11 @@ export class RunEngine {
     this.notify({
       runId: run.id,
       occurrenceId: run.occurrence_id,
-      failure: { code: 'missed_output', message: `${entry.output.label}: ${message}`, step: entry.output.label },
+      failure: {
+        code: 'missed_output',
+        message: `${entry.output.label}: ${message}`,
+        step: entry.output.label,
+      },
       attempt: run.attempt,
       outputLabel: entry.output.label,
     })
@@ -394,7 +413,9 @@ export class RunEngine {
     await this.fail(
       run,
       plan,
-      recorded ? { ...recorded, message: `${summary.message} The first was: ${recorded.message}` } : summary,
+      recorded
+        ? { ...recorded, message: `${summary.message} The first was: ${recorded.message}` }
+        : summary,
     )
   }
 
@@ -413,7 +434,10 @@ export class RunEngine {
    */
   private planDrift(runId: string, plan: RunPlan): RunFailure | undefined {
     const records = this.deps.store.steps(runId)
-    if (records.length === plan.length && records.every((record, seq) => record.kind === plan[seq]?.kind)) {
+    if (
+      records.length === plan.length &&
+      records.every((record, seq) => record.kind === plan[seq]?.kind)
+    ) {
       return undefined
     }
     return {
@@ -441,7 +465,9 @@ export class RunEngine {
     await compensateRun(run.id, plan, this.executorDeps())
     this.deps.store.recordFailure(run.id, failure)
     this.deps.store.transition(run.id, 'failed')
-    this.deps.db.prepare("UPDATE occurrence SET status = 'failed' WHERE id = ?").run(run.occurrence_id)
+    this.deps.db
+      .prepare("UPDATE occurrence SET status = 'failed' WHERE id = ?")
+      .run(run.occurrence_id)
     this.logger.error('run failed', { runId: run.id, code: failure.code, message: failure.message })
     this.notify({ runId: run.id, occurrenceId: run.occurrence_id, failure, attempt: run.attempt })
   }
@@ -498,7 +524,9 @@ export class RunEngine {
 
     this.deps.store.recordFailure(runId, { code: 'cancelled', message: reason })
     this.deps.store.transition(runId, 'cancelled')
-    this.deps.db.prepare("UPDATE occurrence SET status = 'cancelled' WHERE id = ?").run(run.occurrence_id)
+    this.deps.db
+      .prepare("UPDATE occurrence SET status = 'cancelled' WHERE id = ?")
+      .run(run.occurrence_id)
     this.logger.info('run cancelled', { runId, reason })
     return 'cancelled'
   }
@@ -524,9 +552,13 @@ export class RunEngine {
 
     // Planned with its real times: this brings the preparation forward, not
     // the service. The outputs still go on air when they were going to.
-    const run = this.deps.store.createRun(occurrenceId, await this.deps.planner.plan(occurrenceId), {
-      attempt: (existing?.attempt ?? 0) + 1,
-    })
+    const run = this.deps.store.createRun(
+      occurrenceId,
+      await this.deps.planner.plan(occurrenceId),
+      {
+        attempt: (existing?.attempt ?? 0) + 1,
+      },
+    )
     this.deps.db.prepare("UPDATE occurrence SET status = 'running' WHERE id = ?").run(occurrenceId)
 
     // Run the prepare phase here rather than waiting for the clock: the
@@ -580,8 +612,10 @@ export class RunEngine {
       }
       const stops = stateOf('stop')
       const starts = stateOf('start')
-      if (stops.length > 0 && stops.every((s) => s === 'done')) progress.set(entry.output.id, 'stopped')
-      else if (starts.length > 0 && starts.every((s) => s === 'done')) progress.set(entry.output.id, 'started')
+      if (stops.length > 0 && stops.every((s) => s === 'done'))
+        progress.set(entry.output.id, 'stopped')
+      else if (starts.length > 0 && starts.every((s) => s === 'done'))
+        progress.set(entry.output.id, 'started')
       else progress.set(entry.output.id, 'pending')
     }
     return progress
@@ -637,7 +671,11 @@ export class RunEngine {
   }
 
   private executorDeps(): ExecutorDeps {
-    const deps: ExecutorDeps = { store: this.deps.store, clock: this.deps.clock, logger: this.logger }
+    const deps: ExecutorDeps = {
+      store: this.deps.store,
+      clock: this.deps.clock,
+      logger: this.logger,
+    }
     if (this.deps.sleeper) deps.sleeper = this.deps.sleeper
     return deps
   }

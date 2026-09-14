@@ -3,7 +3,12 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { openTestDatabase, type Db } from '../db/index.js'
-import { envSecretSource, keyFileSource, MissingMasterKeyError, resolveMasterKey } from './master-key.js'
+import {
+  envSecretSource,
+  keyFileSource,
+  MissingMasterKeyError,
+  resolveMasterKey,
+} from './master-key.js'
 import { Scrubber } from './scrubber.js'
 import { fingerprint, SecretVault, UnknownSecretError, WrongMasterKeyError } from './vault.js'
 
@@ -45,7 +50,9 @@ describe('master key resolution', () => {
   })
 
   it('rejects a short SCHEDULER_SECRET', () => {
-    expect(() => resolveMasterKey([envSecretSource(dir, { SCHEDULER_SECRET: 'short' })])).toThrow(/at least 16/)
+    expect(() => resolveMasterKey([envSecretSource(dir, { SCHEDULER_SECRET: 'short' })])).toThrow(
+      /at least 16/,
+    )
   })
 })
 
@@ -55,7 +62,9 @@ describe('SecretVault', () => {
   it('round-trips a stream key without storing it in the clear', () => {
     const vault = new SecretVault(db, key(), new Scrubber())
     const ref = vault.store('live_abcd-1234-efgh-5678')
-    const stored = db.prepare('SELECT ciphertext FROM secret WHERE id = ?').get(ref) as { ciphertext: Buffer }
+    const stored = db.prepare('SELECT ciphertext FROM secret WHERE id = ?').get(ref) as {
+      ciphertext: Buffer
+    }
     expect(stored.ciphertext.toString('utf8')).not.toContain('live_abcd')
     expect(vault.reveal(ref)).toBe('live_abcd-1234-efgh-5678')
   })
@@ -73,7 +82,9 @@ describe('SecretVault', () => {
   it('reports a wrong master key clearly instead of returning garbage', () => {
     const vault = new SecretVault(db, key(), new Scrubber())
     const ref = vault.store('live_abcd-1234-efgh-5678')
-    const other = resolveMasterKey([envSecretSource(dir, { SCHEDULER_SECRET: 'a-different-long-secret' })])
+    const other = resolveMasterKey([
+      envSecretSource(dir, { SCHEDULER_SECRET: 'a-different-long-secret' }),
+    ])
     const reopened = new SecretVault(db, other, new Scrubber())
     expect(() => reopened.reveal(ref)).toThrow(WrongMasterKeyError)
   })
@@ -82,11 +93,15 @@ describe('SecretVault', () => {
     const vault = new SecretVault(db, key(), new Scrubber())
     const a = vault.store('live_first-key-value')
     const b = vault.store('live_second-key-value')
-    const next = resolveMasterKey([envSecretSource(dir, { SCHEDULER_SECRET: 'the-new-master-secret' })])
+    const next = resolveMasterKey([
+      envSecretSource(dir, { SCHEDULER_SECRET: 'the-new-master-secret' }),
+    ])
     expect(vault.rotate(next)).toBe(2)
     expect(vault.reveal(a)).toBe('live_first-key-value')
     expect(vault.reveal(b)).toBe('live_second-key-value')
-    expect((db.prepare('SELECT key_id FROM secret WHERE id = ?').get(a) as { key_id: string }).key_id).toBe(next.keyId)
+    expect(
+      (db.prepare('SELECT key_id FROM secret WHERE id = ?').get(a) as { key_id: string }).key_id,
+    ).toBe(next.keyId)
   })
 
   it('throws a named error for an unknown reference', () => {
@@ -113,9 +128,13 @@ describe('Scrubber', () => {
 
   it('masks sensitive-looking keys even when the value was never registered', () => {
     const s = new Scrubber()
-    expect(s.redactValue({ url: 'rtmps://x/live2', streamKey: 'never-registered-value', nested: { token: 'abc' } })).toEqual(
-      { url: 'rtmps://x/live2', streamKey: '[redacted]', nested: { token: '[redacted]' } },
-    )
+    expect(
+      s.redactValue({
+        url: 'rtmps://x/live2',
+        streamKey: 'never-registered-value',
+        nested: { token: 'abc' },
+      }),
+    ).toEqual({ url: 'rtmps://x/live2', streamKey: '[redacted]', nested: { token: '[redacted]' } })
   })
 
   it('leaves ordinary words that merely contain a sensitive word alone', () => {

@@ -67,7 +67,6 @@
     --bad: #ff7070;
     --live: #ff6060;
 
-
     /* Tints need more weight on a dark ground to read as a tint at all. */
     --accent-soft: color-mix(in srgb, var(--accent) 17%, transparent);
     --ok-soft: color-mix(in srgb, var(--ok) 17%, transparent);
@@ -123,7 +122,13 @@ body {
   margin: 0;
   background: var(--bg);
   color: var(--text);
-  font-family: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  font-family:
+    ui-sans-serif,
+    system-ui,
+    -apple-system,
+    'Segoe UI',
+    Roboto,
+    sans-serif;
   font-size: 14.5px;
   line-height: 1.55;
   -webkit-font-smoothing: antialiased;
@@ -195,7 +200,9 @@ td,
   border-radius: var(--radius-sm);
   color: var(--text-2);
   text-decoration: none;
-  transition: background-color 0.12s ease, color 0.12s ease;
+  transition:
+    background-color 0.12s ease,
+    color 0.12s ease;
 }
 
 .nav-link svg {
@@ -385,7 +392,10 @@ button {
   color: var(--text);
   cursor: pointer;
   white-space: nowrap;
-  transition: background-color 0.12s ease, border-color 0.12s ease, color 0.12s ease;
+  transition:
+    background-color 0.12s ease,
+    border-color 0.12s ease,
+    color 0.12s ease;
 }
 
 button:hover:not(:disabled) {
@@ -502,7 +512,9 @@ select {
   color: var(--text);
   width: 100%;
   max-width: 100%;
-  transition: border-color 0.12s ease, box-shadow 0.12s ease;
+  transition:
+    border-color 0.12s ease,
+    box-shadow 0.12s ease;
 }
 
 input:not([type='checkbox']):not([type='radio']):hover:not(:disabled),
@@ -544,10 +556,15 @@ select {
   appearance: none;
   padding-right: 30px;
   /* A caret drawn in currentColor, so it follows the theme. */
-  background-image: linear-gradient(45deg, transparent 50%, currentColor 50%),
+  background-image:
+    linear-gradient(45deg, transparent 50%, currentColor 50%),
     linear-gradient(135deg, currentColor 50%, transparent 50%);
-  background-position: calc(100% - 15px) 50%, calc(100% - 10px) 50%;
-  background-size: 5px 5px, 5px 5px;
+  background-position:
+    calc(100% - 15px) 50%,
+    calc(100% - 10px) 50%;
+  background-size:
+    5px 5px,
+    5px 5px;
   background-repeat: no-repeat;
 }
 

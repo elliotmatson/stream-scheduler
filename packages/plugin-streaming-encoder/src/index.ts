@@ -89,7 +89,8 @@ class StreamingEncoderDevice {
 
     const features = ['streaming']
     if (this.customizablePlatform()) features.push('custom-url')
-    if (this.platforms.some((p) => p.servers.some((s) => s.url.startsWith('srt')))) features.push('srt')
+    if (this.platforms.some((p) => p.servers.some((s) => s.url.startsWith('srt'))))
+      features.push('srt')
     features.push(`platforms:${this.platforms.length}`)
 
     return {
@@ -107,7 +108,11 @@ class StreamingEncoderDevice {
       if (state.status === 'Interrupted') {
         // On air but broken: the operator needs to see this, and it is not
         // the same as unreachable.
-        return { state: 'degraded', message: 'The livestream was interrupted.', since: this.connectedAt }
+        return {
+          state: 'degraded',
+          message: 'The livestream was interrupted.',
+          since: this.connectedAt,
+        }
       }
       return { state: 'connected', since: this.connectedAt }
     } catch (error) {
@@ -118,7 +123,8 @@ class StreamingEncoderDevice {
 
   nodes(): NodeDefinition[] {
     const transports: ('rtmp' | 'rtmps' | 'srt')[] = ['rtmp', 'rtmps']
-    if (this.platforms.some((p) => p.servers.some((s) => s.url.startsWith('srt')))) transports.push('srt')
+    if (this.platforms.some((p) => p.servers.some((s) => s.url.startsWith('srt'))))
+      transports.push('srt')
 
     return [
       {
@@ -153,9 +159,13 @@ class StreamingEncoderDevice {
       startStreaming: async () => {
         const platform = await this.api.activePlatform()
         if (!platform?.key && !platform?.url) {
-          throw new DeviceError('no-stream-target', 'The encoder has no streaming destination set.', {
-            remediation: 'Push the ingest URL and key before starting the stream.',
-          })
+          throw new DeviceError(
+            'no-stream-target',
+            'The encoder has no streaming destination set.',
+            {
+              remediation: 'Push the ingest URL and key before starting the stream.',
+            },
+          )
         }
         await this.api.start()
       },
@@ -265,7 +275,10 @@ class StreamingEncoderDevice {
     return this.platforms.find((platform) => platform.customizableUrlEnabled === true)
   }
 
-  private serverFor(platform: PlatformConfig, url: string): { server: string; url: string } | undefined {
+  private serverFor(
+    platform: PlatformConfig,
+    url: string,
+  ): { server: string; url: string } | undefined {
     return platform.servers.find((server) => sameEndpoint(server.url, url))
   }
 
@@ -288,7 +301,10 @@ class StreamingEncoderDevice {
     if (platform.defaultProfile) return platform.defaultProfile
     const first = platform.profiles[0]?.profile
     if (first) return first
-    throw new DeviceError('no-quality', `The platform "${platform.platform}" offers no quality profiles.`)
+    throw new DeviceError(
+      'no-quality',
+      `The platform "${platform.platform}" offers no quality profiles.`,
+    )
   }
 
   /** The destination, whether the device volunteered it or we know it. */

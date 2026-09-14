@@ -106,11 +106,7 @@ export interface StorageSlot {
 }
 
 export type ManualAction =
-  | 'startStreaming'
-  | 'stopStreaming'
-  | 'startRecording'
-  | 'stopRecording'
-  | 'selectSlot'
+  'startStreaming' | 'stopStreaming' | 'startRecording' | 'stopRecording' | 'selectSlot'
 
 export interface RunStep {
   seq: number
@@ -179,8 +175,24 @@ export interface Preview {
 
 /** Mirrors `ConfigField` in the SDK: the host renders whatever a plugin declares. */
 export type ConfigField =
-  | { type: 'textinput'; id: string; label: string; default?: string; required?: boolean; tooltip?: string }
-  | { type: 'number'; id: string; label: string; default?: number; min?: number; max?: number; required?: boolean; tooltip?: string }
+  | {
+      type: 'textinput'
+      id: string
+      label: string
+      default?: string
+      required?: boolean
+      tooltip?: string
+    }
+  | {
+      type: 'number'
+      id: string
+      label: string
+      default?: number
+      min?: number
+      max?: number
+      required?: boolean
+      tooltip?: string
+    }
   | { type: 'checkbox'; id: string; label: string; default?: boolean; tooltip?: string }
   | {
       type: 'dropdown'
@@ -367,7 +379,8 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export const api = {
-  occurrences: (from: number, to: number) => request<Occurrence[]>(`/api/occurrences?from=${from}&to=${to}`),
+  occurrences: (from: number, to: number) =>
+    request<Occurrence[]>(`/api/occurrences?from=${from}&to=${to}`),
   series: () => request<Series[]>('/api/series'),
   preview: (seriesId: string) => request<Preview[]>(`/api/series/${seriesId}/preview`),
   devices: () => request<Device[]>('/api/devices'),
@@ -387,7 +400,11 @@ export const api = {
   /** Point an encoder at a saved target by hand. The credential is named by
    *  id: the key is read out of the vault on the server and never travels
    *  through the browser. */
-  pointAtTarget: (deviceId: string, nodeId: string, body: { credentialId: string; quality?: string }) =>
+  pointAtTarget: (
+    deviceId: string,
+    nodeId: string,
+    body: { credentialId: string; quality?: string },
+  ) =>
     request<{ state: NodeState | null }>(`/api/devices/${deviceId}/nodes/${nodeId}/stream-target`, {
       method: 'POST',
       body: JSON.stringify(body),
@@ -406,9 +423,14 @@ export const api = {
   runs: () => request<Run[]>('/api/runs'),
   run: (id: string) => request<Run>(`/api/runs/${id}`),
   cancelRun: (id: string, reason: string) =>
-    request<{ state: string }>(`/api/runs/${id}/cancel`, { method: 'POST', body: JSON.stringify({ reason }) }),
+    request<{ state: string }>(`/api/runs/${id}/cancel`, {
+      method: 'POST',
+      body: JSON.stringify({ reason }),
+    }),
   startNow: (occurrenceId: string) =>
-    request<{ runId: string; state: string }>(`/api/occurrences/${occurrenceId}/start-now`, { method: 'POST' }),
+    request<{ runId: string; state: string }>(`/api/occurrences/${occurrenceId}/start-now`, {
+      method: 'POST',
+    }),
   /** Runs the prepare phase early, so an unlisted stream's link exists in
    *  time to be sent round. Every output still starts at its own time. */
   prepareNow: (occurrenceId: string) =>
@@ -416,15 +438,22 @@ export const api = {
       `/api/occurrences/${occurrenceId}/prepare-now`,
       { method: 'POST' },
     ),
-  skip: (occurrenceId: string) => request<unknown>(`/api/occurrences/${occurrenceId}/skip`, { method: 'POST' }),
+  skip: (occurrenceId: string) =>
+    request<unknown>(`/api/occurrences/${occurrenceId}/skip`, { method: 'POST' }),
   notificationKinds: () => request<ChannelKind[]>('/api/notifications/kinds'),
   notificationChannels: () =>
     request<{ channels: NotificationChannel[]; pending: number }>('/api/notifications/channels'),
   createChannel: (input: { kind: string; label: string; config: Record<string, unknown> }) =>
-    request<{ id: string }>('/api/notifications/channels', { method: 'POST', body: JSON.stringify(input) }),
-  testChannel: (id: string) => request<unknown>(`/api/notifications/channels/${id}/test`, { method: 'POST' }),
-  deleteChannel: (id: string) => request<unknown>(`/api/notifications/channels/${id}`, { method: 'DELETE' }),
-  unskip: (occurrenceId: string) => request<unknown>(`/api/occurrences/${occurrenceId}/unskip`, { method: 'POST' }),
+    request<{ id: string }>('/api/notifications/channels', {
+      method: 'POST',
+      body: JSON.stringify(input),
+    }),
+  testChannel: (id: string) =>
+    request<unknown>(`/api/notifications/channels/${id}/test`, { method: 'POST' }),
+  deleteChannel: (id: string) =>
+    request<unknown>(`/api/notifications/channels/${id}`, { method: 'DELETE' }),
+  unskip: (occurrenceId: string) =>
+    request<unknown>(`/api/occurrences/${occurrenceId}/unskip`, { method: 'POST' }),
 
   // -- setup --------------------------------------------------------------
 
@@ -433,18 +462,29 @@ export const api = {
     request<DiscoveredDevice[]>(`/api/plugins/${pluginId}/discover`, { method: 'POST' }),
   createDevice: (input: { pluginId: string; label: string; config: Record<string, unknown> }) =>
     request<{ id: string }>('/api/devices', { method: 'POST', body: JSON.stringify(input) }),
-  updateDevice: (id: string, input: { label?: string; config?: Record<string, unknown>; enabled?: boolean }) =>
-    request<unknown>(`/api/devices/${id}`, { method: 'PATCH', body: JSON.stringify(input) }),
+  updateDevice: (
+    id: string,
+    input: { label?: string; config?: Record<string, unknown>; enabled?: boolean },
+  ) => request<unknown>(`/api/devices/${id}`, { method: 'PATCH', body: JSON.stringify(input) }),
   deleteDevice: (id: string) => request<unknown>(`/api/devices/${id}`, { method: 'DELETE' }),
 
   destinationProviders: () => request<DestinationProvider[]>('/api/destination-providers'),
-  oauthInstructions: (provider: string) => request<OAuthInstructions>(`/api/oauth/${provider}/instructions`),
+  oauthInstructions: (provider: string) =>
+    request<OAuthInstructions>(`/api/oauth/${provider}/instructions`),
   oauthClients: () => request<OAuthClient[]>('/api/oauth/clients'),
-  createOAuthClient: (input: { provider: string; label: string; clientId: string; clientSecret: string }) =>
+  createOAuthClient: (input: {
+    provider: string
+    label: string
+    clientId: string
+    clientSecret: string
+  }) =>
     request<{ id: string }>('/api/oauth/clients', { method: 'POST', body: JSON.stringify(input) }),
   /** `clientRef` is the stored client's row id, not Google's client ID. */
   startOAuth: (provider: string, clientRef: string) =>
-    request<{ url: string }>(`/api/oauth/${provider}/start`, { method: 'POST', body: JSON.stringify({ clientRef }) }),
+    request<{ url: string }>(`/api/oauth/${provider}/start`, {
+      method: 'POST',
+      body: JSON.stringify({ clientRef }),
+    }),
   accounts: () => request<Account[]>('/api/accounts'),
   deleteAccount: (id: string) => request<unknown>(`/api/accounts/${id}`, { method: 'DELETE' }),
 
@@ -459,15 +499,21 @@ export const api = {
     label: string
     accountId: string
     config: Record<string, unknown>
-  }) => request<{ id: string }>('/api/destinations', { method: 'POST', body: JSON.stringify(input) }),
+  }) =>
+    request<{ id: string }>('/api/destinations', { method: 'POST', body: JSON.stringify(input) }),
   updateDestination: (id: string, input: { label?: string; config?: Record<string, unknown> }) =>
-    request<{ ok: true }>(`/api/destinations/${id}`, { method: 'PATCH', body: JSON.stringify(input) }),
-  deleteDestination: (id: string) => request<unknown>(`/api/destinations/${id}`, { method: 'DELETE' }),
+    request<{ ok: true }>(`/api/destinations/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify(input),
+    }),
+  deleteDestination: (id: string) =>
+    request<unknown>(`/api/destinations/${id}`, { method: 'DELETE' }),
 
   credentials: () => request<Credential[]>('/api/credentials'),
   createCredential: (input: { label: string; ingestUrl: string; key: string }) =>
     request<{ id: string }>('/api/credentials', { method: 'POST', body: JSON.stringify(input) }),
-  deleteCredential: (id: string) => request<unknown>(`/api/credentials/${id}`, { method: 'DELETE' }),
+  deleteCredential: (id: string) =>
+    request<unknown>(`/api/credentials/${id}`, { method: 'DELETE' }),
 
   outputs: (seriesId: string) => request<OutputsResponse>(`/api/series/${seriesId}/outputs`),
   createOutput: (seriesId: string, input: OutputInput) =>
@@ -476,8 +522,12 @@ export const api = {
       body: JSON.stringify(input),
     }),
   updateOutput: (id: string, input: Partial<OutputInput>) =>
-    request<OutputsResponse>(`/api/outputs/${id}`, { method: 'PATCH', body: JSON.stringify(input) }),
-  deleteOutput: (id: string) => request<OutputsResponse>(`/api/outputs/${id}`, { method: 'DELETE' }),
+    request<OutputsResponse>(`/api/outputs/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify(input),
+    }),
+  deleteOutput: (id: string) =>
+    request<OutputsResponse>(`/api/outputs/${id}`, { method: 'DELETE' }),
   reorderOutputs: (seriesId: string, order: string[]) =>
     request<OutputsResponse>(`/api/series/${seriesId}/outputs/order`, {
       method: 'POST',
@@ -492,7 +542,11 @@ export const api = {
     durationMs: number
     templates: Record<string, string>
     count?: number
-  }) => request<SchedulePreview>('/api/schedule/preview', { method: 'POST', body: JSON.stringify(input) }),
+  }) =>
+    request<SchedulePreview>('/api/schedule/preview', {
+      method: 'POST',
+      body: JSON.stringify(input),
+    }),
   createSeries: (input: SeriesInput) =>
     request<{ id: string }>('/api/series', { method: 'POST', body: JSON.stringify(input) }),
   updateSeries: (id: string, input: Partial<SeriesInput>) =>
@@ -501,7 +555,10 @@ export const api = {
 }
 
 /** Loads once, then again whenever `deps` change or `reload` is called. */
-export function useResource<T>(load: () => Promise<T>, deps: unknown[] = []): {
+export function useResource<T>(
+  load: () => Promise<T>,
+  deps: unknown[] = [],
+): {
   data: T | undefined
   error: string | undefined
   loading: boolean
@@ -576,7 +633,13 @@ export interface Dashboard {
     runState: string | null
     outputs: number
   }[]
-  devices: { id: string; label: string; health: string; lastError: string | null; detail: string | null }[]
+  devices: {
+    id: string
+    label: string
+    health: string
+    lastError: string | null
+    detail: string | null
+  }[]
   attention: { kind: string; message: string; href: string }[]
 }
 

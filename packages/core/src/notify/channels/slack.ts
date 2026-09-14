@@ -13,7 +13,8 @@ const configSchema: ConfigField[] = [
     id: 'webhookUrl',
     label: 'Incoming webhook URL',
     required: true,
-    tooltip: 'From the Slack app\'s "Incoming Webhooks" page. Stored encrypted and never shown again.',
+    tooltip:
+      'From the Slack app\'s "Incoming Webhooks" page. Stored encrypted and never shown again.',
   },
 ]
 
@@ -23,12 +24,19 @@ export const slackChannel: NotificationChannel = {
   configSchema,
   minIntervalMs: 1_100,
 
-  async send(notification: Notification, config: ConfigValues, deps: ChannelSendDeps): Promise<void> {
+  async send(
+    notification: Notification,
+    config: ConfigValues,
+    deps: ChannelSendDeps,
+  ): Promise<void> {
     const webhookUrl = String(config.webhookUrl ?? '')
     if (!webhookUrl) throw new Error('This Slack channel has no webhook URL.')
 
     const blocks: Record<string, unknown>[] = [
-      { type: 'header', text: { type: 'plain_text', text: trim(notification.title, 150), emoji: true } },
+      {
+        type: 'header',
+        text: { type: 'plain_text', text: trim(notification.title, 150), emoji: true },
+      },
       { type: 'section', text: { type: 'mrkdwn', text: notification.summary } },
     ]
 

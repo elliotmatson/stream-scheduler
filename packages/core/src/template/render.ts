@@ -26,7 +26,9 @@ export interface RenderResult {
 export class TemplateError extends Error {
   readonly issues: TemplateIssue[]
   constructor(issues: TemplateIssue[]) {
-    super(`Template could not be rendered: ${issues.map((i) => `${i.token} — ${i.message}`).join('; ')}`)
+    super(
+      `Template could not be rendered: ${issues.map((i) => `${i.token} — ${i.message}`).join('; ')}`,
+    )
     this.name = 'TemplateError'
     this.issues = issues
   }
@@ -110,10 +112,12 @@ function tokenize(raw: string): Part[] {
   while ((match = pattern.exec(raw)) !== null) {
     consumed = pattern.lastIndex
     if (match[1] !== undefined) parts.push({ kind: 'quoted', value: match[1] })
-    else if (match[2] !== undefined) parts.push({ kind: 'pair', key: match[2], value: match[3] ?? match[4] ?? '' })
+    else if (match[2] !== undefined)
+      parts.push({ kind: 'pair', key: match[2], value: match[3] ?? match[4] ?? '' })
     else if (match[5] !== undefined) parts.push({ kind: 'bare', value: match[5] })
   }
-  if (raw.slice(consumed).trim() !== '') throw new Error(`could not parse "${raw.slice(consumed).trim()}"`)
+  if (raw.slice(consumed).trim() !== '')
+    throw new Error(`could not parse "${raw.slice(consumed).trim()}"`)
   return parts
 }
 
@@ -138,7 +142,8 @@ function resolve(token: ParsedToken, ctx: TemplateContext): string {
       const value = ctx.counters?.[name]
       if (value === undefined) throw new Error(`no counter named "${name}"`)
       const pad = token.options.pad ? Number(token.options.pad) : 0
-      if (!Number.isInteger(pad) || pad < 0) throw new Error('pad must be a non-negative whole number')
+      if (!Number.isInteger(pad) || pad < 0)
+        throw new Error('pad must be a non-negative whole number')
       return String(value).padStart(pad, '0')
     }
     default:
@@ -153,7 +158,9 @@ function formatInZone(token: ParsedToken, ctx: TemplateContext, fallbackFormat: 
   try {
     return formatDate(moment, pattern)
   } catch (error) {
-    throw new Error(`"${pattern}" is not a valid date format (${error instanceof Error ? error.message : error})`)
+    throw new Error(
+      `"${pattern}" is not a valid date format (${error instanceof Error ? error.message : error})`,
+    )
   }
 }
 

@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import { describeSchedule, expandOccurrences, InvalidScheduleError, validateSchedule } from './recurrence.js'
+import {
+  describeSchedule,
+  expandOccurrences,
+  InvalidScheduleError,
+  validateSchedule,
+} from './recurrence.js'
 import type { SeriesSchedule } from './recurrence.js'
 import { wallTimeAt } from './zoned.js'
 
@@ -77,7 +82,10 @@ describe('expandOccurrences', () => {
   })
 
   it('honours UNTIL as a wall-clock date in the series zone', () => {
-    const bounded: SeriesSchedule = { ...sundayService, rrule: 'FREQ=WEEKLY;BYDAY=SU;UNTIL=20260215T235959Z' }
+    const bounded: SeriesSchedule = {
+      ...sundayService,
+      rrule: 'FREQ=WEEKLY;BYDAY=SU;UNTIL=20260215T235959Z',
+    }
     expect(localTimes(bounded, '2026-02-01T00:00:00Z', '2026-04-01T00:00:00Z')).toEqual([
       '2026-02-01 09:00',
       '2026-02-08 09:00',
@@ -91,7 +99,10 @@ describe('expandOccurrences', () => {
   })
 
   it('drops excluded dates', () => {
-    const withExdate: SeriesSchedule = { ...sundayService, exdates: [Date.parse('2026-02-08T15:00:00Z')] }
+    const withExdate: SeriesSchedule = {
+      ...sundayService,
+      exdates: [Date.parse('2026-02-08T15:00:00Z')],
+    }
     expect(localTimes(withExdate, '2026-02-01T00:00:00Z', '2026-02-16T00:00:00Z')).toEqual([
       '2026-02-01 09:00',
       '2026-02-15 09:00',
@@ -100,7 +111,9 @@ describe('expandOccurrences', () => {
 
   it('returns the single instant for a one-off', () => {
     const once: SeriesSchedule = { ...sundayService, rrule: null }
-    expect(localTimes(once, '2026-01-01T00:00:00Z', '2027-01-01T00:00:00Z')).toEqual(['2026-02-01 09:00'])
+    expect(localTimes(once, '2026-01-01T00:00:00Z', '2027-01-01T00:00:00Z')).toEqual([
+      '2026-02-01 09:00',
+    ])
     expect(localTimes(once, '2026-06-01T00:00:00Z', '2026-07-01T00:00:00Z')).toEqual([])
   })
 
@@ -116,25 +129,44 @@ describe('expandOccurrences', () => {
   })
 
   it('returns nothing for an inverted window', () => {
-    expect(expandOccurrences(sundayService, Date.parse('2026-03-01T00:00:00Z'), Date.parse('2026-02-01T00:00:00Z'))).toEqual([])
+    expect(
+      expandOccurrences(
+        sundayService,
+        Date.parse('2026-03-01T00:00:00Z'),
+        Date.parse('2026-02-01T00:00:00Z'),
+      ),
+    ).toEqual([])
   })
 
   it('caps runaway rules rather than filling the database', () => {
     const everyMinute: SeriesSchedule = { ...sundayService, rrule: 'FREQ=MINUTELY' }
-    const results = expandOccurrences(everyMinute, sundayService.dtstart, sundayService.dtstart + 365 * 86_400_000)
+    const results = expandOccurrences(
+      everyMinute,
+      sundayService.dtstart,
+      sundayService.dtstart + 365 * 86_400_000,
+    )
     expect(results).toHaveLength(10_000)
   })
 
   it('respects an explicit limit', () => {
     expect(
-      expandOccurrences(sundayService, Date.parse('2026-02-01T00:00:00Z'), Date.parse('2027-02-01T00:00:00Z'), {
-        limit: 3,
-      }),
+      expandOccurrences(
+        sundayService,
+        Date.parse('2026-02-01T00:00:00Z'),
+        Date.parse('2027-02-01T00:00:00Z'),
+        {
+          limit: 3,
+        },
+      ),
     ).toHaveLength(3)
   })
 
   it('works the same in a zone that never changes offset', () => {
-    const tokyo: SeriesSchedule = { ...sundayService, timezone: 'Asia/Tokyo', dtstart: Date.parse('2026-02-01T00:00:00Z') }
+    const tokyo: SeriesSchedule = {
+      ...sundayService,
+      timezone: 'Asia/Tokyo',
+      dtstart: Date.parse('2026-02-01T00:00:00Z'),
+    }
     expect(localTimes(tokyo, '2026-02-01T00:00:00Z', '2026-02-16T00:00:00Z')).toEqual([
       '2026-02-01 09:00',
       '2026-02-08 09:00',
@@ -145,11 +177,15 @@ describe('expandOccurrences', () => {
 
 describe('validateSchedule', () => {
   it('rejects an unknown timezone', () => {
-    expect(() => validateSchedule({ ...sundayService, timezone: 'America/Chicgao' })).toThrow(InvalidScheduleError)
+    expect(() => validateSchedule({ ...sundayService, timezone: 'America/Chicgao' })).toThrow(
+      InvalidScheduleError,
+    )
   })
 
   it('rejects a malformed rule', () => {
-    expect(() => validateSchedule({ ...sundayService, rrule: 'FREQ=NEVER' })).toThrow(InvalidScheduleError)
+    expect(() => validateSchedule({ ...sundayService, rrule: 'FREQ=NEVER' })).toThrow(
+      InvalidScheduleError,
+    )
   })
 
   it('rejects a zero-length event', () => {

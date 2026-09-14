@@ -51,7 +51,7 @@ by Google taking a list of redirect URIs.
 channel that lives in a Brand Account — which most organisation channels do — is
 not a member of any Google Workspace, so an "Internal" client refuses it at the
 consent screen with `Error 403: org_internal`. The trap is that the person
-setting it up connects their *own* channel without trouble and only finds out
+setting it up connects their _own_ channel without trouble and only finds out
 when they try to add the one that matters. Nothing in this app can detect it:
 the refusal happens on Google's own page, before the redirect back.
 
@@ -143,16 +143,16 @@ Costs (verify against
 at implementation time — this list should be treated as a design estimate, not
 gospel):
 
-| Call | ~Units | Per event |
-|---|---|---|
-| `liveBroadcasts.insert` | 50 | 1 |
-| `liveStreams.insert` | 50 | 0 if reusable |
-| `liveBroadcasts.bind` | 50 | 1 |
-| `playlistItems.insert` | 50 | 1 |
-| `videos.update` (category, tags, thumbnail metadata) | 50 | 0–1 |
-| `liveBroadcasts.list` / `liveStreams.list` | 1 | polling |
-| `liveBroadcasts.transition` | 50 | 0 with autoStart/autoStop |
-| `search.list` | **100** | **never** |
+| Call                                                 | ~Units  | Per event                 |
+| ---------------------------------------------------- | ------- | ------------------------- |
+| `liveBroadcasts.insert`                              | 50      | 1                         |
+| `liveStreams.insert`                                 | 50      | 0 if reusable             |
+| `liveBroadcasts.bind`                                | 50      | 1                         |
+| `playlistItems.insert`                               | 50      | 1                         |
+| `videos.update` (category, tags, thumbnail metadata) | 50      | 0–1                       |
+| `liveBroadcasts.list` / `liveStreams.list`           | 1       | polling                   |
+| `liveBroadcasts.transition`                          | 50      | 0 with autoStart/autoStop |
+| `search.list`                                        | **100** | **never**                 |
 
 So roughly **150–250 units per event** plus polling. Forty events a day is
 comfortable; a badly written health poll is not. Three rules:
@@ -172,12 +172,12 @@ comfortable; a badly written health poll is not. Three rules:
 
 ## Failure modes worth designing for explicitly
 
-| Symptom | Cause | Handling |
-|---|---|---|
+| Symptom                                       | Cause                                                                                                 | Handling                                                                                                                                                |
+| --------------------------------------------- | ----------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `redirect_uri_mismatch` at the consent screen | what the app advertised is not registered on the client, often `http://` where a proxy terminated TLS | Derive it from `X-Forwarded-Proto`/`X-Forwarded-Host`/`Host`, show that exact URI in the instructions, and warn when it is one Google will not register |
-| `org_internal` at the consent screen | OAuth client's user type is "Internal"; a Brand Account channel is not in the Workspace | Cannot be caught by this app — the setup instructions require "External" and say why |
-| `invalid_grant` on refresh | consent screen left on Testing (7-day expiry), or the user revoked access | Named error + reconnect CTA; mark `account.status = 'reauth_required'` and alert *before* the next prepare window |
-| `quotaExceeded` | day's budget gone | Ledger should have prevented it; if it happens, fail the run at prepare with a clear cause rather than half-creating things |
-| `errorStreamInactive` on transition | encoder wasn't pushing yet | Avoided by autoStart; fallback path waits for ingest health before transitioning |
-| Broadcast created, bind failed | crash or API error mid-prepare | Compensation deletes the orphan broadcast, or makes it private and tags it if deletion fails |
-| Duplicate broadcasts | retry after a crash | Prevented by writing the idempotency key before the call and reconciling on startup — see [03](./03-scheduling-engine.md) |
+| `org_internal` at the consent screen          | OAuth client's user type is "Internal"; a Brand Account channel is not in the Workspace               | Cannot be caught by this app — the setup instructions require "External" and say why                                                                    |
+| `invalid_grant` on refresh                    | consent screen left on Testing (7-day expiry), or the user revoked access                             | Named error + reconnect CTA; mark `account.status = 'reauth_required'` and alert _before_ the next prepare window                                       |
+| `quotaExceeded`                               | day's budget gone                                                                                     | Ledger should have prevented it; if it happens, fail the run at prepare with a clear cause rather than half-creating things                             |
+| `errorStreamInactive` on transition           | encoder wasn't pushing yet                                                                            | Avoided by autoStart; fallback path waits for ingest health before transitioning                                                                        |
+| Broadcast created, bind failed                | crash or API error mid-prepare                                                                        | Compensation deletes the orphan broadcast, or makes it private and tags it if deletion fails                                                            |
+| Duplicate broadcasts                          | retry after a crash                                                                                   | Prevented by writing the idempotency key before the call and reconciling on startup — see [03](./03-scheduling-engine.md)                               |

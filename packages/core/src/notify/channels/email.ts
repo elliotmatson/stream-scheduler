@@ -27,7 +27,13 @@ const configSchema: ConfigField[] = [
     tooltip: 'For Google Workspace this must be an app password, not the account password.',
   },
   { type: 'textinput', id: 'from', label: 'From address', required: true },
-  { type: 'textinput', id: 'to', label: 'To addresses', required: true, tooltip: 'Comma separated.' },
+  {
+    type: 'textinput',
+    id: 'to',
+    label: 'To addresses',
+    required: true,
+    tooltip: 'Comma separated.',
+  },
 ]
 
 export const emailChannel: NotificationChannel = {
@@ -39,10 +45,13 @@ export const emailChannel: NotificationChannel = {
     const host = String(config.host ?? '')
     const to = String(config.to ?? '')
     const from = String(config.from ?? '')
-    if (!host || !to || !from) throw new Error('This email channel is missing a server, sender or recipient.')
+    if (!host || !to || !from)
+      throw new Error('This email channel is missing a server, sender or recipient.')
 
-    const username = typeof config.username === 'string' && config.username ? config.username : undefined
-    const password = typeof config.password === 'string' && config.password ? config.password : undefined
+    const username =
+      typeof config.username === 'string' && config.username ? config.username : undefined
+    const password =
+      typeof config.password === 'string' && config.password ? config.password : undefined
 
     const transport = createTransport({
       host,
@@ -54,7 +63,10 @@ export const emailChannel: NotificationChannel = {
     try {
       await transport.sendMail({
         from,
-        to: to.split(',').map((address) => address.trim()).filter(Boolean),
+        to: to
+          .split(',')
+          .map((address) => address.trim())
+          .filter(Boolean),
         // The subject is the whole message for anyone reading on a phone
         // lock screen, which on a Sunday morning is most people.
         subject: `[${severityLabel(notification.severity)}] ${notification.title}`,

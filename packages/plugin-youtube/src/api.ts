@@ -3,7 +3,10 @@ import { assertAffordable, QUOTA_COSTS, type QuotaMethod } from './quota.js'
 
 export const API_BASE = 'https://www.googleapis.com/youtube/v3'
 
-export type Fetch = (url: string, init?: { method?: string; headers?: Record<string, string>; body?: string }) => Promise<{
+export type Fetch = (
+  url: string,
+  init?: { method?: string; headers?: Record<string, string>; body?: string },
+) => Promise<{
   ok: boolean
   status: number
   text(): Promise<string>
@@ -69,7 +72,11 @@ export interface LiveStream {
   snippet?: { title?: string }
   cdn?: {
     ingestionType?: string
-    ingestionInfo?: { ingestionAddress?: string; streamName?: string; rtmpsIngestionAddress?: string }
+    ingestionInfo?: {
+      ingestionAddress?: string
+      streamName?: string
+      rtmpsIngestionAddress?: string
+    }
   }
   status?: { streamStatus?: string }
   contentDetails?: { isReusable?: boolean }
@@ -101,24 +108,30 @@ export class YouTubeApi {
     enableAutoStop: boolean
     latencyPreference?: string
   }): Promise<LiveBroadcast> {
-    return this.call<LiveBroadcast>('liveBroadcasts.insert', 'POST', '/liveBroadcasts', {
-      part: 'snippet,status,contentDetails',
-    }, {
-      snippet: {
-        title: input.title,
-        description: input.description,
-        scheduledStartTime: input.scheduledStartTime,
-        scheduledEndTime: input.scheduledEndTime,
+    return this.call<LiveBroadcast>(
+      'liveBroadcasts.insert',
+      'POST',
+      '/liveBroadcasts',
+      {
+        part: 'snippet,status,contentDetails',
       },
-      status: { privacyStatus: input.privacyStatus, selfDeclaredMadeForKids: false },
-      contentDetails: {
-        // Preferring these over explicit transitions removes the classic
-        // errorStreamInactive race, where the transition beats the encoder.
-        enableAutoStart: input.enableAutoStart,
-        enableAutoStop: input.enableAutoStop,
-        ...(input.latencyPreference ? { latencyPreference: input.latencyPreference } : {}),
+      {
+        snippet: {
+          title: input.title,
+          description: input.description,
+          scheduledStartTime: input.scheduledStartTime,
+          scheduledEndTime: input.scheduledEndTime,
+        },
+        status: { privacyStatus: input.privacyStatus, selfDeclaredMadeForKids: false },
+        contentDetails: {
+          // Preferring these over explicit transitions removes the classic
+          // errorStreamInactive race, where the transition beats the encoder.
+          enableAutoStart: input.enableAutoStart,
+          enableAutoStop: input.enableAutoStop,
+          ...(input.latencyPreference ? { latencyPreference: input.latencyPreference } : {}),
+        },
       },
-    })
+    )
   }
 
   async listUpcomingBroadcasts(): Promise<LiveBroadcast[]> {
@@ -136,10 +149,15 @@ export class YouTubeApi {
   }
 
   async getBroadcast(id: string): Promise<LiveBroadcast | undefined> {
-    const response = await this.call<{ items?: LiveBroadcast[] }>('liveBroadcasts.list', 'GET', '/liveBroadcasts', {
-      part: 'snippet,status,contentDetails',
-      id,
-    })
+    const response = await this.call<{ items?: LiveBroadcast[] }>(
+      'liveBroadcasts.list',
+      'GET',
+      '/liveBroadcasts',
+      {
+        part: 'snippet,status,contentDetails',
+        id,
+      },
+    )
     return response.items?.[0]
   }
 
@@ -151,56 +169,94 @@ export class YouTubeApi {
     })
   }
 
-  async transitionBroadcast(broadcastId: string, status: 'testing' | 'live' | 'complete'): Promise<LiveBroadcast> {
-    return this.call<LiveBroadcast>('liveBroadcasts.transition', 'POST', '/liveBroadcasts/transition', {
-      part: 'id,status',
-      id: broadcastId,
-      broadcastStatus: status,
-    })
+  async transitionBroadcast(
+    broadcastId: string,
+    status: 'testing' | 'live' | 'complete',
+  ): Promise<LiveBroadcast> {
+    return this.call<LiveBroadcast>(
+      'liveBroadcasts.transition',
+      'POST',
+      '/liveBroadcasts/transition',
+      {
+        part: 'id,status',
+        id: broadcastId,
+        broadcastStatus: status,
+      },
+    )
   }
 
   async updateBroadcastPrivacy(broadcastId: string, privacyStatus: string): Promise<LiveBroadcast> {
-    return this.call<LiveBroadcast>('liveBroadcasts.update', 'PUT', '/liveBroadcasts', { part: 'id,status' }, {
-      id: broadcastId,
-      status: { privacyStatus },
-    })
+    return this.call<LiveBroadcast>(
+      'liveBroadcasts.update',
+      'PUT',
+      '/liveBroadcasts',
+      { part: 'id,status' },
+      {
+        id: broadcastId,
+        status: { privacyStatus },
+      },
+    )
   }
 
   async deleteBroadcast(broadcastId: string): Promise<void> {
-    await this.call<unknown>('liveBroadcasts.delete', 'DELETE', '/liveBroadcasts', { id: broadcastId })
+    await this.call<unknown>('liveBroadcasts.delete', 'DELETE', '/liveBroadcasts', {
+      id: broadcastId,
+    })
   }
 
   async insertStream(title: string, isReusable: boolean): Promise<LiveStream> {
-    return this.call<LiveStream>('liveStreams.insert', 'POST', '/liveStreams', {
-      part: 'snippet,cdn,contentDetails',
-    }, {
-      snippet: { title },
-      cdn: { frameRate: 'variable', ingestionType: 'rtmp', resolution: 'variable' },
-      contentDetails: { isReusable },
-    })
+    return this.call<LiveStream>(
+      'liveStreams.insert',
+      'POST',
+      '/liveStreams',
+      {
+        part: 'snippet,cdn,contentDetails',
+      },
+      {
+        snippet: { title },
+        cdn: { frameRate: 'variable', ingestionType: 'rtmp', resolution: 'variable' },
+        contentDetails: { isReusable },
+      },
+    )
   }
 
   async listStreams(): Promise<LiveStream[]> {
-    const response = await this.call<{ items?: LiveStream[] }>('liveStreams.list', 'GET', '/liveStreams', {
-      part: 'snippet,cdn,contentDetails,status',
-      mine: 'true',
-      maxResults: '50',
-    })
+    const response = await this.call<{ items?: LiveStream[] }>(
+      'liveStreams.list',
+      'GET',
+      '/liveStreams',
+      {
+        part: 'snippet,cdn,contentDetails,status',
+        mine: 'true',
+        maxResults: '50',
+      },
+    )
     return response.items ?? []
   }
 
   async getStream(id: string): Promise<LiveStream | undefined> {
-    const response = await this.call<{ items?: LiveStream[] }>('liveStreams.list', 'GET', '/liveStreams', {
-      part: 'snippet,cdn,contentDetails,status',
-      id,
-    })
+    const response = await this.call<{ items?: LiveStream[] }>(
+      'liveStreams.list',
+      'GET',
+      '/liveStreams',
+      {
+        part: 'snippet,cdn,contentDetails,status',
+        id,
+      },
+    )
     return response.items?.[0]
   }
 
   async insertPlaylistItem(playlistId: string, videoId: string): Promise<{ id: string }> {
-    return this.call<{ id: string }>('playlistItems.insert', 'POST', '/playlistItems', { part: 'snippet' }, {
-      snippet: { playlistId, resourceId: { kind: 'youtube#video', videoId } },
-    })
+    return this.call<{ id: string }>(
+      'playlistItems.insert',
+      'POST',
+      '/playlistItems',
+      { part: 'snippet' },
+      {
+        snippet: { playlistId, resourceId: { kind: 'youtube#video', videoId } },
+      },
+    )
   }
 
   /**
@@ -217,7 +273,10 @@ export class YouTubeApi {
       '/playlists',
       { part: 'snippet', mine: 'true', maxResults: '50' },
     )
-    return (response.items ?? []).map((item) => ({ id: item.id, title: item.snippet?.title ?? item.id }))
+    return (response.items ?? []).map((item) => ({
+      id: item.id,
+      title: item.snippet?.title ?? item.id,
+    }))
   }
 
   /** Identifies the channel behind the tokens, so the UI can name it. */
@@ -230,7 +289,11 @@ export class YouTubeApi {
     )
     const channel = response.items?.[0]
     if (!channel) {
-      throw new YouTubeApiError(404, 'channelNotFound', 'This Google account has no YouTube channel.')
+      throw new YouTubeApiError(
+        404,
+        'channelNotFound',
+        'This Google account has no YouTube channel.',
+      )
     }
     return { id: channel.id, title: channel.snippet?.title ?? channel.id }
   }

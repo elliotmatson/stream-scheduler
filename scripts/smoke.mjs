@@ -19,7 +19,8 @@ const configDir = mkdtempSync(join(tmpdir(), 'scheduler-smoke-'))
 const STREAM_KEY = 'live_smoke-test-secret-key'
 const DEVICE_PASSWORD = 'smoke-test-device-password'
 const OAUTH_SECRET = 'smoke-test-oauth-client-secret'
-const CHAT_WEBHOOK = 'https://chat.googleapis.invalid/v1/spaces/AAA/messages?key=k&token=smoke-chat-token'
+const CHAT_WEBHOOK =
+  'https://chat.googleapis.invalid/v1/spaces/AAA/messages?key=k&token=smoke-chat-token'
 
 let child
 let failures = 0
@@ -86,7 +87,10 @@ async function main() {
   check('host starts and answers /healthz', true)
 
   const plugins = await api('GET', '/api/plugins')
-  check('plugins are registered', plugins.some((p) => p.id === 'mock'))
+  check(
+    'plugins are registered',
+    plugins.some((p) => p.id === 'mock'),
+  )
   check(
     'ATEM, HyperDeck and Streaming Encoder adapters are loaded',
     ['atem', 'hyperdeck', 'streaming-encoder'].every((id) => plugins.some((p) => p.id === id)),
@@ -113,7 +117,11 @@ async function main() {
     config: { kind: 'encoder', password: DEVICE_PASSWORD },
   })
   const connected = await api('POST', `/api/devices/${device.id}/connect`)
-  check('device probes its model', connected.capabilities.model === 'Mock encoder', JSON.stringify(connected.capabilities))
+  check(
+    'device probes its model',
+    connected.capabilities.model === 'Mock encoder',
+    JSON.stringify(connected.capabilities),
+  )
 
   const devices = await api('GET', '/api/devices')
   check('device password is never returned', !JSON.stringify(devices).includes(DEVICE_PASSWORD))
@@ -145,7 +153,11 @@ async function main() {
     deviceId: device.id,
     nodeId: 'stream',
   })
-  check('an output is attached with no clashes', firstOutput.conflicts.length === 0, JSON.stringify(firstOutput.conflicts))
+  check(
+    'an output is attached with no clashes',
+    firstOutput.conflicts.length === 0,
+    JSON.stringify(firstOutput.conflicts),
+  )
 
   // A second stream on the same encoder, overlapping the first: one
   // Blackmagic encoder cannot do both, and saying so now beats finding out
@@ -182,13 +194,24 @@ async function main() {
 
   const preview = await api('GET', `/api/series/${series.id}/preview`)
   const firstTitle = preview[0]?.outputs?.[0]?.title
-  check('name templates render', typeof firstTitle === 'string' && firstTitle.startsWith('Smoke Service - '), JSON.stringify(preview[0]))
+  check(
+    'name templates render',
+    typeof firstTitle === 'string' && firstTitle.startsWith('Smoke Service - '),
+    JSON.stringify(preview[0]),
+  )
 
-  const occurrences = await api('GET', `/api/occurrences?from=${Date.now()}&to=${Date.now() + 40 * 86_400_000}`)
+  const occurrences = await api(
+    'GET',
+    `/api/occurrences?from=${Date.now()}&to=${Date.now() + 40 * 86_400_000}`,
+  )
   check('occurrences are materialized', occurrences.length >= 4, `got ${occurrences.length}`)
 
   const started = await api('POST', `/api/occurrences/${occurrences[0].id}/start-now`)
-  check('an operator can start an event ahead of its window', started.state === 'running', `state was ${started.state}`)
+  check(
+    'an operator can start an event ahead of its window',
+    started.state === 'running',
+    `state was ${started.state}`,
+  )
 
   const run = await api('GET', `/api/runs/${started.runId}`)
   const steps = run.steps.map((s) => `${s.label ?? s.kind}:${s.state}`).join(', ')
@@ -201,7 +224,11 @@ async function main() {
 
   const afterCancel = await api('GET', `/api/runs/${started.runId}`)
   const stopStep = afterCancel.steps.find((s) => s.label === 'Main: stop streaming')
-  check('cancelling really told the encoder to stop', stopStep?.state === 'done', JSON.stringify(stopStep))
+  check(
+    'cancelling really told the encoder to stop',
+    stopStep?.state === 'done',
+    JSON.stringify(stopStep),
+  )
 
   // -- driving a device by hand ---------------------------------------------
 
@@ -213,7 +240,11 @@ async function main() {
   await api('POST', `/api/devices/${deck.id}/connect`)
 
   const idle = await api('GET', `/api/devices/${deck.id}/nodes/record/state`)
-  check('a node reports its state on demand', idle.state.recording.active === false, JSON.stringify(idle))
+  check(
+    'a node reports its state on demand',
+    idle.state.recording.active === false,
+    JSON.stringify(idle),
+  )
 
   const rolling = await api('POST', `/api/devices/${deck.id}/nodes/record/startRecording`, {
     filename: 'smoke/rehearsal: take 1',
@@ -221,7 +252,8 @@ async function main() {
   check('an operator can start a recording by hand', rolling.state.recording.active === true)
   check(
     '...under a name made safe for a filesystem',
-    !rolling.state.recording.filename.includes('/') && rolling.state.recording.filename.includes('rehearsal'),
+    !rolling.state.recording.filename.includes('/') &&
+      rolling.state.recording.filename.includes('rehearsal'),
     rolling.state.recording.filename,
   )
 
@@ -236,7 +268,9 @@ async function main() {
   })
   await api('POST', `/api/devices/${deafDeck.id}/connect`)
   try {
-    await api('POST', `/api/devices/${deafDeck.id}/nodes/record/startRecording`, { filename: 'take 1' })
+    await api('POST', `/api/devices/${deafDeck.id}/nodes/record/startRecording`, {
+      filename: 'take 1',
+    })
   } catch (error) {
     ignoredReported = String(error).includes('did not take effect')
   }
@@ -267,7 +301,8 @@ async function main() {
   const instructions = await api('GET', '/api/oauth/youtube/instructions')
   check(
     'setup instructions warn about the 7-day Testing expiry',
-    instructions.warnings.some((warning) => warning.includes('Testing')) && instructions.steps.length >= 5,
+    instructions.warnings.some((warning) => warning.includes('Testing')) &&
+      instructions.steps.length >= 5,
     instructions.warnings.join(' / '),
   )
   check(
@@ -280,7 +315,8 @@ async function main() {
   )
   check(
     'the redirect URI is a loopback address',
-    instructions.redirectUri.startsWith('http://127.0.0.1:') && instructions.redirectUri.endsWith('/oauth/callback'),
+    instructions.redirectUri.startsWith('http://127.0.0.1:') &&
+      instructions.redirectUri.endsWith('/oauth/callback'),
     instructions.redirectUri,
   )
 
@@ -291,7 +327,10 @@ async function main() {
     clientSecret: OAUTH_SECRET,
   })
   const clients = await api('GET', '/api/oauth/clients')
-  check('the OAuth client secret is never returned', !JSON.stringify(clients).includes(OAUTH_SECRET))
+  check(
+    'the OAuth client secret is never returned',
+    !JSON.stringify(clients).includes(OAUTH_SECRET),
+  )
 
   const authorization = await api('POST', '/api/oauth/youtube/start', { clientRef: oauthClient.id })
   const authUrl = new URL(authorization.url)
@@ -326,8 +365,14 @@ async function main() {
     config: { webhookUrl: CHAT_WEBHOOK },
   })
   const listed = await api('GET', '/api/notifications/channels')
-  check('the Chat webhook URL is never returned', !JSON.stringify(listed).includes('smoke-chat-token'))
-  check('the channel is listed', listed.channels.some((c) => c.id === channel.id))
+  check(
+    'the Chat webhook URL is never returned',
+    !JSON.stringify(listed).includes('smoke-chat-token'),
+  )
+  check(
+    'the channel is listed',
+    listed.channels.some((c) => c.id === channel.id),
+  )
 
   // An unreachable webhook must fail loudly at the button, not silently later.
   let testFailed = false
@@ -339,7 +384,11 @@ async function main() {
   check('a test to an unreachable webhook reports the failure', testFailed)
 
   const preflight = await api('GET', `/api/occurrences/${occurrences[0].id}/preflight`)
-  check('pre-flight checks an occurrence on demand', Array.isArray(preflight.problems), JSON.stringify(preflight))
+  check(
+    'pre-flight checks an occurrence on demand',
+    Array.isArray(preflight.problems),
+    JSON.stringify(preflight),
+  )
 
   // -- setting the app up through the UI's own endpoints --------------------
   //
@@ -348,7 +397,11 @@ async function main() {
   // person makes them, so an install that cannot be configured fails here.
 
   const discovered = await api('POST', '/api/plugins/mock/discover')
-  check('a plugin that can scan the network returns candidates', discovered.length >= 1, JSON.stringify(discovered))
+  check(
+    'a plugin that can scan the network returns candidates',
+    discovered.length >= 1,
+    JSON.stringify(discovered),
+  )
   check(
     'a discovered candidate carries config the form can use as-is',
     typeof discovered[0]?.config?.host === 'string',
@@ -356,14 +409,25 @@ async function main() {
   )
 
   const shown = (await api('GET', '/api/devices')).find((d) => d.id === device.id)
-  check('the edit form is given the stored config', shown?.config?.kind === 'encoder', JSON.stringify(shown?.config))
-  check('...with the password masked rather than absent', shown?.config?.password === '\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022')
+  check(
+    'the edit form is given the stored config',
+    shown?.config?.kind === 'encoder',
+    JSON.stringify(shown?.config),
+  )
+  check(
+    '...with the password masked rather than absent',
+    shown?.config?.password === '\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022',
+  )
 
   // Re-saving the form without retyping the password must keep the stored
   // one, or every edit would silently break the device.
   await api('PATCH', `/api/devices/${device.id}`, { label: 'Smoke encoder', config: shown.config })
   const reconnected = await api('POST', `/api/devices/${device.id}/connect`)
-  check('re-saving a device without retyping its password keeps it working', reconnected.health.state === 'connected', JSON.stringify(reconnected.health))
+  check(
+    're-saving a device without retyping its password keeps it working',
+    reconnected.health.state === 'connected',
+    JSON.stringify(reconnected.health),
+  )
 
   const dryRun = await api('POST', '/api/schedule/preview', {
     label: 'Preview Service',
@@ -374,7 +438,11 @@ async function main() {
     templates: { title: '{{event.name}} - {{date "MMMM d"}}' },
     count: 3,
   })
-  check('a rule can be previewed before anything is saved', dryRun.occurrences.length === 3, JSON.stringify(dryRun))
+  check(
+    'a rule can be previewed before anything is saved',
+    dryRun.occurrences.length === 3,
+    JSON.stringify(dryRun),
+  )
   check('...described in plain language', /week/i.test(dryRun.describes), dryRun.describes)
   check(
     '...with each name rendered against its own occurrence',
@@ -399,7 +467,11 @@ async function main() {
     count: 1,
   })
   const badTemplate = brokenPreview.occurrences[0]?.error
-  check('a bad template token is reported while typing', typeof badTemplate === 'string' && badTemplate.includes('no_such_token'), String(badTemplate))
+  check(
+    'a bad template token is reported while typing',
+    typeof badTemplate === 'string' && badTemplate.includes('no_such_token'),
+    String(badTemplate),
+  )
 
   let skippedRejected = false
   try {
@@ -451,7 +523,11 @@ async function main() {
   const reordered = await api('POST', `/api/series/${series.id}/outputs/order`, {
     order: [firstOutput.id],
   })
-  check('outputs can be reordered in one call', reordered.outputs.length === 1, JSON.stringify(reordered.outputs))
+  check(
+    'outputs can be reordered in one call',
+    reordered.outputs.length === 1,
+    JSON.stringify(reordered.outputs),
+  )
 
   await api('DELETE', `/api/series/${uiSeries.id}`)
 }
@@ -466,5 +542,7 @@ try {
   rmSync(configDir, { recursive: true, force: true })
 }
 
-process.stdout.write(failures === 0 ? '\nsmoke: all checks passed\n' : `\nsmoke: ${failures} check(s) failed\n`)
+process.stdout.write(
+  failures === 0 ? '\nsmoke: all checks passed\n' : `\nsmoke: ${failures} check(s) failed\n`,
+)
 process.exit(failures === 0 ? 0 : 1)

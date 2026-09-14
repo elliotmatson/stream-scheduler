@@ -37,7 +37,10 @@ export function migrate(db: Db): void {
   )`)
 
   const applied = new Set(
-    db.prepare('SELECT id FROM schema_migration').all().map((row) => (row as { id: number }).id),
+    db
+      .prepare('SELECT id FROM schema_migration')
+      .all()
+      .map((row) => (row as { id: number }).id),
   )
   const latest = migrations.reduce((max, m) => Math.max(max, m.id), 0)
   const highestApplied = applied.size === 0 ? 0 : Math.max(...applied)

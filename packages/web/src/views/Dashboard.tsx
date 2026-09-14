@@ -38,7 +38,10 @@ export function Dashboard({ navigate }: { navigate: (path: string) => void }): R
         </div>
         <div className="row">
           {!live.connected ? (
-            <span className="pill warn" title="Not following the server, so these figures may be out of date.">
+            <span
+              className="pill warn"
+              title="Not following the server, so these figures may be out of date."
+            >
               reconnecting
             </span>
           ) : null}
@@ -75,7 +78,10 @@ export function Dashboard({ navigate }: { navigate: (path: string) => void }): R
                 {timeIn(run.windowStart, run.timezone)}–{timeIn(run.windowEnd, run.timezone)}
                 {isForeignZone(run.timezone) ? ` ${shortZone(run.windowStart, run.timezone)}` : ''}
               </span>
-              <button onClick={() => navigate(`/runs/${run.runId}`)} title="Every step this run has taken, and what the device said back.">
+              <button
+                onClick={() => navigate(`/runs/${run.runId}`)}
+                title="Every step this run has taken, and what the device said back."
+              >
                 Timeline
               </button>
             </div>
@@ -119,7 +125,10 @@ export function Dashboard({ navigate }: { navigate: (path: string) => void }): R
                       <td className="muted">{entry.outputs}</td>
                       <td>
                         {entry.runId ? (
-                          <button onClick={() => navigate(`/runs/${entry.runId}`)} title="Every step this run has taken.">
+                          <button
+                            onClick={() => navigate(`/runs/${entry.runId}`)}
+                            title="Every step this run has taken."
+                          >
                             Timeline
                           </button>
                         ) : null}
@@ -196,7 +205,10 @@ function Output({ output, now }: { output: DashboardOutput; now: number }): Reac
         </span>
       ) : null}
       {stale ? (
-        <span className="muted" title="The device has not reported since then, so these figures are not fresh.">
+        <span
+          className="muted"
+          title="The device has not reported since then, so these figures are not fresh."
+        >
           · last heard {relative(output.telemetry!.at, now)}
         </span>
       ) : null}

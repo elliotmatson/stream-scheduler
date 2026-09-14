@@ -122,7 +122,9 @@ function onAir(app: Application): DashboardRun[] {
         const mine = steps.filter((step) => step.kind.startsWith(`${entry.output.id}.`))
         const watchUrl = mine
           .map((step) =>
-            step.response ? (JSON.parse(step.response) as { watchUrl?: unknown }).watchUrl : undefined,
+            step.response
+              ? (JSON.parse(step.response) as { watchUrl?: unknown }).watchUrl
+              : undefined,
           )
           .find((value): value is string => typeof value === 'string')
         const device = entry.output.deviceId
@@ -168,8 +170,12 @@ function telemetryOf(app: Application): Map<string, Map<string, DashboardOutput[
     for (const { nodeId, state, at } of app.connections.lastStates(connection.deviceId)) {
       byNode.set(nodeId, {
         at,
-        ...(state.streaming?.bitrateBps === undefined ? {} : { bitrateBps: state.streaming.bitrateBps }),
-        ...(state.recording?.remainingMs === undefined ? {} : { remainingMs: state.recording.remainingMs }),
+        ...(state.streaming?.bitrateBps === undefined
+          ? {}
+          : { bitrateBps: state.streaming.bitrateBps }),
+        ...(state.recording?.remainingMs === undefined
+          ? {}
+          : { remainingMs: state.recording.remainingMs }),
         ...(state.input?.present === undefined ? {} : { inputPresent: state.input.present }),
       })
     }
@@ -318,7 +324,6 @@ function attention(app: Application, now: number): DashboardAttention[] {
 
 function labelOf(app: Application, deviceId: string): string | undefined {
   const row = app.db.prepare('SELECT label FROM device WHERE id = ?').get(deviceId) as
-    | { label: string }
-    | undefined
+    { label: string } | undefined
   return row?.label
 }

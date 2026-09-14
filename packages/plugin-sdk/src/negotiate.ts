@@ -1,14 +1,10 @@
 import type { Port, Transport } from './types.js'
 
 export type LinkRejectionCode =
-  | 'wrong-direction'
-  | 'no-common-transport'
-  | 'source-port-full'
-  | 'target-port-full'
+  'wrong-direction' | 'no-common-transport' | 'source-port-full' | 'target-port-full'
 
 export type LinkNegotiation =
-  | { ok: true; transport: Transport }
-  | { ok: false; code: LinkRejectionCode; reason: string }
+  { ok: true; transport: Transport } | { ok: false; code: LinkRejectionCode; reason: string }
 
 export interface LinkUsage {
   /** Links already attached to the source port, excluding the one being tested. */
@@ -23,7 +19,11 @@ export interface LinkUsage {
  * destination means declaring a port, and every incompatibility is caught when
  * the user draws the link instead of at 09:59 on a Sunday.
  */
-export function negotiateLink(from: Port, to: Port, usage: LinkUsage = { fromLinks: 0, toLinks: 0 }): LinkNegotiation {
+export function negotiateLink(
+  from: Port,
+  to: Port,
+  usage: LinkUsage = { fromLinks: 0, toLinks: 0 },
+): LinkNegotiation {
   if (from.direction !== 'out' || to.direction !== 'in') {
     return {
       ok: false,

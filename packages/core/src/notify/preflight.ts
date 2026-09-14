@@ -72,7 +72,12 @@ export class PreflightChecker {
             AND o.scheduled_start > ? AND o.scheduled_start <= ?
           ORDER BY o.scheduled_start`,
       )
-      .all(now, horizon) as { id: string; scheduled_start: number; label: string; timezone: string }[]
+      .all(now, horizon) as {
+      id: string
+      scheduled_start: number
+      label: string
+      timezone: string
+    }[]
 
     const results: PreflightResult[] = []
     for (const row of upcoming) {
@@ -129,7 +134,8 @@ export class PreflightChecker {
         {
           what: 'Name templates',
           detail: describe(error),
-          remediation: 'Fix the template on the event; the preview on the Events screen shows what it renders to.',
+          remediation:
+            'Fix the template on the event; the preview on the Events screen shows what it renders to.',
         },
       ]
     }
@@ -244,15 +250,20 @@ export class PreflightChecker {
             problems.push({
               what: label,
               detail: 'The daily API budget is spent.',
-              remediation: 'It resets at midnight Pacific. If this keeps happening, request a higher quota.',
+              remediation:
+                'It resets at midnight Pacific. If this keeps happening, request a higher quota.',
             })
           } else if (status.state === 'error') {
-            problems.push({ what: label, detail: status.message ?? 'The service reported a problem.' })
+            problems.push({
+              what: label,
+              detail: status.message ?? 'The service reported a problem.',
+            })
           } else if (status.quotaRemaining !== undefined && status.quotaRemaining < 500) {
             problems.push({
               what: label,
               detail: `Only ${status.quotaRemaining} API units left today.`,
-              remediation: 'Enough for one more event at most. The budget resets at midnight Pacific.',
+              remediation:
+                'Enough for one more event at most. The budget resets at midnight Pacific.',
             })
           }
         } finally {
@@ -284,15 +295,14 @@ export class PreflightChecker {
 
   private deviceLabel(deviceId: string): string {
     const row = this.deps.db.prepare('SELECT label FROM device WHERE id = ?').get(deviceId) as
-      | { label: string }
-      | undefined
+      { label: string } | undefined
     return row?.label ?? `Device ${deviceId}`
   }
 
   private destinationLabel(destinationId: string): string {
-    const row = this.deps.db.prepare('SELECT label FROM destination WHERE id = ?').get(destinationId) as
-      | { label: string }
-      | undefined
+    const row = this.deps.db
+      .prepare('SELECT label FROM destination WHERE id = ?')
+      .get(destinationId) as { label: string } | undefined
     return row?.label ?? `Destination ${destinationId}`
   }
 }

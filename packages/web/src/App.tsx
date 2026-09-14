@@ -75,12 +75,22 @@ export function App(): ReactNode {
           </div>
 
           {NAV.map((item) => (
-            <NavLink key={item.to} path={path} to={item.to} label={item.label} icon={item.icon} navigate={navigate} />
+            <NavLink
+              key={item.to}
+              path={path}
+              to={item.to}
+              label={item.label}
+              icon={item.icon}
+              navigate={navigate}
+            />
           ))}
 
           <div className="sidebar-foot">
             {liveRuns > 0 ? (
-              <span className="pill live" title={`${liveRuns === 1 ? 'One event is' : `${liveRuns} events are`} on air.`}>
+              <span
+                className="pill live"
+                title={`${liveRuns === 1 ? 'One event is' : `${liveRuns} events are`} on air.`}
+              >
                 {liveRuns} live
               </span>
             ) : (

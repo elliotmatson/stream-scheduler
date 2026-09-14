@@ -1,4 +1,8 @@
-import { applyConfigDefaults, VerificationError, withSerializingTransport } from '@scheduler/plugin-sdk'
+import {
+  applyConfigDefaults,
+  VerificationError,
+  withSerializingTransport,
+} from '@scheduler/plugin-sdk'
 import type {
   Clock,
   ConfigValues,
@@ -297,7 +301,8 @@ export class ConnectionManager {
     const previous = this.backoff.get(deviceId)?.attempts ?? 0
     const attempts = previous + 1
     const jitter = (this.deps.random ?? Math.random)()
-    const delay = Math.min(BASE_BACKOFF_MS * 2 ** (attempts - 1), MAX_BACKOFF_MS) * (0.5 + jitter / 2)
+    const delay =
+      Math.min(BASE_BACKOFF_MS * 2 ** (attempts - 1), MAX_BACKOFF_MS) * (0.5 + jitter / 2)
     this.backoff.set(deviceId, { attempts, nextAttemptAt: now + delay })
 
     const message = error instanceof Error ? error.message : String(error)
@@ -325,7 +330,8 @@ export class ConnectionManager {
   }
 
   private deviceRow(deviceId: string): DeviceRow {
-    const row = this.deps.db.prepare('SELECT * FROM device WHERE id = ?').get(deviceId) as DeviceRow | undefined
+    const row = this.deps.db.prepare('SELECT * FROM device WHERE id = ?').get(deviceId) as
+      DeviceRow | undefined
     if (!row) throw new Error(`No device with id "${deviceId}".`)
     return row
   }
@@ -371,7 +377,8 @@ export class ConnectionManager {
   }
 
   private remember(deviceId: string, nodeId: string, state: NodeState): void {
-    const forDevice = this.states.get(deviceId) ?? new Map<string, { state: NodeState; at: number }>()
+    const forDevice =
+      this.states.get(deviceId) ?? new Map<string, { state: NodeState; at: number }>()
     forDevice.set(nodeId, { state, at: this.deps.clock.now() })
     this.states.set(deviceId, forDevice)
   }

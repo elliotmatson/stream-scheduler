@@ -12,7 +12,13 @@ import { relative } from '../format.ts'
  * request". Requests and responses were scrubbed before they were written,
  * so this page is safe to screenshot into a bug report.
  */
-export function RunDetail({ runId, navigate }: { runId: string; navigate: (path: string) => void }): ReactNode {
+export function RunDetail({
+  runId,
+  navigate,
+}: {
+  runId: string
+  navigate: (path: string) => void
+}): ReactNode {
   const { data: run, error, reload } = useResource(() => api.run(runId), [runId])
   const [busy, setBusy] = useState(false)
   const [actionError, setActionError] = useState<string>()
@@ -46,13 +52,20 @@ export function RunDetail({ runId, navigate }: { runId: string; navigate: (path:
       <div className="page-head">
         <div>
           <h1>{run.seriesLabel}</h1>
-          <p className="muted" style={{ margin: '4px 0 0' }} title="A run is retried from the start if it fails early enough to be worth retrying.">
+          <p
+            className="muted"
+            style={{ margin: '4px 0 0' }}
+            title="A run is retried from the start if it fails early enough to be worth retrying."
+          >
             Attempt {run.attempt} · started {run.startedAt ? relative(run.startedAt) : 'not yet'}
           </p>
         </div>
         <div className="row">
           <StatusPill status={run.state} />
-          <button onClick={reload} title="This screen updates itself while a run is going; this asks again now.">
+          <button
+            onClick={reload}
+            title="This screen updates itself while a run is going; this asks again now."
+          >
             Refresh
           </button>
           {/* The scheduler must never be the only way to stop a stream. */}
@@ -77,7 +90,9 @@ export function RunDetail({ runId, navigate }: { runId: string; navigate: (path:
           <div className="banner error">
             <strong>{run.failure.code}</strong>
             <div>{run.failure.message}</div>
-            {run.failure.remediation ? <div style={{ marginTop: 6 }}>{run.failure.remediation}</div> : null}
+            {run.failure.remediation ? (
+              <div style={{ marginTop: 6 }}>{run.failure.remediation}</div>
+            ) : null}
           </div>
         ) : null}
 
@@ -149,7 +164,11 @@ function Step({ step }: { step: RunStep }): ReactNode {
           </>
         ) : null}
       </div>
-      <div className="muted" style={{ whiteSpace: 'nowrap' }} title="How long the device or service took to answer.">
+      <div
+        className="muted"
+        style={{ whiteSpace: 'nowrap' }}
+        title="How long the device or service took to answer."
+      >
         {step.durationMs === null ? '—' : `${step.durationMs} ms`}
       </div>
     </div>

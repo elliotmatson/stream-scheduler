@@ -9,10 +9,10 @@ while everything else moves.
 
 ```ts
 export interface PluginDefinition {
-  id: string                    // 'atem'
+  id: string // 'atem'
   displayName: string
-  apiVersion: '1'               // SDK major; the host refuses mismatches
-  configSchema: ConfigField[]   // renders the device settings form
+  apiVersion: '1' // SDK major; the host refuses mismatches
+  configSchema: ConfigField[] // renders the device settings form
   createDevice(ctx: DeviceContext): Promise<DeviceInstance>
 }
 
@@ -101,7 +101,7 @@ Sofie project's TypeScript implementation of the ATEM protocol. Relevant surface
 - `requestStreamingDuration()`, plus streaming status and bitrate in the state
 - `startRecording()` / `stopRecording()` on models with a disk recorder
 - `setRecordingSettings({ filename, workingSet1DiskId, ... })` — note what is
-  *not* there: no quality, codec or bitrate. An ATEM has one H.264 encoder and
+  _not_ there: no quality, codec or bitrate. An ATEM has one H.264 encoder and
   it serves both the stream and the recording, so `bitrates` above is the
   recording's quality as well. That is why the adapter offers quality on the
   recorder node too, applies it through the streaming service, and why two
@@ -118,7 +118,7 @@ USB, a plain Mini does neither, a Television Studio HD8 does both differently, a
 Constellation models differ again. The adapter maps the probed model to a feature
 matrix and the UI only offers what the box actually has.
 
-*Risk:* the ATEM protocol is reverse-engineered, not published. Firmware updates
+_Risk:_ the ATEM protocol is reverse-engineered, not published. Firmware updates
 have historically broken libraries. Mitigation: pin the library, test against a
 recorded-state fake in CI, and treat a protocol version mismatch as a loud,
 named error at probe time rather than a silent failure at showtime.
@@ -151,7 +151,7 @@ before the record command. The protocol has no "what do you support", and the
 set differs by model and firmware, so the adapter reports the codec the deck is
 on, offers the documented spellings as suggestions, and turns the deck's refusal
 of one it does not have into a message naming both that codec and the current
-one. Rollover is *not* settable: there is only the one-shot `RecordSpillCommand`,
+one. Rollover is _not_ settable: there is only the one-shot `RecordSpillCommand`,
 the deck spilling onto the next mounted card being its own behaviour, so it is
 reported rather than offered.
 
@@ -203,9 +203,9 @@ called, so there is nothing an operator would recognise to put in a form.
 Concretely, as a result:
 
 - `EventOutput` has no crosspoint field and `OutputKind` is `'stream' |
-  'recording'`, so a scheduled run cannot emit a route step.
+'recording'`, so a scheduled run cannot emit a route step.
 - The manual device controls do not offer it; `POST
-  /api/devices/:id/nodes/:nodeId/route` is refused, and a test pins that.
+/api/devices/:id/nodes/:nodeId/route` is refused, and a test pins that.
 - `GET /api/devices/:id/nodes/:nodeId/state` does return the live `routing`
   map, and the Devices page shows it. Reading is useful; writing is not ours.
 

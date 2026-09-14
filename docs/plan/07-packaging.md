@@ -19,12 +19,12 @@ pnpm workspaces + Turborepo. Layout in [01](./01-architecture.md).
 
 One directory holds everything — database, logs, key file, plugin data:
 
-| Platform | Path |
-|---|---|
-| macOS | `~/Library/Application Support/StreamScheduler` |
-| Windows | `%APPDATA%\StreamScheduler` |
-| Linux | `$XDG_CONFIG_HOME/stream-scheduler` |
-| Docker | `/config` (a volume) |
+| Platform | Path                                            |
+| -------- | ----------------------------------------------- |
+| macOS    | `~/Library/Application Support/StreamScheduler` |
+| Windows  | `%APPDATA%\StreamScheduler`                     |
+| Linux    | `$XDG_CONFIG_HOME/stream-scheduler`             |
+| Docker   | `/config` (a volume)                            |
 
 Overridable with `--config-dir` / `SCHEDULER_CONFIG_DIR`, which also makes it easy
 to run two instances side by side for testing.

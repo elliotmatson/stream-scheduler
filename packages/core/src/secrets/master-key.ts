@@ -31,7 +31,10 @@ export interface MasterKeySource {
 }
 
 /** A 32-byte key file, created on first run with owner-only permissions. */
-export function keyFileSource(keyFile: string, options: { create?: boolean } = {}): MasterKeySource {
+export function keyFileSource(
+  keyFile: string,
+  options: { create?: boolean } = {},
+): MasterKeySource {
   return {
     load() {
       if (!existsSync(keyFile)) {
@@ -42,7 +45,9 @@ export function keyFileSource(keyFile: string, options: { create?: boolean } = {
       }
       const key = readFileSync(keyFile)
       if (key.length !== 32) {
-        throw new Error(`${keyFile} is not a 32-byte key. Remove it to generate a new one — note that any secrets already stored become unreadable.`)
+        throw new Error(
+          `${keyFile} is not a 32-byte key. Remove it to generate a new one — note that any secrets already stored become unreadable.`,
+        )
       }
       // Tighten permissions that a volume mount or a copy may have loosened.
       try {
@@ -60,7 +65,10 @@ export function keyFileSource(keyFile: string, options: { create?: boolean } = {
  * var yields the same key across restarts — without that, every container
  * restart would orphan every stored secret.
  */
-export function envSecretSource(configDir: string, env: NodeJS.ProcessEnv = process.env): MasterKeySource {
+export function envSecretSource(
+  configDir: string,
+  env: NodeJS.ProcessEnv = process.env,
+): MasterKeySource {
   return {
     load() {
       const secret = env.SCHEDULER_SECRET

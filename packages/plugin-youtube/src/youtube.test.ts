@@ -2,7 +2,12 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import type { DestinationContext, DestinationInstance } from '@scheduler/plugin-sdk'
 import { FakeYouTube } from './fake-youtube.js'
 import { youtubeProvider } from './index.js'
-import { CRITICAL_RESERVE, DEFAULT_DAILY_LIMIT, InMemoryQuota, QuotaExhaustedError } from './quota.js'
+import {
+  CRITICAL_RESERVE,
+  DEFAULT_DAILY_LIMIT,
+  InMemoryQuota,
+  QuotaExhaustedError,
+} from './quota.js'
 import { beginAuthorization, ReauthRequiredError, RefreshingTokenSource, SCOPES } from './oauth.js'
 import type { Fetch } from './api.js'
 
@@ -22,7 +27,8 @@ function tokenFetch(inner: Fetch): Fetch {
       return {
         ok: true,
         status: 200,
-        text: async () => JSON.stringify({ access_token: 'at-1', expires_in: 3600, refresh_token: 'rt-1' }),
+        text: async () =>
+          JSON.stringify({ access_token: 'at-1', expires_in: 3600, refresh_token: 'rt-1' }),
       }
     }
     return inner(url, init)
@@ -56,7 +62,10 @@ const metadata = (over: Partial<{ title: string; scheduledStart: number }> = {})
   ...over,
 })
 
-const prepareInput = (over = {}) => ({ idempotencyKey: 'run-1:0:youtube.prepare', metadata: metadata(over) })
+const prepareInput = (over = {}) => ({
+  idempotencyKey: 'run-1:0:youtube.prepare',
+  metadata: metadata(over),
+})
 
 beforeEach(() => {
   youtube = new FakeYouTube()
@@ -90,7 +99,9 @@ describe('preparing a broadcast', () => {
 
   it('reuses one ingestion stream, so the encoder key never changes', async () => {
     const first = await (await destination()).prepare(prepareInput())
-    const second = await (await destination()).prepare(
+    const second = await (
+      await destination()
+    ).prepare(
       prepareInput({ title: 'Sunday Service - March 15', scheduledStart: START + 7 * 86_400_000 }),
     )
 
@@ -100,9 +111,9 @@ describe('preparing a broadcast', () => {
 
   it('creates a fresh stream per event when reuse is switched off', async () => {
     await (await destination({ reusableStream: false })).prepare(prepareInput())
-    await (await destination({ reusableStream: false })).prepare(
-      prepareInput({ title: 'Another', scheduledStart: START + 86_400_000 }),
-    )
+    await (
+      await destination({ reusableStream: false })
+    ).prepare(prepareInput({ title: 'Another', scheduledStart: START + 86_400_000 }))
     expect(youtube.streams.size).toBe(2)
   })
 
@@ -121,7 +132,10 @@ describe('preparing a broadcast', () => {
 
   it('honours the configured privacy', async () => {
     const dest = await destination({ privacy: 'unlisted' })
-    const result = await dest.prepare({ ...prepareInput(), metadata: { ...metadata(), privacy: 'unlisted' } })
+    const result = await dest.prepare({
+      ...prepareInput(),
+      metadata: { ...metadata(), privacy: 'unlisted' },
+    })
     expect(youtube.broadcasts.get(result.externalId)?.privacyStatus).toBe('unlisted')
   })
 })
@@ -144,7 +158,9 @@ describe('the broadcast list', () => {
     // And the adapter's own call is accepted: nothing to adopt is a clean
     // `undefined`, not a rejected request.
     const dest = await destination({})
-    await expect(dest.reconcile({ idempotencyKey: 'k', metadata: metadata() })).resolves.toBeUndefined()
+    await expect(
+      dest.reconcile({ idempotencyKey: 'k', metadata: metadata() }),
+    ).resolves.toBeUndefined()
     expect(youtube.calls).toContain('GET /liveBroadcasts')
   })
 })
@@ -255,7 +271,9 @@ describe('quota', () => {
     await (await destination()).prepare(prepareInput())
     const afterFirst = await quota.usedToday()
 
-    await (await destination()).prepare(prepareInput({ title: 'Next week', scheduledStart: START + 604_800_000 }))
+    await (
+      await destination()
+    ).prepare(prepareInput({ title: 'Next week', scheduledStart: START + 604_800_000 }))
     const secondEventCost = (await quota.usedToday()) - afterFirst
 
     expect(secondEventCost).toBeLessThan(afterFirst)
@@ -328,10 +346,14 @@ describe('API errors', () => {
 
   it('marks a server error retryable and a rejection not', async () => {
     youtube.setOptions({ failWith: { status: 503, reason: 'backendError' } })
-    await expect((await destination()).prepare(prepareInput())).rejects.toMatchObject({ retryable: true })
+    await expect((await destination()).prepare(prepareInput())).rejects.toMatchObject({
+      retryable: true,
+    })
 
     youtube.setOptions({ failWith: { status: 403, reason: 'insufficientPermissions' } })
-    await expect((await destination()).prepare(prepareInput())).rejects.toMatchObject({ retryable: false })
+    await expect((await destination()).prepare(prepareInput())).rejects.toMatchObject({
+      retryable: false,
+    })
   })
 })
 
@@ -357,7 +379,11 @@ describe('OAuth', () => {
     const failing: Fetch = async () => ({
       ok: false,
       status: 400,
-      text: async () => JSON.stringify({ error: 'invalid_grant', error_description: 'Token has been expired or revoked.' }),
+      text: async () =>
+        JSON.stringify({
+          error: 'invalid_grant',
+          error_description: 'Token has been expired or revoked.',
+        }),
     })
     const source = new RefreshingTokenSource(CLIENT, 'rt-1', () => 0, failing)
 
@@ -400,6 +426,8 @@ describe('OAuth', () => {
     const { exchangeCode } = await import('./oauth.js')
     const pending = beginAuthorization(CLIENT, 'http://127.0.0.1:8500/oauth/callback')
 
-    await expect(exchangeCode(CLIENT, pending, 'code', noRefresh)).rejects.toBeInstanceOf(ReauthRequiredError)
+    await expect(exchangeCode(CLIENT, pending, 'code', noRefresh)).rejects.toBeInstanceOf(
+      ReauthRequiredError,
+    )
   })
 })

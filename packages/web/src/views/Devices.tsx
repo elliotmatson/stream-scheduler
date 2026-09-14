@@ -83,8 +83,8 @@ export function Devices(): ReactNode {
         {devices.length === 0 && !adding ? (
           <Card>
             <Empty>
-              No devices yet. Add a real encoder, switcher or deck — or the bundled mock, which runs a whole
-              scheduled event without touching hardware.
+              No devices yet. Add a real encoder, switcher or deck — or the bundled mock, which runs
+              a whole scheduled event without touching hardware.
             </Empty>
           </Card>
         ) : null}
@@ -138,7 +138,10 @@ function DeviceCard({
       <div className="page-head" style={{ marginBottom: 10 }}>
         <div>
           <h2 style={{ marginBottom: 2 }}>{device.label}</h2>
-          <span className="muted" title="What it is, and — once connected — the model it says it is.">
+          <span
+            className="muted"
+            title="What it is, and — once connected — the model it says it is."
+          >
             {kind ?? device.pluginId}
             {/* The probed model, not what someone picked in a dropdown. */}
             {device.probedModel ? ` · ${device.probedModel}` : ''}
@@ -146,7 +149,11 @@ function DeviceCard({
         </div>
         <div className="row">
           <StatusPill status={device.health} />
-          <button disabled={busy} title="Opens the connection again and re-reads what this device can do." onClick={onConnect}>
+          <button
+            disabled={busy}
+            title="Opens the connection again and re-reads what this device can do."
+            onClick={onConnect}
+          >
             {busy ? 'Connecting…' : 'Connect'}
           </button>
           <button onClick={onEdit}>Edit</button>
@@ -199,8 +206,8 @@ function DeviceCard({
           ))}
           {/* Said once under the list rather than beside every line. */}
           <p className="muted" style={{ margin: 0, fontSize: 12 }}>
-            Most browsers no longer open ftp:// — if nothing happens, copy the address and paste it into Finder
-            (Go &gt; Connect to Server) or Windows Explorer.
+            Most browsers no longer open ftp:// — if nothing happens, copy the address and paste it
+            into Finder (Go &gt; Connect to Server) or Windows Explorer.
           </p>
         </div>
       ) : null}
@@ -254,13 +261,17 @@ function NodeControls({ device, node }: { device: Device; node: DeviceNode }): R
   // Only fetched for a node that can be pointed somewhere, and only once
   // the panel is open.
   const { data: credentials } = useResource(
-    () => (open && node.supports.includes('applyStreamTarget') ? api.credentials() : Promise.resolve([])),
+    () =>
+      open && node.supports.includes('applyStreamTarget') ? api.credentials() : Promise.resolve([]),
     [open, node.id],
   )
 
   const connected = device.health === 'connected' || device.health === 'degraded'
 
-  const run = async (label: string, action: () => Promise<{ state: NodeState | null }>): Promise<void> => {
+  const run = async (
+    label: string,
+    action: () => Promise<{ state: NodeState | null }>,
+  ): Promise<void> => {
     setBusy(label)
     setError(undefined)
     try {
@@ -369,9 +380,9 @@ function NodeControls({ device, node }: { device: Device; node: DeviceNode }): R
             {device.inUseBy.length > 0 ? (
               <div className="banner warn">
                 {device.inUseBy.map((entry) => entry.label).join(', ')}{' '}
-                {device.inUseBy.length === 1 ? 'is' : 'are'} mid-run on this device. Anything you do here the
-                scheduler may undo at the next start or stop in its window — to end it properly, stop the run
-                on its own page.
+                {device.inUseBy.length === 1 ? 'is' : 'are'} mid-run on this device. Anything you do
+                here the scheduler may undo at the next start or stop in its window — to end it
+                properly, stop the run on its own page.
               </div>
             ) : null}
 
@@ -383,8 +394,9 @@ function NodeControls({ device, node }: { device: Device; node: DeviceNode }): R
                 {/no stream target/i.test(error) ? (
                   <>
                     {' '}
-                    This encoder has not been pointed anywhere yet. Put it on an event, which applies the key
-                    when the event starts — a stream key never travels through this screen.
+                    This encoder has not been pointed anywhere yet. Put it on an event, which
+                    applies the key when the event starts — a stream key never travels through this
+                    screen.
                   </>
                 ) : null}
               </div>
@@ -395,14 +407,20 @@ function NodeControls({ device, node }: { device: Device; node: DeviceNode }): R
                 recorder. */}
             {readOnly ? (
               <p className="muted" style={{ margin: 0 }}>
-                Nothing to drive here. This node {node.roles.includes('router') ? 'routes signal' : 'does neither streaming nor recording'}, which is
-                the operator's job at the desk rather than the scheduler's — so this panel only reports what it
-                is set to.
+                Nothing to drive here. This node{' '}
+                {node.roles.includes('router')
+                  ? 'routes signal'
+                  : 'does neither streaming nor recording'}
+                , which is the operator's job at the desk rather than the scheduler's — so this
+                panel only reports what it is set to.
               </p>
             ) : null}
 
             {state?.input ? (
-              <div className={state.input.present ? 'banner info' : 'banner warn'} style={{ marginBottom: 0 }}>
+              <div
+                className={state.input.present ? 'banner info' : 'banner warn'}
+                style={{ marginBottom: 0 }}
+              >
                 {state.input.present
                   ? `Input: ${state.input.format ?? 'signal present'}${state.input.source ? ` · taking ${state.input.source}` : ''}`
                   : // A recorder with no signal refuses to record, and a deck
@@ -433,7 +451,11 @@ function NodeControls({ device, node }: { device: Device; node: DeviceNode }): R
                   label="Recording"
                   tip="What it is writing right now, and under what name."
                   value={
-                    recording === undefined ? '—' : recording.active ? (recording.filename ?? 'on') : 'off'
+                    recording === undefined
+                      ? '—'
+                      : recording.active
+                        ? (recording.filename ?? 'on')
+                        : 'off'
                   }
                 />
               ) : null}
@@ -522,7 +544,10 @@ function NodeControls({ device, node }: { device: Device; node: DeviceNode }): R
                     label="Stream key"
                     hint="One of the saved keys, chosen by name. The key itself never reaches this screen."
                   >
-                    <select value={credentialId} onChange={(event) => setCredentialId(event.target.value)}>
+                    <select
+                      value={credentialId}
+                      onChange={(event) => setCredentialId(event.target.value)}
+                    >
                       <option value="">{LEAVE_AS_IS}</option>
                       {(credentials ?? [])
                         .filter((credential) => credential.ingestUrl)
@@ -537,7 +562,10 @@ function NodeControls({ device, node }: { device: Device; node: DeviceNode }): R
                       every device that has it, so it is offered here and
                       nowhere else. */}
                   {qualityChoices.length > 0 ? (
-                    <Field label="Quality" hint={`The presets this device offers.${nowOn(current)}`}>
+                    <Field
+                      label="Quality"
+                      hint={`The presets this device offers.${nowOn(current)}`}
+                    >
                       <select
                         value={typingQuality ? CUSTOM_VALUE : quality}
                         onChange={(event) => {
@@ -585,7 +613,10 @@ function NodeControls({ device, node }: { device: Device; node: DeviceNode }): R
 
             {canRecord ? (
               <div className="row" style={{ gap: 10, alignItems: 'flex-end' }}>
-                <Field label="Filename" hint="Needed before a recording can start. A scheduled event names its own.">
+                <Field
+                  label="Filename"
+                  hint="Needed before a recording can start. A scheduled event names its own."
+                >
                   <input
                     value={filename}
                     placeholder="2026-09-06 rehearsal"
@@ -654,7 +685,9 @@ function NodeControls({ device, node }: { device: Device; node: DeviceNode }): R
 
             {readOnly ? null : (
               <p className="muted" style={{ margin: 0 }}>
-                {canStream ? 'Starting a stream sends it wherever this device is already pointed. ' : ''}
+                {canStream
+                  ? 'Starting a stream sends it wherever this device is already pointed. '
+                  : ''}
                 Every button here is read back off the device before it reports success.
               </p>
             )}
@@ -712,7 +745,11 @@ function DeviceForm({
         // The connection was dropped by the edit; prove the new settings work.
         await api.connectDevice(device.id).catch(() => undefined)
       } else {
-        const created = await api.createDevice({ pluginId, label: label || (plugin?.displayName ?? pluginId), config })
+        const created = await api.createDevice({
+          pluginId,
+          label: label || (plugin?.displayName ?? pluginId),
+          config,
+        })
         await api.connectDevice(created.id).catch(() => undefined)
       }
       onDone()
@@ -781,7 +818,11 @@ function DeviceForm({
         ) : null}
 
         <Field label="Name" hint="What you will call it on the schedule, e.g. “Sanctuary encoder”.">
-          <input value={label} placeholder={plugin?.displayName ?? ''} onChange={(event) => setLabel(event.target.value)} />
+          <input
+            value={label}
+            placeholder={plugin?.displayName ?? ''}
+            onChange={(event) => setLabel(event.target.value)}
+          />
         </Field>
 
         <ConfigFields fields={plugin?.configSchema ?? []} values={config} onChange={setConfig} />
@@ -807,4 +848,3 @@ function DeviceForm({
 function lowOn(slot: { remainingMs?: number }): boolean {
   return slot.remainingMs !== undefined && slot.remainingMs < 3_600_000
 }
-

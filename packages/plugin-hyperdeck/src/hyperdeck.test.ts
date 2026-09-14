@@ -91,7 +91,9 @@ function makeDeck(): FakeDeck {
     timecode: '00:00:10:00',
     'video format': '1080p50',
     loop: 'false',
-    ...(state.inputVideoFormat === undefined ? {} : { 'input video format': state.inputVideoFormat }),
+    ...(state.inputVideoFormat === undefined
+      ? {}
+      : { 'input video format': state.inputVideoFormat }),
   })
   server.onFormat = async (command) => {
     // The deck's format is a two-step handshake: `prepare` hands back a
@@ -162,7 +164,10 @@ function context(): DeviceContext {
 
 async function connect(config: Record<string, unknown> = {}): Promise<DeviceInstance> {
   const plugin = hyperdeckPlugin({ now: () => 1_700_000_000_000 })
-  const created = await plugin.createDevice({ ...context(), config: { ...context().config, ...config } })
+  const created = await plugin.createDevice({
+    ...context(),
+    config: { ...context().config, ...config },
+  })
   // Wrapped exactly as the host wraps it in CI, so anything that would not
   // survive moving plugins into child processes fails here.
   device = withSerializingTransport(created)
@@ -272,7 +277,9 @@ describe('protocol errors', () => {
   it('translates a full disk into something worth reading on a Sunday morning', async () => {
     deck.state.failRecordWith = 104
     const hyperdeck = await connect()
-    await expect(hyperdeck.invoke('record', 'startRecording', { filename: 'service' })).rejects.toMatchObject({
+    await expect(
+      hyperdeck.invoke('record', 'startRecording', { filename: 'service' }),
+    ).rejects.toMatchObject({
       code: 'disk-full',
       remediation: expect.stringContaining('Swap or format'),
     })
@@ -281,7 +288,9 @@ describe('protocol errors', () => {
   it('translates no media', async () => {
     deck.state.failRecordWith = 105
     const hyperdeck = await connect()
-    await expect(hyperdeck.invoke('record', 'startRecording', { filename: 'service' })).rejects.toMatchObject({
+    await expect(
+      hyperdeck.invoke('record', 'startRecording', { filename: 'service' }),
+    ).rejects.toMatchObject({
       code: 'no-disk',
     })
   })
@@ -371,11 +380,15 @@ describe('protocol errors', () => {
     // A deck that refuses for "no input" while reporting a format on that
     // input is the interesting case, and the one a bare code translation
     // sends somebody chasing cables for nothing.
-    await expect(hyperdeck.invoke('record', 'startRecording', { filename: 'take 1' })).rejects.toMatchObject({
+    await expect(
+      hyperdeck.invoke('record', 'startRecording', { filename: 'take 1' }),
+    ).rejects.toMatchObject({
       code: 'no-input',
       message: expect.stringContaining('1080p50'),
     })
-    await expect(hyperdeck.invoke('record', 'startRecording', { filename: 'take 1' })).rejects.toMatchObject({
+    await expect(
+      hyperdeck.invoke('record', 'startRecording', { filename: 'take 1' }),
+    ).rejects.toMatchObject({
       message: expect.stringContaining('SDI'),
     })
   })
@@ -384,7 +397,9 @@ describe('protocol errors', () => {
     deck.state.failRecordWith = 110
     deck.state.inputVideoFormat = undefined
     const hyperdeck = await connect()
-    await expect(hyperdeck.invoke('record', 'startRecording', { filename: 'take 1' })).rejects.toMatchObject({
+    await expect(
+      hyperdeck.invoke('record', 'startRecording', { filename: 'take 1' }),
+    ).rejects.toMatchObject({
       code: 'no-input',
       message: expect.stringContaining('no signal'),
     })
@@ -405,7 +420,9 @@ describe('protocol errors', () => {
   it('translates remote control being switched off on the front panel', async () => {
     deck.state.failRecordWith = 111
     const hyperdeck = await connect()
-    await expect(hyperdeck.invoke('record', 'startRecording', { filename: 'service' })).rejects.toMatchObject({
+    await expect(
+      hyperdeck.invoke('record', 'startRecording', { filename: 'service' }),
+    ).rejects.toMatchObject({
       code: 'remote-disabled',
       remediation: expect.stringContaining('REM'),
     })
@@ -414,7 +431,9 @@ describe('protocol errors', () => {
   it('keeps an unknown error retryable rather than failing the run outright', async () => {
     deck.state.failRecordWith = 108
     const hyperdeck = await connect()
-    await expect(hyperdeck.invoke('record', 'startRecording', { filename: 'service' })).rejects.toMatchObject({
+    await expect(
+      hyperdeck.invoke('record', 'startRecording', { filename: 'service' }),
+    ).rejects.toMatchObject({
       code: 'hyperdeck-error',
       retryable: true,
     })

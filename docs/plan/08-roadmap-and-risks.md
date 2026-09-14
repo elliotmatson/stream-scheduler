@@ -14,14 +14,14 @@ what can go wrong with this thing, and it should be kept current.
 Each phase ended in something runnable, and none of them was "build the
 abstractions for the next phase".
 
-| Phase | Delivered |
-|---|---|
-| **0 — Skeleton** | Monorepo, SQLite schema and migrations, config directory resolution, secret vault with every backend, React shell, REST + WebSocket API, Electron tray, Dockerfile, CI |
-| **1 — Devices** | `ConnectionManager`, plugin SDK v1, and the HyperDeck, ATEM, Streaming Encoder and mock adapters, each with a protocol-level fake. Device inventory with discovery, health and probed capabilities |
-| **2 — YouTube** | BYO OAuth with the "In production" warning, token vault, the account/destination model, broadcast creation with full metadata, reusable ingestion streams, playlist insertion, quota ledger, fake YouTube server |
-| **3 — Scheduling** | RRULE series, materialization and reconciliation, the run state machine, durable steps, crash recovery, compensation, missed-event policy, templating with live preview, calendar and list views, run timeline |
-| **4 — Events and outputs** | An event owns a window; the streams and recordings inside it each own their hardware and start and stop independently. Fanning one encoder out to two services *simultaneously* was **not** built and is issue #5 |
-| **5 — Hardening** | Failure notifications with pre-flight. Backup/restore (#10), diagnostics bundle and signed installers (#11) were not built |
+| Phase                      | Delivered                                                                                                                                                                                                         |
+| -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **0 — Skeleton**           | Monorepo, SQLite schema and migrations, config directory resolution, secret vault with every backend, React shell, REST + WebSocket API, Electron tray, Dockerfile, CI                                            |
+| **1 — Devices**            | `ConnectionManager`, plugin SDK v1, and the HyperDeck, ATEM, Streaming Encoder and mock adapters, each with a protocol-level fake. Device inventory with discovery, health and probed capabilities                |
+| **2 — YouTube**            | BYO OAuth with the "In production" warning, token vault, the account/destination model, broadcast creation with full metadata, reusable ingestion streams, playlist insertion, quota ledger, fake YouTube server  |
+| **3 — Scheduling**         | RRULE series, materialization and reconciliation, the run state machine, durable steps, crash recovery, compensation, missed-event policy, templating with live preview, calendar and list views, run timeline    |
+| **4 — Events and outputs** | An event owns a window; the streams and recordings inside it each own their hardware and start and stop independently. Fanning one encoder out to two services _simultaneously_ was **not** built and is issue #5 |
+| **5 — Hardening**          | Failure notifications with pre-flight. Backup/restore (#10), diagnostics bundle and signed installers (#11) were not built                                                                                        |
 
 Two deviations from the original plan worth recording:
 
@@ -45,16 +45,16 @@ Deck button can start the next scheduled event early.
 
 ## Risks
 
-| Risk | Impact | Mitigation |
-|---|---|---|
-| **Unattended reliability is the whole product** | A silent failure at 09:00 Sunday loses the user permanently | The prepare-at-T−30m design exists for this; pre-flight alerts, verify-after-write, crash-recovery tests in CI, and a run timeline good enough to diagnose from |
-| **ATEM protocol is reverse-engineered** | Firmware update breaks control | Pin `atem-connection`; loud named error on protocol mismatch at probe time; recorded-state fakes in CI; never fail silently |
-| **Google OAuth "Testing" 7-day token expiry** | Every install works for a week then breaks | Wizard requires "In production"; runtime maps `invalid_grant` to a specific actionable message; alert fires before the next prepare window, not during it |
-| **YouTube quota exhaustion** | Sunday's stream fails to get a broadcast | Quota ledger with reserve; polling backoff; `search.list` banned and CI-enforced; usage visible in the UI before it matters |
-| **Code signing cost and CI complexity** | Unshippable to non-technical users | Budget it into Phase 5 explicitly, don't discover it at release |
-| **Scope creep toward being Resi** | Never ships | Cloud transcoding, VOD hosting and simulated live are out of scope in writing; the value here is scheduling commodity hardware, not rebuilding a CDN |
-| **Plugin API churn after third parties adopt it** | Ecosystem breaks | Freeze and semver `plugin-sdk` at v1; `apiVersion` checked at load; serialization discipline enforced by tests from day one |
-| **Unauthenticated control protocols** | Anyone on the LAN controls the gear | Can't be fixed by this app; document the control-VLAN expectation and at minimum don't add a new hole — localhost bind by default, password required before exposing the UI |
+| Risk                                              | Impact                                                      | Mitigation                                                                                                                                                                  |
+| ------------------------------------------------- | ----------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Unattended reliability is the whole product**   | A silent failure at 09:00 Sunday loses the user permanently | The prepare-at-T−30m design exists for this; pre-flight alerts, verify-after-write, crash-recovery tests in CI, and a run timeline good enough to diagnose from             |
+| **ATEM protocol is reverse-engineered**           | Firmware update breaks control                              | Pin `atem-connection`; loud named error on protocol mismatch at probe time; recorded-state fakes in CI; never fail silently                                                 |
+| **Google OAuth "Testing" 7-day token expiry**     | Every install works for a week then breaks                  | Wizard requires "In production"; runtime maps `invalid_grant` to a specific actionable message; alert fires before the next prepare window, not during it                   |
+| **YouTube quota exhaustion**                      | Sunday's stream fails to get a broadcast                    | Quota ledger with reserve; polling backoff; `search.list` banned and CI-enforced; usage visible in the UI before it matters                                                 |
+| **Code signing cost and CI complexity**           | Unshippable to non-technical users                          | Budget it into Phase 5 explicitly, don't discover it at release                                                                                                             |
+| **Scope creep toward being Resi**                 | Never ships                                                 | Cloud transcoding, VOD hosting and simulated live are out of scope in writing; the value here is scheduling commodity hardware, not rebuilding a CDN                        |
+| **Plugin API churn after third parties adopt it** | Ecosystem breaks                                            | Freeze and semver `plugin-sdk` at v1; `apiVersion` checked at load; serialization discipline enforced by tests from day one                                                 |
+| **Unauthenticated control protocols**             | Anyone on the LAN controls the gear                         | Can't be fixed by this app; document the control-VLAN expectation and at minimum don't add a new hole — localhost bind by default, password required before exposing the UI |
 
 ## The two things most likely to go wrong
 

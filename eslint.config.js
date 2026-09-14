@@ -4,7 +4,15 @@ import tseslint from 'typescript-eslint'
 export default tseslint.config(
   // packages/host/web is the built web bundle, copied there by vite so the
   // API server can serve it. It is generated output, not source.
-  { ignores: ['**/dist/**', '**/node_modules/**', '**/coverage/**', '**/.turbo/**', 'packages/host/web/**'] },
+  {
+    ignores: [
+      '**/dist/**',
+      '**/node_modules/**',
+      '**/coverage/**',
+      '**/.turbo/**',
+      'packages/host/web/**',
+    ],
+  },
   ...tseslint.configs.recommended,
   {
     rules: {
@@ -35,7 +43,10 @@ export default tseslint.config(
         'error',
         {
           patterns: [
-            { group: ['@scheduler/core', '@scheduler/core/*'], message: 'Plugins depend on @scheduler/plugin-sdk only.' },
+            {
+              group: ['@scheduler/core', '@scheduler/core/*'],
+              message: 'Plugins depend on @scheduler/plugin-sdk only.',
+            },
           ],
         },
       ],

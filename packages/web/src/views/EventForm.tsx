@@ -42,13 +42,7 @@ interface Draft {
  * weeks later, on air; seeing the next five occurrences written out in the
  * event's own timezone catches almost all of them while still typing.
  */
-export function EventForm({
-  series,
-  onDone,
-}: {
-  series?: Series
-  onDone: () => void
-}): ReactNode {
+export function EventForm({ series, onDone }: { series?: Series; onDone: () => void }): ReactNode {
   const [draft, setDraft] = useState<Draft>(() => toDraft(series))
   const [error, setError] = useState<string>()
   const [saving, setSaving] = useState(false)
@@ -129,7 +123,10 @@ export function EventForm({
             label="Timezone"
             hint="Times below are read in this zone, so a 9am service stays at 9am across a clock change."
           >
-            <select value={draft.timezone} onChange={(event) => set('timezone', event.target.value)}>
+            <select
+              value={draft.timezone}
+              onChange={(event) => set('timezone', event.target.value)}
+            >
               {zoneChoices(draft.timezone).map((zone) => (
                 <option key={zone} value={zone}>
                   {zone}
@@ -140,12 +137,23 @@ export function EventForm({
 
           <div className="row">
             <Field label="First date">
-              <input type="date" value={draft.date} onChange={(event) => set('date', event.target.value)} />
+              <input
+                type="date"
+                value={draft.date}
+                onChange={(event) => set('date', event.target.value)}
+              />
             </Field>
             <Field label="Start time">
-              <input type="time" value={draft.time} onChange={(event) => set('time', event.target.value)} />
+              <input
+                type="time"
+                value={draft.time}
+                onChange={(event) => set('time', event.target.value)}
+              />
             </Field>
-            <Field label="Length (min)" hint="Doors open to doors shut. Streams and recordings sit inside it.">
+            <Field
+              label="Length (min)"
+              hint="Doors open to doors shut. Streams and recordings sit inside it."
+            >
               <input
                 type="number"
                 min={1}
@@ -156,7 +164,10 @@ export function EventForm({
           </div>
 
           <Field label="Repeats">
-            <select value={draft.repeat} onChange={(event) => set('repeat', event.target.value as Repeat)}>
+            <select
+              value={draft.repeat}
+              onChange={(event) => set('repeat', event.target.value as Repeat)}
+            >
               <option value="once">Does not repeat</option>
               <option value="daily">Every day</option>
               <option value="weekly">Every week</option>
@@ -189,8 +200,14 @@ export function EventForm({
           ) : null}
 
           {draft.repeat === 'custom' ? (
-            <Field label="Custom rule" hint="An RFC 5545 RRULE, without the DTSTART line. e.g. FREQ=WEEKLY;BYDAY=SU,WE">
-              <input value={draft.customRrule} onChange={(event) => set('customRrule', event.target.value)} />
+            <Field
+              label="Custom rule"
+              hint="An RFC 5545 RRULE, without the DTSTART line. e.g. FREQ=WEEKLY;BYDAY=SU,WE"
+            >
+              <input
+                value={draft.customRrule}
+                onChange={(event) => set('customRrule', event.target.value)}
+              />
             </Field>
           ) : null}
 
@@ -209,8 +226,9 @@ export function EventForm({
           <h3>Default names</h3>
           <p className="muted" style={{ margin: 0 }}>
             What every stream and recording is called unless it says otherwise. Tokens:{' '}
-            <code>{'{{date "MMMM d, yyyy"}}'}</code>, <code>{'{{event.name}}'}</code>, <code>{'{{time}}'}</code>,{' '}
-            <code>{'{{occurrence.index}}'}</code>. Dates resolve against the occurrence, in the zone above.
+            <code>{'{{date "MMMM d, yyyy"}}'}</code>, <code>{'{{event.name}}'}</code>,{' '}
+            <code>{'{{time}}'}</code>, <code>{'{{occurrence.index}}'}</code>. Dates resolve against
+            the occurrence, in the zone above.
           </p>
           <Field label="Broadcast title">
             <input
@@ -220,7 +238,11 @@ export function EventForm({
             />
           </Field>
           <Field label="Description">
-            <textarea rows={3} value={draft.description} onChange={(event) => set('description', event.target.value)} />
+            <textarea
+              rows={3}
+              value={draft.description}
+              onChange={(event) => set('description', event.target.value)}
+            />
           </Field>
           <Field label="Filename" hint="For recordings. The device adds its own extension.">
             <input
@@ -231,7 +253,11 @@ export function EventForm({
           </Field>
 
           <div className="row">
-            <button className="primary" disabled={saving || !draft.label} onClick={() => void save()}>
+            <button
+              className="primary"
+              disabled={saving || !draft.label}
+              onClick={() => void save()}
+            >
               {saving ? 'Saving…' : saved ? 'Save' : 'Create'}
             </button>
             <button onClick={onDone}>{saved ? 'Done' : 'Cancel'}</button>
@@ -313,7 +339,9 @@ function PreviewPanel({
                       : 'The clocks go forward over this time; it has been shifted.'}
                   </div>
                 ) : null}
-                {occurrence.error ? <div style={{ color: 'var(--bad)' }}>{occurrence.error}</div> : null}
+                {occurrence.error ? (
+                  <div style={{ color: 'var(--bad)' }}>{occurrence.error}</div>
+                ) : null}
                 {occurrence.title ? <div>{occurrence.title}</div> : null}
                 {occurrence.filename ? <div className="muted">{occurrence.filename}</div> : null}
               </li>
@@ -411,15 +439,21 @@ function defaultStart(): number {
 function dateInZone(instant: number, timeZone: string): string {
   // en-CA is the locale that formats as YYYY-MM-DD, which is what
   // <input type="date"> wants.
-  return new Intl.DateTimeFormat('en-CA', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(
-    instant,
-  )
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(instant)
 }
 
 function timeInZone(instant: number, timeZone: string): string {
-  return new Intl.DateTimeFormat('en-GB', { timeZone, hour: '2-digit', minute: '2-digit', hour12: false }).format(
-    instant,
-  )
+  return new Intl.DateTimeFormat('en-GB', {
+    timeZone,
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).format(instant)
 }
 
 /** Every zone the browser knows, with the current one guaranteed present. */

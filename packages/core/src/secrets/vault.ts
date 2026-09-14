@@ -44,7 +44,11 @@ export class SecretVault {
   store(plaintext: string, id = randomId()): string {
     const nonce = randomBytes(12)
     const cipher = createCipheriv(ALGORITHM, this.masterKey.key, nonce)
-    const ciphertext = Buffer.concat([cipher.update(plaintext, 'utf8'), cipher.final(), cipher.getAuthTag()])
+    const ciphertext = Buffer.concat([
+      cipher.update(plaintext, 'utf8'),
+      cipher.final(),
+      cipher.getAuthTag(),
+    ])
     this.db
       .prepare(
         `INSERT INTO secret (id, ciphertext, nonce, key_id, created_at) VALUES (?, ?, ?, ?, ?)
@@ -56,9 +60,9 @@ export class SecretVault {
   }
 
   reveal(ref: string): string {
-    const row = this.db.prepare('SELECT ciphertext, nonce, key_id FROM secret WHERE id = ?').get(ref) as
-      | { ciphertext: Buffer; nonce: Buffer; key_id: string }
-      | undefined
+    const row = this.db
+      .prepare('SELECT ciphertext, nonce, key_id FROM secret WHERE id = ?')
+      .get(ref) as { ciphertext: Buffer; nonce: Buffer; key_id: string } | undefined
     if (!row) throw new UnknownSecretError(ref)
     if (row.key_id !== this.masterKey.keyId) {
       throw new WrongMasterKeyError(ref, row.key_id, this.masterKey.keyId)

@@ -57,7 +57,9 @@ export class QuotaExhaustedError extends Error {
   readonly remediation: string
 
   constructor(method: string, used: number, limit: number) {
-    super(`The YouTube API budget for today is spent (${used} of ${limit} units); "${method}" was not sent.`)
+    super(
+      `The YouTube API budget for today is spent (${used} of ${limit} units); "${method}" was not sent.`,
+    )
     this.name = 'QuotaExhaustedError'
     this.remediation =
       'Wait for the daily reset (midnight Pacific), or request a higher quota for the Google Cloud project. ' +

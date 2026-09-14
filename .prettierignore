@@ -1,3 +1,8 @@
 dist
 coverage
 pnpm-lock.yaml
+# Built output, not source.
+packages/host/web
+release
+build
+.turbo

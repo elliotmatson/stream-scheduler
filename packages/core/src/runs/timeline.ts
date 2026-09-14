@@ -48,7 +48,11 @@ interface TimelineRow {
   late_start_grace_ms: number
 }
 
-export function timelineFor(db: Db, occurrenceId: string, options: { forcedAt?: number } = {}): EventTimeline {
+export function timelineFor(
+  db: Db,
+  occurrenceId: string,
+  options: { forcedAt?: number } = {},
+): EventTimeline {
   const row = db
     .prepare(
       `SELECT o.scheduled_start, o.scheduled_end, o.series_id, s.label, s.timezone, s.templates,
@@ -95,7 +99,10 @@ export function timelineFor(db: Db, occurrenceId: string, options: { forcedAt?: 
  * output coming off, so an output that runs past the window still finishes.
  */
 export function timelineEnd(timeline: EventTimeline): number {
-  return timeline.outputs.reduce((latest, entry) => Math.max(latest, entry.endsAt), timeline.windowEnd)
+  return timeline.outputs.reduce(
+    (latest, entry) => Math.max(latest, entry.endsAt),
+    timeline.windowEnd,
+  )
 }
 
 function parseTemplates(raw: string): OutputTemplates {

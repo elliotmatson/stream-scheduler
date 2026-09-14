@@ -56,7 +56,9 @@ export function Outputs({ series }: { series: Series }): ReactNode {
           </p>
         </div>
         <div className="row">
-          <button onClick={() => setAdding(adding === 'stream' ? undefined : 'stream')}>Add a stream</button>
+          <button onClick={() => setAdding(adding === 'stream' ? undefined : 'stream')}>
+            Add a stream
+          </button>
           <button onClick={() => setAdding(adding === 'recording' ? undefined : 'recording')}>
             Add a recording
           </button>
@@ -92,7 +94,8 @@ export function Outputs({ series }: { series: Series }): ReactNode {
 
       {(current?.outputs ?? []).length === 0 && !adding ? (
         <Empty>
-          Nothing yet, so this event would do nothing when its time comes. Add a stream or a recording.
+          Nothing yet, so this event would do nothing when its time comes. Add a stream or a
+          recording.
         </Empty>
       ) : null}
 
@@ -165,7 +168,9 @@ function OutputRow(props: RowProps): ReactNode {
   const capable = props.devices.flatMap((device) =>
     device.nodes.filter((node) => node.supports.includes(needed)).map((node) => ({ device, node })),
   )
-  const chosen = capable.find((entry) => entry.device.id === draft.deviceId && entry.node.id === draft.nodeId)
+  const chosen = capable.find(
+    (entry) => entry.device.id === draft.deviceId && entry.node.id === draft.nodeId,
+  )
   const offset = offsetFrom(series, draft.startsAt)
 
   return (
@@ -179,7 +184,11 @@ function OutputRow(props: RowProps): ReactNode {
           />
         </Field>
         <Field label="Starts">
-          <input type="time" value={draft.startsAt} onChange={(event) => set('startsAt', event.target.value)} />
+          <input
+            type="time"
+            value={draft.startsAt}
+            onChange={(event) => set('startsAt', event.target.value)}
+          />
         </Field>
         <Field label="Runs for (min)">
           <input
@@ -198,7 +207,8 @@ function OutputRow(props: RowProps): ReactNode {
       ) : null}
       {offset + draft.minutes * 60_000 > series.durationMs ? (
         <div className="banner warn">
-          This runs past the end of the event's window. It will still run; the event just stays open for it.
+          This runs past the end of the event's window. It will still run; the event just stays open
+          for it.
         </div>
       ) : null}
 
@@ -283,7 +293,8 @@ function OutputRow(props: RowProps): ReactNode {
         <summary>Its own name{kind === 'stream' ? ' and description' : ''}</summary>
         <div className="stack" style={{ marginTop: 8 }}>
           <p className="muted" style={{ margin: 0 }}>
-            Left blank, this uses the event's default. Two services on one morning usually want different titles.
+            Left blank, this uses the event's default. Two services on one morning usually want
+            different titles.
           </p>
           {kind === 'stream' ? (
             <>
@@ -318,8 +329,16 @@ function OutputRow(props: RowProps): ReactNode {
         <button className="primary" disabled={!draft.label || !draft.deviceId} onClick={save}>
           {output ? 'Save' : 'Add'}
         </button>
-        <label className="row" style={{ gap: 8 }} title="Off keeps it here but skips it when the event runs.">
-          <input type="checkbox" checked={draft.enabled} onChange={(event) => set('enabled', event.target.checked)} />
+        <label
+          className="row"
+          style={{ gap: 8 }}
+          title="Off keeps it here but skips it when the event runs."
+        >
+          <input
+            type="checkbox"
+            checked={draft.enabled}
+            onChange={(event) => set('enabled', event.target.checked)}
+          />
           <span>On</span>
         </label>
         {props.onCancel ? <button onClick={props.onCancel}>Cancel</button> : null}
@@ -328,7 +347,6 @@ function OutputRow(props: RowProps): ReactNode {
     </div>
   )
 }
-
 
 /**
  * What this output wants set on its device before it runs.
@@ -393,7 +411,8 @@ function DeviceSettings({
   // Also on when what is already stored is a figure rather than a preset —
   // otherwise reopening an output would show "leave as it is" over a
   // setting it is going to apply.
-  const showCustom = custom || (draft.quality !== '' && qualities.length > 0 && !qualities.includes(draft.quality))
+  const showCustom =
+    custom || (draft.quality !== '' && qualities.length > 0 && !qualities.includes(draft.quality))
 
   return (
     <details>
@@ -409,7 +428,9 @@ function DeviceSettings({
             }
           >
             <select
-              value={showCustom ? CUSTOM_VALUE : qualities.includes(draft.quality) ? draft.quality : ''}
+              value={
+                showCustom ? CUSTOM_VALUE : qualities.includes(draft.quality) ? draft.quality : ''
+              }
               onChange={(event) => {
                 setCustom(event.target.value === CUSTOM_VALUE)
                 set('quality', event.target.value === CUSTOM_VALUE ? '' : event.target.value)
@@ -475,7 +496,7 @@ function DeviceSettings({
                 do anything: the protocol has no rollover setting to write. */}
             <p className="muted" style={{ margin: 0 }}>
               {state?.recording?.rollover
-                ? 'When this slot fills, the deck rolls onto the other one by itself. That is the deck\'s own behaviour and cannot be turned off from here.'
+                ? "When this slot fills, the deck rolls onto the other one by itself. That is the deck's own behaviour and cannot be turned off from here."
                 : 'There is no second slot mounted, so recording stops when this one fills.'}
             </p>
           </>
@@ -503,7 +524,11 @@ interface RowDraft {
   enabled: boolean
 }
 
-function toDraft(output: EventOutput | undefined, kind: 'stream' | 'recording', series: Series): RowDraft {
+function toDraft(
+  output: EventOutput | undefined,
+  kind: 'stream' | 'recording',
+  series: Series,
+): RowDraft {
   return {
     label: output?.label ?? '',
     startsAt: clockAt(series, output?.offsetMs ?? 0),
@@ -563,7 +588,8 @@ function clockAt(series: Series, offsetMs: number): string {
  */
 function offsetFrom(series: Series, startsAt: string): number {
   const [hour, minute] = startsAt.split(':').map(Number)
-  if (hour === undefined || minute === undefined || Number.isNaN(hour) || Number.isNaN(minute)) return 0
+  if (hour === undefined || minute === undefined || Number.isNaN(hour) || Number.isNaN(minute))
+    return 0
   const [openHour, openMinute] = timeOf(series).split(':').map(Number) as [number, number]
   return (hour * 60 + minute - openHour * 60 - openMinute) * 60_000
 }
