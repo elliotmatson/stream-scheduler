@@ -265,13 +265,26 @@ CREATE INDEX quota_day ON quota_ledger (provider, client_ref, day);
   the device when one is picked, because a free-text box here is a typo that
   surfaces as a rejected command at 09:00.
 
-  Two things that look like settings are not offered, because the hardware
-  does not have them: an ATEM's recording quality cannot be set at all (and
-  its stream and record encoders share one bitrate, so two outputs on one
-  ATEM asking for different profiles is reported as a clash rather than
-  resolved), and a HyperDeck's rollover is not a persistent setting — the
-  deck spills onto the next mounted card on its own. Rollover is therefore
-  reported, never offered as a toggle.
+  Quality is not spelled the same way on every box, and the setting says so
+  rather than flattening it. A Streaming Encoder has named profiles and
+  reports them, so the choice is a list. An ATEM has none: the names in ATEM
+  Software Control come out of a `Streaming.xml` on the computer running it,
+  and the switcher itself stores only a bitrate — so an ATEM asks for a
+  figure in Mb/s (3 to 70, one number or a low-high range) and reports back
+  what it is on in the same words. A device says which of the two it takes;
+  nothing in the core has to know one model from another.
+
+  On an ATEM that bitrate is *one* setting for two users, because one H.264
+  encoder feeds both the stream and the recording. Setting it is therefore
+  how an ATEM recording's quality gets set — there is no separate recording
+  quality to write — and two outputs on one ATEM asking for different
+  bitrates while both run is reported as a clash rather than quietly
+  resolved.
+
+  One thing that looks like a setting is not offered, because the hardware
+  does not have it: a HyperDeck's rollover is not persistent state — the
+  deck spills onto the next mounted card on its own — so it is reported,
+  never offered as a toggle.
 - **`occurrence.local_date`** is stored, not derived at read time. Template
   rendering and the calendar both need the date *in the series' timezone*, and
   recomputing it from a UTC instant in a container running UTC is exactly where

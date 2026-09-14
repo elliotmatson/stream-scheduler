@@ -20,7 +20,14 @@ export interface AtemClient {
   on(event: 'error', handler: (message: string) => void): void
   on(event: 'stateChanged', handler: (state: Readonly<AtemState>, paths: string[]) => void): void
   off(event: string, handler: (...args: never[]) => void): void
-  setStreamingService(props: { serviceName?: string; url?: string; key?: string }): Promise<void>
+  setStreamingService(props: {
+    serviceName?: string
+    url?: string
+    key?: string
+    /** [low, high] in bits per second. One encoder serves streaming and
+     *  recording, so this is the quality of both. */
+    bitrates?: [number, number]
+  }): Promise<void>
   startStreaming(): Promise<void>
   stopStreaming(): Promise<void>
   setRecordingSettings(props: { filename?: string }): Promise<void>

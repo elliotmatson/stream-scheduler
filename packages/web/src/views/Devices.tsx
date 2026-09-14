@@ -231,7 +231,13 @@ function NodeControls({ device, node }: { device: Device; node: DeviceNode }): R
         node.id,
         action,
         action === 'startRecording' && filename
-          ? { filename, ...(slot === undefined ? {} : { slot }) }
+          ? {
+              filename,
+              ...(slot === undefined ? {} : { slot }),
+              // Only where the quality box belongs to the recorder: on a
+              // node that streams, the same box is part of pointing it.
+              ...(quality && !canStream ? { quality } : {}),
+            }
           : {},
       ),
     )
@@ -256,6 +262,10 @@ function NodeControls({ device, node }: { device: Device; node: DeviceNode }): R
   const readOnly = !canStream && !canRecord
   const slots = state?.recording?.slots ?? []
   const qualityChoices = state?.options?.quality?.choices ?? []
+  // A device with no named profiles may still take a bitrate — an ATEM
+  // keeps only a number, the names being a file on the computer running
+  // ATEM Software Control.
+  const bitrate = state?.options?.quality?.bitrate
   const current = state?.options?.quality?.current
 
   return (
@@ -456,6 +466,17 @@ function NodeControls({ device, node }: { device: Device; node: DeviceNode }): R
                         ))}
                       </select>
                     </Field>
+                  ) : bitrate ? (
+                    <Field
+                      label="Bitrate (Mb/s)"
+                      hint={`${bitrate.minMbps}–${bitrate.maxMbps}, or a low-high range.${current ? ` Now on ${current}.` : ''}`}
+                    >
+                      <input
+                        value={quality}
+                        placeholder={current ?? `${bitrate.minMbps}-${bitrate.maxMbps}`}
+                        onChange={(event) => setQuality(event.target.value)}
+                      />
+                    </Field>
                   ) : null}
                   <button
                     disabled={busy !== undefined || !credentialId || device.inUseBy.length > 0}
@@ -481,6 +502,21 @@ function NodeControls({ device, node }: { device: Device; node: DeviceNode }): R
                     onChange={(event) => setFilename(event.target.value)}
                   />
                 </Field>
+                {/* On a box whose encoder serves both, the recording's
+                    quality is set here because there is no stream target to
+                    hang it on. */}
+                {!canStream && bitrate ? (
+                  <Field
+                    label="Bitrate (Mb/s)"
+                    hint={`${bitrate.note ? `${bitrate.note} ` : ''}Now on ${current ?? 'whatever it was set to'}.`}
+                  >
+                    <input
+                      value={quality}
+                      placeholder={current ?? `${bitrate.minMbps}-${bitrate.maxMbps}`}
+                      onChange={(event) => setQuality(event.target.value)}
+                    />
+                  </Field>
+                ) : null}
                 {slots.length > 0 ? (
                   <Field label="Card" hint="Leave it and the deck records onto whichever it is set to.">
                     <select

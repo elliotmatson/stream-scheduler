@@ -72,6 +72,7 @@ interface OutputSpec {
   deviceId?: string
   nodeId?: string
   templates?: Record<string, string>
+  settings?: Record<string, unknown>
 }
 
 interface SeedOptions {
@@ -103,8 +104,8 @@ function seed(options: SeedOptions = {}): { occurrenceId: string; seriesId: stri
   const insert = db.prepare(
     `INSERT INTO event_output
        (id, series_id, kind, label, position, offset_ms, duration_ms, credential_id, device_id, node_id,
-        templates, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)`,
+        templates, settings, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)`,
   )
   ;(options.outputs ?? []).forEach((spec, index) => {
     insert.run(
@@ -119,6 +120,7 @@ function seed(options: SeedOptions = {}): { occurrenceId: string; seriesId: stri
       spec.deviceId ?? options.source?.deviceId ?? null,
       spec.nodeId ?? options.source?.nodeId ?? null,
       JSON.stringify(spec.templates ?? {}),
+      JSON.stringify(spec.settings ?? {}),
     )
   })
 
@@ -224,6 +226,76 @@ describe('EventPlanner', () => {
     expect((await connections.invoke(encoder, 'stream', 'readState'))?.streaming?.active).toBe(false)
     expect((await connections.invoke(recorder, 'record', 'readState'))?.recording?.active).toBe(false)
     expect(occurrenceStatus(occurrenceId)).toBe('done')
+  })
+
+  it('applies the quality an output asked for, to a recorder as well as a stream', async () => {
+    const encoder = addDevice({ kind: 'encoder' })
+    const recorder = addDevice({ kind: 'recorder' }, 'HyperDeck')
+    await connections.open(encoder)
+    await connections.open(recorder)
+
+    const { occurrenceId } = seed({
+      outputs: [
+        {
+          label: 'Main',
+          credentialId: addCredential('rtmps://x/live2', 'live_key-value-here'),
+          deviceId: encoder,
+          nodeId: 'stream',
+          settings: { quality: 'high' },
+        },
+        {
+          kind: 'recording',
+          label: 'Archive',
+          deviceId: recorder,
+          nodeId: 'record',
+          // A recorder has no stream target to carry a quality, and on a
+          // box with one encoder for both it still needs one.
+          settings: { quality: 'low', slot: 2 },
+        },
+      ],
+    })
+    expect(occurrenceId).toBeTruthy()
+
+    const engine = new RunEngine({ db, store, clock, planner: plannerFor(), sleeper: immediateSleeper })
+    clock.set(START - 30 * MINUTE)
+    await engine.tick()
+    clock.set(START)
+    await engine.tick()
+
+    expect((await connections.invoke(encoder, 'stream', 'readState'))?.options?.quality?.current).toBe('high')
+    const record = await connections.invoke(recorder, 'record', 'readState')
+    expect(record?.options?.quality?.current).toBe('low')
+    expect(record?.recording?.slots?.find((slot) => slot.active)?.id).toBe(2)
+  })
+
+  it('fails the output rather than going live at a quality the device ignored', async () => {
+    // The nastiest real failure this guards: the encoder takes the target,
+    // comes up, and is on the wrong bitrate. Reading the setting back is
+    // the only thing that catches it.
+    const deaf = addDevice({ kind: 'encoder', fault: 'ignores-quality' }, 'Stubborn encoder')
+    await connections.open(deaf)
+
+    seed({
+      outputs: [
+        {
+          label: 'Main',
+          credentialId: addCredential('rtmps://x/live2', 'live_key-value-here'),
+          deviceId: deaf,
+          nodeId: 'stream',
+          settings: { quality: 'high' },
+        },
+      ],
+    })
+
+    const engine = new RunEngine({ db, store, clock, planner: plannerFor(), sleeper: immediateSleeper })
+    clock.set(START)
+    const runId = (await engine.tick()).created[0]!
+
+    const failed = store.steps(runId).find((step) => step.state === 'failed')
+    expect(failed?.label).toBe('Main: point the encoder at it')
+    expect(failed?.error).toMatch(/at high/)
+    // And it never went live on the wrong setting.
+    expect((await connections.invoke(deaf, 'stream', 'readState'))?.streaming?.active).toBe(false)
   })
 
   it('hands one encoder from one service to the next inside a window', async () => {

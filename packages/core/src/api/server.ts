@@ -410,6 +410,9 @@ function registerRoutes(fastify: FastifyInstance, app: Application): void {
         // Which card to record onto. Absent means the deck's own setting,
         // which is what an operator who has not thought about it wants.
         slot: z.number().int().positive().optional(),
+        // For a recorder that shares its encoder with the streaming side,
+        // where there is no stream target to carry the quality.
+        quality: z.string().min(1).max(100).optional(),
       })
       .parse(request.body ?? {})
 
@@ -430,6 +433,7 @@ function registerRoutes(fastify: FastifyInstance, app: Application): void {
         ? {
             filename: sanitizeFilename(body.filename!),
             ...(body.slot === undefined ? {} : { slot: body.slot }),
+            ...(body.quality ? { quality: body.quality } : {}),
           }
         : {}
     const state = await app.connections.applyAndVerify(id, nodeId, action, args, check)

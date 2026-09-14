@@ -120,10 +120,15 @@ export class EventPlanner implements RunPlanner {
           { url: target.url, key: target.key, ...(output.settings.quality ? { quality: output.settings.quality } : {}) },
           {
             what: 'Stream target',
-            expected: `${target.url} with key ${fingerprint(target.key)}`,
+            expected:
+              `${target.url} with key ${fingerprint(target.key)}` +
+              (output.settings.quality ? ` at ${output.settings.quality}` : ''),
             satisfiedBy: (state) =>
               state.streaming?.targetUrl === target.url &&
-              state.streaming?.keyFingerprint === fingerprint(target.key),
+              state.streaming?.keyFingerprint === fingerprint(target.key) &&
+              // A device reports `current` in the same vocabulary it takes,
+              // so the quality that was asked for can be read straight back.
+              (!output.settings.quality || state.options?.quality?.current === output.settings.quality),
           },
         )
       },
@@ -276,13 +281,24 @@ export class EventPlanner implements RunPlanner {
             device.deviceId,
             device.nodeId,
             'startRecording',
-            { filename, ...(output.settings.slot === undefined ? {} : { slot: output.settings.slot }) },
+            {
+              filename,
+              ...(output.settings.slot === undefined ? {} : { slot: output.settings.slot }),
+              // A recorder that shares an encoder with the streaming side
+              // takes its quality here: there is no stream target to hang
+              // it on.
+              ...(output.settings.quality ? { quality: output.settings.quality } : {}),
+            },
             {
               what: 'Recording',
-              expected: `active as ${filename}`,
+              expected:
+                `active as ${filename}` +
+                (output.settings.quality ? ` at ${output.settings.quality}` : ''),
               // A deck spinning up media takes a moment, and reports the
               // transport status only once it has.
-              satisfiedBy: (state) => state.recording?.active === true,
+              satisfiedBy: (state) =>
+                state.recording?.active === true &&
+                (!output.settings.quality || state.options?.quality?.current === output.settings.quality),
               settleMs: 10_000,
             },
           )

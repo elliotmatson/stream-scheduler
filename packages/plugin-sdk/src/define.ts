@@ -72,6 +72,10 @@ export function defineDevice(spec: DeviceSpec): DeviceInstance {
           await actions.startRecording!({
             filename: readString(args, 'filename'),
             ...(typeof args.slot === 'number' ? { slot: args.slot } : {}),
+            // A recorder may share its encoder with the streaming side, in
+            // which case the quality has to be set on the way in rather
+            // than with a stream target the recording does not have.
+            ...(typeof args.quality === 'string' && args.quality ? { quality: args.quality } : {}),
           })
           break
         case 'route':

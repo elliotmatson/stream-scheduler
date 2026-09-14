@@ -45,6 +45,7 @@ const configSchema: ConfigField[] = [
       { id: 'ignores-writes', label: 'Accepts commands and ignores them' },
       { id: 'flaky', label: 'Fails the first command after connecting' },
       { id: 'slow-to-settle', label: 'Takes a few reads to report a change' },
+      { id: 'ignores-quality', label: 'Takes a quality profile and stays where it was' },
     ],
     default: 'none',
   },
@@ -55,7 +56,20 @@ const configSchema: ConfigField[] = [
  *  inside any caller's window. */
 const SLOW_READS = 3
 
-type Fault = 'none' | 'unreachable' | 'ignores-writes' | 'flaky' | 'slow-to-settle'
+/** The profiles this fake encoder reports, in the way a real one does:
+ *  named, read off the device, and the only names it will accept. */
+const QUALITIES = ['low', 'standard', 'high']
+
+type Fault =
+  | 'none'
+  | 'unreachable'
+  | 'ignores-writes'
+  | 'flaky'
+  | 'slow-to-settle'
+  /** Accepts everything and applies all of it but the quality. The nastiest
+   *  kind of real failure: the stream comes up, at the wrong bitrate, and
+   *  nothing says so unless the setting is read back. */
+  | 'ignores-quality'
 
 class MockDevice {
   private streaming = false
@@ -63,6 +77,9 @@ class MockDevice {
   /** The card being written to. A deck records onto one slot at a time and
    *  an event may name which. */
   private recordingSlot = 1
+  /** The encoder profile in force. Named, like a Streaming Encoder's — the
+   *  numeric kind an ATEM takes is covered by that adapter's own tests. */
+  private quality = 'standard'
   private target: StreamTarget | undefined
   private filename: string | undefined
   private commandCount = 0
@@ -140,6 +157,7 @@ class MockDevice {
       return {
         applyStreamTarget: async (target) => {
           this.guard()
+          if (target.quality !== undefined) this.setQuality(target.quality)
           if (this.fault !== 'ignores-writes') this.target = target
         },
         startStreaming: async () => {
@@ -163,8 +181,9 @@ class MockDevice {
     }
     if (nodeId === 'record' && this.canRecord) {
       return {
-        startRecording: async ({ filename, slot }) => {
+        startRecording: async ({ filename, slot, quality }) => {
           this.guard()
+          if (quality !== undefined) this.setQuality(quality)
           if (this.fault === 'slow-to-settle') this.settleReads = SLOW_READS
           if (this.fault !== 'ignores-writes') {
             this.recording = true
@@ -231,6 +250,7 @@ class MockDevice {
           rollover: true,
         },
         input: { present: true, format: '1080p50', source: 'SDI' },
+        options: { quality: { current: this.quality, choices: QUALITIES } },
       }
     }
     return {
@@ -241,7 +261,20 @@ class MockDevice {
           : { targetUrl: this.target.url, keyFingerprint: fingerprint(this.target.key) }),
         bitrateBps: this.streaming ? 6_000_000 : 0,
       },
+      options: { quality: { current: this.quality, choices: QUALITIES } },
     }
+  }
+
+  /** Refuses a profile it does not have, as real gear does: the point of
+   *  reading the choices off the device is that a name it never offered is
+   *  a mistake, not a new profile. */
+  private setQuality(quality: string): void {
+    if (!QUALITIES.includes(quality)) {
+      throw new DeviceError('unknown-quality', `This device has no quality profile called "${quality}".`, {
+        remediation: `It offers: ${QUALITIES.join(', ')}.`,
+      })
+    }
+    if (this.fault !== 'ignores-writes' && this.fault !== 'ignores-quality') this.quality = quality
   }
 
   /** A card, blank if it has been formatted since the device connected. */

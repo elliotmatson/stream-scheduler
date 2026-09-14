@@ -23,8 +23,10 @@ records, stops and tidies up — without anyone touching it.
   that start and stop on their own clocks — a Sunday morning is one event from
   7:00 to 12:45 with services at 9:00 and 11:00 and a recorder running the
   length of it, not five events kept in step by hand. Each output names its
-  own encoder or deck, and may name a quality profile or a card to record
-  onto; leave those alone and the device stays as it was set up
+  own encoder or deck, and may name a quality — a profile where the device has
+  them, a bitrate in Mb/s on an ATEM, which is one encoder's setting for
+  both its stream and its recording — or a card to record onto; leave those
+  alone and the device stays as it was set up
 - Recurring events via RFC 5545 `RRULE`, timezone- and DST-correct, with
   per-occurrence skips and edits that survive changes to the series
 - A durable run engine: everything prepares at T−30, each output goes on and

@@ -103,7 +103,27 @@ export interface NodeState {
    * offers no choice, which is the common case.
    */
   options?: {
-    quality?: { current?: string; choices: string[] }
+    /**
+     * What the device will accept for its encoder quality.
+     *
+     * `current` is written in the same vocabulary as the `quality` a caller
+     * passes in, so the two can be compared directly — that is what makes
+     * verify-after-write possible for a setting whose spelling is the
+     * device's own.
+     */
+    quality?: {
+      current?: string
+      /** Named profiles the device has. Empty when it takes a number. */
+      choices: string[]
+      /**
+       * Set instead of `choices` by a device that takes a bitrate rather
+       * than a profile name. An ATEM is the case: the named qualities in
+       * ATEM Software Control live in a file on the computer, and the
+       * switcher itself stores only the bitrate. `quality` is then a figure
+       * in Mb/s — "9", or "7-9" for a range.
+       */
+      bitrate?: { minMbps: number; maxMbps: number; note?: string }
+    }
   }
   raw?: JsonObject
 }
@@ -151,7 +171,7 @@ export interface NodeActions {
   stopStreaming?(): Promise<void>
   /** `slot` is which card or disk to write to, where the device has more
    *  than one. Absent means whichever it is already on. */
-  startRecording?(options: { filename: string; slot?: number }): Promise<void>
+  startRecording?(options: { filename: string; slot?: number; quality?: string }): Promise<void>
   stopRecording?(): Promise<void>
   route?(options: { input: string; output: string }): Promise<void>
   /**

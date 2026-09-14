@@ -358,8 +358,13 @@ function DeviceSettings({
 
   if (!device) return null
   const qualities = state?.options?.quality?.choices ?? []
+  // A device with no named profiles may still take a bitrate. An ATEM is
+  // the case: the quality names live in ATEM Software Control, and the
+  // switcher itself stores a number.
+  const bitrate = state?.options?.quality?.bitrate
+  const current = state?.options?.quality?.current
   const slots = state?.recording?.slots ?? []
-  if (qualities.length === 0 && slots.length === 0) return null
+  if (qualities.length === 0 && !bitrate && slots.length === 0) return null
 
   return (
     <details>
@@ -368,15 +373,28 @@ function DeviceSettings({
         {kind === 'stream' && qualities.length > 0 ? (
           <Field label="Quality" hint="The profiles this encoder reports for the service it is on.">
             <select value={draft.quality} onChange={(event) => set('quality', event.target.value)}>
-              <option value="">
-                Leave as it is{state?.options?.quality?.current ? ` (${state.options.quality.current})` : ''}
-              </option>
+              <option value="">Leave as it is{current ? ` (${current})` : ''}</option>
               {qualities.map((quality) => (
                 <option key={quality} value={quality}>
                   {quality}
                 </option>
               ))}
             </select>
+          </Field>
+        ) : null}
+
+        {/* Offered for a recording as well as a stream, because on a device
+            that takes a bitrate the two are the same encoder. */}
+        {qualities.length === 0 && bitrate ? (
+          <Field
+            label="Bitrate (Mb/s)"
+            hint={`${bitrate.note ? `${bitrate.note} ` : ''}Between ${bitrate.minMbps} and ${bitrate.maxMbps}, or a low-high range. Blank leaves it${current ? ` at ${current}` : ''}.`}
+          >
+            <input
+              value={draft.quality}
+              placeholder={current ?? `${bitrate.minMbps}-${bitrate.maxMbps}`}
+              onChange={(event) => set('quality', event.target.value)}
+            />
           </Field>
         ) : null}
 

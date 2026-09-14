@@ -95,10 +95,20 @@ storage path.
 Built on [`atem-connection`](https://www.npmjs.com/package/atem-connection), the
 Sofie project's TypeScript implementation of the ATEM protocol. Relevant surface:
 
-- `setStreamingService({ serviceName, url, key })` — push the target
+- `setStreamingService({ serviceName, url, key, bitrates })` — push the target,
+  and the encoder bitrate as a `[low, high]` pair in bits per second
 - `startStreaming()` / `stopStreaming()`
 - `requestStreamingDuration()`, plus streaming status and bitrate in the state
 - `startRecording()` / `stopRecording()` on models with a disk recorder
+- `setRecordingSettings({ filename, workingSet1DiskId, ... })` — note what is
+  *not* there: no quality, codec or bitrate. An ATEM has one H.264 encoder and
+  it serves both the stream and the recording, so `bitrates` above is the
+  recording's quality as well. That is why the adapter offers quality on the
+  recorder node too, applies it through the streaming service, and why two
+  outputs on one ATEM asking for different qualities is reported as a clash.
+  There are no named profiles to enumerate: "Streaming High", "HyperDeck
+  1080p50" and the rest live in a `Streaming.xml` on the computer running ATEM
+  Software Control, not in the switcher, so the adapter speaks in Mb/s
 - aux output routing, for the `router` role — implemented and tested, but
   see **Routing** below for what drives it
 
