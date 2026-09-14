@@ -12,6 +12,7 @@ export default defineConfig({
       '@scheduler/plugin-sdk': src('plugin-sdk'),
       '@scheduler/core': src('core'),
       '@scheduler/plugin-mock': src('plugin-mock'),
+      '@scheduler/plugin-hyperdeck': src('plugin-hyperdeck'),
     },
   },
   test: {

@@ -109,6 +109,9 @@ importers:
       '@scheduler/core':
         specifier: workspace:*
         version: link:../core
+      '@scheduler/plugin-hyperdeck':
+        specifier: workspace:*
+        version: link:../plugin-hyperdeck
       '@scheduler/plugin-mock':
         specifier: workspace:*
         version: link:../plugin-mock
@@ -116,6 +119,22 @@ importers:
         specifier: workspace:*
         version: link:../plugin-sdk
     devDependencies:
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
+
+  packages/plugin-hyperdeck:
+    dependencies:
+      '@scheduler/plugin-sdk':
+        specifier: workspace:*
+        version: link:../plugin-sdk
+      hyperdeck-connection:
+        specifier: ^2.0.1
+        version: 2.0.1
+    devDependencies:
+      hyperdeck-server-connection:
+        specifier: ^0.2.0
+        version: 0.2.0
       typescript:
         specifier: ^5.7.2
         version: 5.9.3
@@ -1603,6 +1622,9 @@ packages:
     resolution: {integrity: sha512-kVscqXk4OCp68SZ0dkgEKVi6/8ij300KBWTJq32P/dYeWTSwK41WyTxalN1eRmA5Z9UU/LX9D7FWSmV9SAYx6g==}
     engines: {node: '>=0.10.0'}
 
+  eventemitter3@4.0.7:
+    resolution: {integrity: sha512-8guHBZCwKnFhYdHr2ysuRWErTwhoN2X8XELRlrRwpmfeY2jjuUN4taQMsULKUVo1K4DvZl+0pgfyoysHxvmvEw==}
+
   expand-template@2.0.3:
     resolution: {integrity: sha512-XYfuKMvj4O35f/pOXLObndIRvyQ+/+6AhODh+OKWj9S9498pHHn/IMszH+gt0fBCRWMNfk1ZSp5x3AifmnI2vg==}
     engines: {node: '>=6'}
@@ -1872,6 +1894,14 @@ packages:
 
   humanize-ms@1.2.1:
     resolution: {integrity: sha512-Fl70vYtsAFb/C06PTS9dZBo7ihau+Tu/DNCk/OyHhea07S+aeMWpFFkUaXRa8fI+ScZbEI8dfSxwY7gxZ9SAVQ==}
+
+  hyperdeck-connection@2.0.1:
+    resolution: {integrity: sha512-80fBsX57048ps253+t+BiG4d0JnVXWJESxAVrlQz3u7f2BLjMNguvUoTAR/N5xbdkHGcY2f6T4XCKzIMegpg4g==}
+    engines: {node: '>=14.18'}
+
+  hyperdeck-server-connection@0.2.0:
+    resolution: {integrity: sha512-ETM6udw5OCHXU1z+U3u2yEzS92xcDbH6f2riFQrq40Xq1SQSERGu3Rg5LidmgGNeZknVsgsImbgEYHJoZNOiQw==}
+    engines: {node: '>=12'}
 
   iconv-corefoundation@1.1.7:
     resolution: {integrity: sha512-T10qvkw0zz4wnm560lOEg0PovVqUXuOFhhHAkixw8/sycy7TJt7v/RrkEKEQnAw2viPSJu6iAkErxnzR0g8PpQ==}
@@ -4593,6 +4623,8 @@ snapshots:
 
   esutils@2.0.3: {}
 
+  eventemitter3@4.0.7: {}
+
   expand-template@2.0.3: {}
 
   expect-type@1.4.0: {}
@@ -4938,6 +4970,13 @@ snapshots:
   humanize-ms@1.2.1:
     dependencies:
       ms: 2.1.3
+
+  hyperdeck-connection@2.0.1:
+    dependencies:
+      eventemitter3: 4.0.7
+      tslib: 2.8.1
+
+  hyperdeck-server-connection@0.2.0: {}
 
   iconv-corefoundation@1.1.7:
     dependencies:
