@@ -13,7 +13,15 @@ import type {
 import { StreamingEncoderApi, type ActivePlatform, type PlatformConfig } from './api.js'
 
 /**
- * Blackmagic Streaming Encoder HD / 4K, over the documented Control REST API.
+ * Blackmagic Streaming Encoder HD / 4K and Web Presenter, over the
+ * documented Control REST API.
+ *
+ * One adapter for both because current firmware exposes the same
+ * `/control/api/v1/` API on each. What decides whether a given unit works
+ * is the firmware, not the model name: older Web Presenter firmware
+ * predates this API and speaks a different protocol on TCP 9977, which is
+ * not implemented here. Check the unit answers on `/control/api/v1/`
+ * rather than going by what is printed on the box.
  *
  * The one real impedance mismatch is worth explaining up front. This
  * scheduler hands an encoder a *URL and a key*, because that is what every
@@ -23,7 +31,15 @@ import { StreamingEncoderApi, type ActivePlatform, type PlatformConfig } from '.
  */
 
 const configSchema: ConfigField[] = [
-  { type: 'textinput', id: 'host', label: 'IP address or hostname', required: true },
+  {
+    type: 'textinput',
+    id: 'host',
+    label: 'IP address or hostname',
+    required: true,
+    tooltip:
+      'A Streaming Encoder HD / 4K, or a Web Presenter on firmware new enough to serve ' +
+      '/control/api/v1/. Older Web Presenter firmware speaks a different protocol and is not supported.',
+  },
   { type: 'number', id: 'port', label: 'Port', default: 80, min: 1, max: 65535 },
   {
     type: 'textinput',
@@ -51,7 +67,7 @@ const configSchema: ConfigField[] = [
 const ACTIVE_STATUSES = new Set(['Streaming', 'Connecting', 'Interrupted'])
 
 class StreamingEncoderDevice {
-  private product = { productName: 'Blackmagic Streaming Encoder', softwareVersion: '' }
+  private product = { productName: 'Blackmagic encoder', softwareVersion: '' }
   private platforms: PlatformConfig[] = []
   private connectedAt = 0
   private lastError: string | undefined
@@ -78,7 +94,7 @@ class StreamingEncoderDevice {
   async probe(): Promise<DeviceCapabilities> {
     const product = await this.api.product()
     this.product = {
-      productName: product.productName ?? 'Blackmagic Streaming Encoder',
+      productName: product.productName ?? 'Blackmagic encoder',
       softwareVersion: product.softwareVersion ?? '',
     }
 
@@ -327,7 +343,7 @@ export function streamingEncoderPlugin(options: StreamingEncoderOptions = {}): P
 
   return {
     id: 'streaming-encoder',
-    displayName: 'Blackmagic Streaming Encoder',
+    displayName: 'Blackmagic Streaming Encoder / Web Presenter',
     apiVersion: SDK_API_VERSION,
     configSchema,
     async createDevice(ctx: DeviceContext): Promise<DeviceInstance> {

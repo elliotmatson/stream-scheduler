@@ -41,8 +41,11 @@ records, stops and tidies up — without anyone touching it.
 - **HyperDeck** adapter (TCP 9993), tested against a protocol-level emulator
 - **ATEM** adapter, with capabilities read from what the switcher reports
   rather than a model table that goes stale on the next firmware release
-- **Streaming Encoder** (HD / 4K) adapter over the documented Control REST
-  API, tested against a fake serving that API over real HTTP
+- **Streaming Encoder** (HD / 4K) and **Web Presenter** adapter over the
+  documented Control REST API, tested against a fake serving that API over
+  real HTTP. One adapter for both, because current firmware serves the same
+  API on each — check a Web Presenter answers on `/control/api/v1/`, since
+  older firmware speaks a different protocol that is not implemented
 - **YouTube**: bring-your-own OAuth, automated broadcast creation with
   templated title and description, automatic playlist insertion, a reusable
   ingestion stream so the encoder key never changes, and a quota ledger that
@@ -173,7 +176,7 @@ packages/
   core/             scheduling, runs, secrets, devices, API
   plugin-atem/      Blackmagic ATEM switchers
   plugin-hyperdeck/ Blackmagic HyperDeck recorders
-  plugin-streaming-encoder/  Blackmagic Streaming Encoder HD / 4K
+  plugin-streaming-encoder/  Blackmagic Streaming Encoder HD / 4K, Web Presenter
   plugin-youtube/   YouTube broadcasts, OAuth and quota
   plugin-mock/      a fake encoder and recorder, for tests and evaluation
   host/             the composition root: the only place that names plugins
@@ -231,9 +234,10 @@ threaded together in Chat rather than scattered across the space.
 ## A note on network security
 
 The Blackmagic control interfaces are all unauthenticated and unencrypted —
-the ATEM protocol, HyperDeck on TCP 9993, and the Streaming Encoder's REST
-API on port 80. Anyone who can reach the device can take it over, regardless
-of what this app does. Put the gear and this app on a trusted control VLAN.
+the ATEM protocol, HyperDeck on TCP 9993, and the Streaming Encoder and Web
+Presenter REST API on port 80. Anyone who can reach the device can take it
+over, regardless of what this app does. Put the gear and this app on a
+trusted control VLAN.
 
 ## License
 

@@ -61,9 +61,11 @@ describe('connecting', () => {
   })
 
   it('still works when the device declines to identify itself', async () => {
-    // The document says /system/product can answer 501.
+    // The document says /system/product can answer 501. The fallback name
+    // must not claim a model, because this adapter drives Web Presenters
+    // too and a silent unit could be either.
     const capabilities = await (await connect({}, { productUnimplemented: true })).probe()
-    expect(capabilities.model).toBe('Blackmagic Streaming Encoder')
+    expect(capabilities.model).toBe('Blackmagic encoder')
   })
 
   it('reports a reachable, actionable error when nothing is listening', async () => {
