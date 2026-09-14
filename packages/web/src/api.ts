@@ -283,8 +283,10 @@ export interface OutputSettings {
   slot?: number
 }
 
-/** Two outputs that would need the same hardware at the same time. */
+/** Two outputs that would need the same thing at the same time. */
 export interface OutputConflict {
+  kind?: 'device' | 'setting' | 'destination'
+  /** The thing being fought over: a device, or a destination. */
   deviceLabel: string
   first: { id: string; label: string }
   second: { id: string; label: string }

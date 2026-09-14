@@ -855,6 +855,118 @@ describe('outputs', () => {
     expect(added.json.conflicts[0].detail).toContain('only do one at a time')
   })
 
+  it('reports two events pushing one channel at once, and says what to change', async () => {
+    // Both broadcasts get made quite happily; what fails is the ingest,
+    // because a destination that reuses one stream has one key and two
+    // encoders cannot both push it.
+    app.destinations.register({
+      id: 'stub',
+      displayName: 'Stub service',
+      apiVersion: '1',
+      configSchema: [],
+      providesIngest: true,
+      createDestination: async () => {
+        throw new Error('not exercised here')
+      },
+    })
+    app.db
+      .prepare(
+        `INSERT INTO account (id, provider, external_id, display_name, secret_ref, scopes, created_at)
+         VALUES ('acct-stub', 'stub', 'x', 'Stub channel', 'ref', '', 0)`,
+      )
+      .run()
+    const destination = await post('/api/destinations', {
+      providerId: 'stub',
+      label: 'Main channel',
+      accountId: 'acct-stub',
+      config: {},
+    })
+
+    const { seriesId, deviceId } = await seedEverything()
+    const second = await post('/api/devices', {
+      pluginId: 'mock',
+      label: 'Balcony encoder',
+      config: { kind: 'encoder' },
+    })
+    await post(`/api/devices/${second.json.id}/connect`, {})
+
+    // Same channel, different encoders, overlapping windows.
+    await post(`/api/series/${seriesId}/outputs`, {
+      kind: 'stream',
+      label: 'Sanctuary',
+      durationMs: 60 * MINUTE,
+      destinationId: destination.json.id,
+      deviceId,
+      nodeId: 'stream',
+    })
+    const clashing = await post(`/api/series/${seriesId}/outputs`, {
+      kind: 'stream',
+      label: 'Balcony',
+      durationMs: 60 * MINUTE,
+      destinationId: destination.json.id,
+      deviceId: second.json.id,
+      nodeId: 'stream',
+    })
+
+    const conflict = clashing.json.conflicts.find((entry: { kind: string }) => entry.kind === 'destination')
+    expect(conflict.detail).toContain('Main channel')
+    expect(conflict.detail).toContain('Reuse one ingestion stream')
+  })
+
+  it('leaves two events on one channel alone when each gets its own key', async () => {
+    app.destinations.register({
+      id: 'stub',
+      displayName: 'Stub service',
+      apiVersion: '1',
+      configSchema: [],
+      providesIngest: true,
+      createDestination: async () => {
+        throw new Error('not exercised here')
+      },
+    })
+    app.db
+      .prepare(
+        `INSERT INTO account (id, provider, external_id, display_name, secret_ref, scopes, created_at)
+         VALUES ('acct-stub', 'stub', 'x', 'Stub channel', 'ref', '', 0)`,
+      )
+      .run()
+    const destination = await post('/api/destinations', {
+      providerId: 'stub',
+      label: 'Main channel',
+      accountId: 'acct-stub',
+      // A fresh stream per event: nothing is shared, so nothing here can
+      // say whether the service allows it. That is between the operator
+      // and the service.
+      config: { reusableStream: false },
+    })
+
+    const { seriesId, deviceId } = await seedEverything()
+    const second = await post('/api/devices', {
+      pluginId: 'mock',
+      label: 'Balcony encoder',
+      config: { kind: 'encoder' },
+    })
+    await post(`/api/devices/${second.json.id}/connect`, {})
+    await post(`/api/series/${seriesId}/outputs`, {
+      kind: 'stream',
+      label: 'Sanctuary',
+      durationMs: 60 * MINUTE,
+      destinationId: destination.json.id,
+      deviceId,
+      nodeId: 'stream',
+    })
+    const added = await post(`/api/series/${seriesId}/outputs`, {
+      kind: 'stream',
+      label: 'Balcony',
+      durationMs: 60 * MINUTE,
+      destinationId: destination.json.id,
+      deviceId: second.json.id,
+      nodeId: 'stream',
+    })
+
+    expect(added.json.conflicts.filter((entry: { kind: string }) => entry.kind === 'destination')).toEqual([])
+  })
+
   it('does not call a recording and a stream on one device a clash', async () => {
     const { seriesId } = await seedEverything()
     const deck = await post('/api/devices', { pluginId: 'mock', label: 'Deck', config: { kind: 'recorder' } })
