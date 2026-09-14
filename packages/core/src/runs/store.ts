@@ -125,7 +125,14 @@ export class RunStore {
     return row
   }
 
-  /** Outputs of completed steps, keyed by kind, for later steps to consume. */
+  /**
+   * Outputs of completed steps, keyed by kind, for later steps to consume.
+   *
+   * These come back from the database, which means they have been through
+   * the scrubber: a field whose *name* looks like a secret reads back as
+   * "[redacted]". Pass identifiers a later step can derive for itself
+   * rather than routing anything sensitive-looking through here.
+   */
   outputs(runId: string): Record<string, StepOutput> {
     const out: Record<string, StepOutput> = {}
     for (const step of this.steps(runId)) {

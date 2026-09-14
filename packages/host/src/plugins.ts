@@ -1,7 +1,8 @@
 import { atemPlugin } from '@scheduler/plugin-atem'
+import { youtubeProvider } from '@scheduler/plugin-youtube'
 import { hyperdeckPlugin } from '@scheduler/plugin-hyperdeck'
 import { mockPlugin } from '@scheduler/plugin-mock'
-import type { PluginDefinition } from '@scheduler/plugin-sdk'
+import type { DestinationProvider, PluginDefinition } from '@scheduler/plugin-sdk'
 
 /**
  * The composition root's plugin list.
@@ -16,4 +17,19 @@ import type { PluginDefinition } from '@scheduler/plugin-sdk'
  */
 export function bundledPlugins(): PluginDefinition[] {
   return [atemPlugin(), hyperdeckPlugin(), mockPlugin()]
+}
+
+/**
+ * The streaming services this build ships with.
+ *
+ * `resolveClient` is injected by the host so the provider never touches the
+ * database or the vault: it asks for credentials and gets them.
+ */
+export function bundledDestinations(
+  resolveClient: (accountRef: string) => Promise<{
+    client: { clientId: string; clientSecret: string }
+    refreshToken: string
+  }>,
+): DestinationProvider[] {
+  return [youtubeProvider({ resolveClient })]
 }

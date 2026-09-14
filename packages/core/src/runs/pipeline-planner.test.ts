@@ -11,7 +11,7 @@ import { PluginRegistry } from '../plugins/registry.js'
 import { keyFileSource, resolveMasterKey } from '../secrets/master-key.js'
 import { Scrubber } from '../secrets/scrubber.js'
 import { SecretVault } from '../secrets/vault.js'
-import { DevicePlanner, type PipelineGraph } from './device-planner.js'
+import { PipelinePlanner, type PipelineGraph } from './pipeline-planner.js'
 import { RunEngine } from './engine.js'
 import { RunStore } from './store.js'
 import { immediateSleeper } from './steps.js'
@@ -85,9 +85,9 @@ function seed(graph: PipelineGraph, templates: Record<string, string> = {}): str
   return occurrenceId
 }
 
-const plannerFor = () => new DevicePlanner({ db, connections, vault, clock })
+const plannerFor = () => new PipelinePlanner({ db, connections, vault, clock })
 
-describe('DevicePlanner', () => {
+describe('PipelinePlanner', () => {
   it('plans stream and record steps across the right phases', async () => {
     const encoder = addDevice({ kind: 'encoder' })
     const recorder = addDevice({ kind: 'recorder' })

@@ -13,7 +13,8 @@
     "@scheduler/plugin-mock": "workspace:*",
     "@scheduler/plugin-sdk": "workspace:*",
     "@scheduler/plugin-hyperdeck": "workspace:*",
-    "@scheduler/plugin-atem": "workspace:*"
+    "@scheduler/plugin-atem": "workspace:*",
+    "@scheduler/plugin-youtube": "workspace:*"
   },
   "devDependencies": {
     "typescript": "^5.7.2"

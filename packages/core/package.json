@@ -31,6 +31,7 @@
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.12",
     "typescript": "^5.7.2",
-    "@scheduler/plugin-mock": "workspace:*"
+    "@scheduler/plugin-mock": "workspace:*",
+    "@scheduler/plugin-youtube": "workspace:*"
   }
 }

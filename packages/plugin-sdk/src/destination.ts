@@ -113,6 +113,40 @@ export interface DestinationStatus {
   quotaRemaining?: number
 }
 
+/**
+ * A provider that connects accounts through OAuth.
+ *
+ * Sits on the provider rather than in core so the host can drive the flow
+ * — serve the redirect, store the tokens — without knowing anything about
+ * Google, and so a second service can be added without touching core.
+ */
+export interface OAuthCapability {
+  /** Where to send the browser, plus the state this flow must remember. */
+  begin(client: { clientId: string }, redirectUri: string): PendingAuthorization
+
+  /** Exchanges the code and identifies whose account was connected. */
+  complete(
+    client: { clientId: string; clientSecret: string },
+    pending: PendingAuthorization,
+    code: string,
+  ): Promise<ConnectedAccount>
+}
+
+export interface PendingAuthorization {
+  url: string
+  codeVerifier: string
+  state: string
+  redirectUri: string
+}
+
+export interface ConnectedAccount {
+  /** The service's own id for the account: a YouTube channel id. */
+  externalId: string
+  displayName: string
+  refreshToken: string
+  scopes: string[]
+}
+
 export interface DestinationProvider {
   id: string
   displayName: string
@@ -121,5 +155,7 @@ export interface DestinationProvider {
   /** True when this provider issues its own ingest URL and key, so the user
    *  does not enter a stream key by hand. */
   providesIngest: boolean
+  /** Absent for a provider configured with a key typed in by hand. */
+  oauth?: OAuthCapability
   createDestination(ctx: DestinationContext): Promise<DestinationInstance>
 }

@@ -199,6 +199,21 @@ export class YouTubeApi {
     })
   }
 
+  /** Identifies the channel behind the tokens, so the UI can name it. */
+  async myChannel(): Promise<{ id: string; title: string }> {
+    const response = await this.call<{ items?: { id: string; snippet?: { title?: string } }[] }>(
+      'channels.list',
+      'GET',
+      '/channels',
+      { part: 'snippet', mine: 'true' },
+    )
+    const channel = response.items?.[0]
+    if (!channel) {
+      throw new YouTubeApiError(404, 'channelNotFound', 'This Google account has no YouTube channel.')
+    }
+    return { id: channel.id, title: channel.snippet?.title ?? channel.id }
+  }
+
   private async call<T>(
     method: QuotaMethod,
     verb: string,

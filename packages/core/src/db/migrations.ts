@@ -168,4 +168,21 @@ CREATE INDEX quota_day ON quota_ledger (provider, client_ref, day);
 ALTER TABLE run ADD COLUMN forced_at INTEGER;
 `,
   },
+  {
+    id: 3,
+    name: 'oauth-clients',
+    sql: `
+-- Bring-your-own OAuth clients. Each install supplies its own Google Cloud
+-- credentials, so no client secret is embedded in a distributed binary and
+-- each install gets its own daily API budget.
+CREATE TABLE oauth_client (
+  id         TEXT PRIMARY KEY,
+  provider   TEXT NOT NULL,
+  label      TEXT NOT NULL,
+  client_id  TEXT NOT NULL,
+  secret_ref TEXT NOT NULL,
+  created_at INTEGER NOT NULL
+);
+`,
+  },
 ]

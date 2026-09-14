@@ -2,7 +2,7 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { Application, createServer } from '@scheduler/core'
 import type { LogLevel } from '@scheduler/core'
-import { bundledPlugins } from './plugins.js'
+import { bundledDestinations, bundledPlugins } from './plugins.js'
 
 /**
  * The headless entrypoint: what Docker runs, and what a Mac or PC user can
@@ -17,6 +17,16 @@ export async function startHost(): Promise<{ stop: () => Promise<void>; url: str
     plugins: bundledPlugins(),
     ...(process.env.SCHEDULER_LOG_LEVEL ? { logLevel: process.env.SCHEDULER_LOG_LEVEL as LogLevel } : {}),
   })
+
+  // Registered after construction so the credential lookup can close over a
+  // fully built app. Providers ask for credentials; they never reach into
+  // the database or the vault themselves.
+  for (const provider of bundledDestinations(async (accountRef) => {
+    const { clientId, clientSecret, refreshToken } = app.destinations.resolveOAuthClient(accountRef)
+    return { client: { clientId, clientSecret }, refreshToken }
+  })) {
+    app.destinations.register(provider)
+  }
 
   const server = await createServer({
     app,

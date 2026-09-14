@@ -1,15 +1,16 @@
 import { systemClock } from '@scheduler/plugin-sdk'
-import type { Clock, PluginDefinition } from '@scheduler/plugin-sdk'
+import type { Clock, DestinationProvider, PluginDefinition } from '@scheduler/plugin-sdk'
 import { openDatabase, type Db } from './db/index.js'
 import { resolvePaths, type Paths } from './config/paths.js'
 import { createConsoleLogger, silentLogger, type Logger, type LogLevel } from './log.js'
 import { ConnectionManager } from './devices/connection-manager.js'
 import { PluginRegistry } from './plugins/registry.js'
+import { DestinationRegistry } from './destinations/registry.js'
 import { envSecretSource, keyFileSource, resolveMasterKey, type MasterKeySource } from './secrets/master-key.js'
 import { scrubber } from './secrets/scrubber.js'
 import { SecretVault } from './secrets/vault.js'
 import { DEFAULT_HORIZON_MS, materializeAll } from './schedule/materialize.js'
-import { DevicePlanner } from './runs/device-planner.js'
+import { PipelinePlanner } from './runs/pipeline-planner.js'
 import { RunEngine } from './runs/engine.js'
 import { RunStore } from './runs/store.js'
 
@@ -19,6 +20,8 @@ export interface AppOptions {
   logger?: Logger
   logLevel?: LogLevel
   plugins?: PluginDefinition[]
+  /** Streaming services: YouTube and anything added later. */
+  destinationProviders?: DestinationProvider[]
   /** How often the scheduler loop runs. */
   tickIntervalMs?: number
   horizonMs?: number
@@ -39,9 +42,10 @@ export class Application {
   readonly db: Db
   readonly vault: SecretVault
   readonly registry: PluginRegistry
+  readonly destinations: DestinationRegistry
   readonly connections: ConnectionManager
   readonly store: RunStore
-  readonly planner: DevicePlanner
+  readonly planner: PipelinePlanner
   readonly engine: RunEngine
   readonly logger: Logger
   readonly clock: Clock
@@ -58,9 +62,10 @@ export class Application {
     db: Db
     vault: SecretVault
     registry: PluginRegistry
+    destinations: DestinationRegistry
     connections: ConnectionManager
     store: RunStore
-    planner: DevicePlanner
+    planner: PipelinePlanner
     engine: RunEngine
     logger: Logger
     clock: Clock
@@ -71,6 +76,7 @@ export class Application {
     this.db = init.db
     this.vault = init.vault
     this.registry = init.registry
+    this.destinations = init.destinations
     this.connections = init.connections
     this.store = init.store
     this.planner = init.planner
@@ -103,6 +109,9 @@ export class Application {
     const registry = new PluginRegistry()
     for (const plugin of options.plugins ?? []) registry.register(plugin)
 
+    const destinations = new DestinationRegistry({ db, clock, vault, logger })
+    for (const provider of options.destinationProviders ?? []) destinations.register(provider)
+
     const connections = new ConnectionManager({
       db,
       registry,
@@ -114,7 +123,7 @@ export class Application {
         : { enforceSerialization: options.enforceSerialization }),
     })
     const store = new RunStore(db, clock, scrubber)
-    const planner = new DevicePlanner({ db, connections, vault, clock })
+    const planner = new PipelinePlanner({ db, connections, vault, clock, destinations })
     const engine = new RunEngine({ db, store, clock, planner, logger })
 
     return new Application({
@@ -122,6 +131,7 @@ export class Application {
       db,
       vault,
       registry,
+      destinations,
       connections,
       store,
       planner,

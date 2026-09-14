@@ -13,9 +13,9 @@ same image for Docker.
 
 ## Status
 
-Early, but it drives real hardware. The scheduling engine and the HyperDeck
-and ATEM adapters are built and tested; YouTube is not wired up yet, so stream
-keys are entered by hand.
+Early, but it does the job end to end: a recurring event creates its own
+YouTube broadcast, points an encoder at the key YouTube issued, goes live,
+records, stops and tidies up — without anyone touching it.
 
 **Working now**
 
@@ -29,13 +29,17 @@ keys are entered by hand.
 - **HyperDeck** adapter (TCP 9993), tested against a protocol-level emulator
 - **ATEM** adapter, with capabilities read from what the switcher reports
   rather than a model table that goes stale on the next firmware release
+- **YouTube**: bring-your-own OAuth, automated broadcast creation with
+  templated title and description, automatic playlist insertion, a reusable
+  ingestion stream so the encoder key never changes, and a quota ledger that
+  keeps a reserve for the calls that make a stream happen
 - Calendar and list views, a run timeline, and a device health page
 - Runs headless, in Docker, or as an Electron tray app from one codebase
 
 **Not built yet**
 
-- YouTube OAuth and automated broadcast creation
 - The Web Presenter adapter (TCP 9977)
+- UI for connecting an account and editing pipelines; both are API-only today
 - The pipeline graph editor; pipelines are defined via the API for now
 - Signed and notarized installers
 
@@ -88,6 +92,20 @@ archive of it is the entire backup.
 | `SCHEDULER_PORT` | `8500` | Listen port |
 | `SCHEDULER_LOG_LEVEL` | `info` | `debug`, `info`, `warn`, `error` |
 
+## Connecting YouTube
+
+Each install uses its own Google Cloud OAuth client. No client secret is
+embedded in the binary, nothing waits on Google's verification review, and
+each install gets its own 10,000 unit/day API budget rather than sharing one.
+
+`GET /api/oauth/youtube/instructions` returns the exact steps and the redirect
+URI to paste. One of them matters more than the rest:
+
+> **Set the OAuth consent screen to "In production".** Left on "Testing",
+> Google expires refresh tokens after 7 days, so every scheduled stream works
+> for a week and then starts failing. The app names this specific cause when a
+> refresh is rejected, but it is much easier to avoid.
+
 ## Layout
 
 ```
@@ -96,6 +114,7 @@ packages/
   core/             scheduling, runs, secrets, devices, API
   plugin-atem/      Blackmagic ATEM switchers
   plugin-hyperdeck/ Blackmagic HyperDeck recorders
+  plugin-youtube/   YouTube broadcasts, OAuth and quota
   plugin-mock/      a fake encoder and recorder, for tests and evaluation
   host/             the composition root: the only place that names plugins
   web/              the React UI

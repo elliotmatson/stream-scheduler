@@ -18,6 +18,7 @@ const configDir = mkdtempSync(join(tmpdir(), 'scheduler-smoke-'))
 
 const STREAM_KEY = 'live_smoke-test-secret-key'
 const DEVICE_PASSWORD = 'smoke-test-device-password'
+const OAUTH_SECRET = 'smoke-test-oauth-client-secret'
 
 let child
 let failures = 0
@@ -147,6 +148,45 @@ async function main() {
 
   const index = await fetch(`${BASE}/`)
   check('the web UI is served', index.ok && (await index.text()).includes('<div id="root">'))
+
+  // -- streaming services ---------------------------------------------------
+
+  const providers = await api('GET', '/api/destination-providers')
+  const yt = providers.find((p) => p.id === 'youtube')
+  check('the YouTube provider is registered', yt !== undefined && yt.supportsOAuth === true)
+
+  const instructions = await api('GET', '/api/oauth/youtube/instructions')
+  check(
+    'setup instructions warn about the 7-day Testing expiry',
+    instructions.warning.includes('Testing') && instructions.steps.length >= 5,
+    instructions.warning,
+  )
+  check(
+    'the redirect URI is a loopback address',
+    instructions.redirectUri.startsWith('http://127.0.0.1:') && instructions.redirectUri.endsWith('/oauth/callback'),
+    instructions.redirectUri,
+  )
+
+  const oauthClient = await api('POST', '/api/oauth/clients', {
+    provider: 'youtube',
+    label: 'Smoke project',
+    clientId: 'smoke-client-id',
+    clientSecret: OAUTH_SECRET,
+  })
+  const clients = await api('GET', '/api/oauth/clients')
+  check('the OAuth client secret is never returned', !JSON.stringify(clients).includes(OAUTH_SECRET))
+
+  const authorization = await api('POST', '/api/oauth/youtube/start', { clientRef: oauthClient.id })
+  const authUrl = new URL(authorization.url)
+  check(
+    'the authorization URL uses PKCE and asks for offline access',
+    authUrl.searchParams.get('code_challenge_method') === 'S256' &&
+      authUrl.searchParams.get('access_type') === 'offline',
+    authorization.url,
+  )
+
+  const expired = await fetch(`${BASE}/oauth/callback?code=x&state=not-a-real-state`)
+  check('a callback with an unknown state is rejected', (await expired.text()).includes('expired'))
 }
 
 try {

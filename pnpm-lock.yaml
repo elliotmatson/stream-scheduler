@@ -75,6 +75,9 @@ importers:
       '@scheduler/plugin-mock':
         specifier: workspace:*
         version: link:../plugin-mock
+      '@scheduler/plugin-youtube':
+        specifier: workspace:*
+        version: link:../plugin-youtube
       '@types/better-sqlite3':
         specifier: ^7.6.12
         version: 7.6.13
@@ -121,6 +124,9 @@ importers:
       '@scheduler/plugin-sdk':
         specifier: workspace:*
         version: link:../plugin-sdk
+      '@scheduler/plugin-youtube':
+        specifier: workspace:*
+        version: link:../plugin-youtube
     devDependencies:
       typescript:
         specifier: ^5.7.2

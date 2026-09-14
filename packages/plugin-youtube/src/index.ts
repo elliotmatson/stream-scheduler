@@ -10,8 +10,15 @@ import type {
   PrepareResult,
 } from '@scheduler/plugin-sdk'
 import { YouTubeApi, YouTubeApiError, type Fetch, type LiveBroadcast, type LiveStream } from './api.js'
-import { RefreshingTokenSource, ReauthRequiredError, type OAuthClient } from './oauth.js'
-import { QuotaExhaustedError } from './quota.js'
+import {
+  beginAuthorization,
+  exchangeCode,
+  RefreshingTokenSource,
+  ReauthRequiredError,
+  SCOPES,
+  type OAuthClient,
+} from './oauth.js'
+import { InMemoryQuota, QuotaExhaustedError } from './quota.js'
 
 const configSchema: ConfigField[] = [
   { type: 'textinput', id: 'accountRef', label: 'Connected account', required: true },
@@ -273,6 +280,29 @@ export function youtubeProvider(options: YouTubePluginOptions): DestinationProvi
     apiVersion: SDK_API_VERSION,
     configSchema,
     providesIngest: true,
+    oauth: {
+      begin: (client, redirectUri) => beginAuthorization({ ...client, clientSecret: '' }, redirectUri),
+      complete: async (client, pending, code) => {
+        const tokens = await exchangeCode(client, pending, code, options.fetchImpl)
+
+        // Identify the channel so the UI can name what was connected, rather
+        // than showing an opaque account row. One quota unit; the budget for
+        // it is not yet attached to an account, so it is counted locally.
+        const api = new YouTubeApi(
+          { accessToken: async () => tokens.access_token },
+          new InMemoryQuota(),
+          options.fetchImpl,
+        )
+        const channel = await api.myChannel()
+
+        return {
+          externalId: channel.id,
+          displayName: channel.title,
+          refreshToken: tokens.refresh_token!,
+          scopes: SCOPES,
+        }
+      },
+    },
     async createDestination(ctx: DestinationContext): Promise<DestinationInstance> {
       const accountRef = String(ctx.config.accountRef ?? '')
       if (!accountRef) throw new ReauthRequiredError('no account is connected to this destination')
