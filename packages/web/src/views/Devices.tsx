@@ -10,7 +10,7 @@ import {
   type NodeState,
   type Plugin,
 } from '../api.ts'
-import { Card, ConfigFields, ConfirmButton, Empty, ErrorBanner, Field, StatusPill } from '../components.tsx'
+import { Card, ConfigFields, ConfirmButton, CopyButton, Empty, ErrorBanner, Field, StatusPill } from '../components.tsx'
 import { duration, relative } from '../format.ts'
 
 export function Devices(): ReactNode {
@@ -142,6 +142,27 @@ function DeviceCard({
         <Fact label="Firmware" value={device.capabilities?.firmware ?? '—'} />
         <Fact label="Capabilities" value={device.capabilities?.features.join(', ') || '—'} />
       </div>
+
+      {/* Where to go for the things this app does not do: a deck's media
+          over FTP, say. The plugin builds the address because only it knows
+          the protocol and port; this just shows it and makes it copyable,
+          since browsers no longer open ftp:// themselves. */}
+      {(device.capabilities?.links ?? []).length > 0 ? (
+        <div className="stack" style={{ marginTop: 10, gap: 6 }}>
+          {device.capabilities!.links!.map((link) => (
+            <div key={link.url} className="row" style={{ gap: 10, alignItems: 'baseline' }}>
+              <span style={{ minWidth: 130 }}>{link.label}</span>
+              <code className="address">{link.url}</code>
+              <CopyButton value={link.url} />
+              {link.note ? (
+                <span className="muted" style={{ fontSize: 12 }}>
+                  {link.note}
+                </span>
+              ) : null}
+            </div>
+          ))}
+        </div>
+      ) : null}
 
       {device.nodes.length > 0 ? (
         <div className="stack" style={{ marginTop: 12, gap: 6 }}>

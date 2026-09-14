@@ -167,6 +167,16 @@ class HyperdeckDevice {
       firmware: `protocol ${info.protocolVersion}`,
       // Probed, not assumed: what the deck reports is what the UI offers.
       features: ['recording', `slots:${info.slots}`],
+      links: [
+        {
+          // Every networked HyperDeck serves its media over FTP with an
+          // anonymous login, which is how a recording gets off the deck
+          // without walking over to it with a card reader.
+          label: 'Recordings (FTP)',
+          url: `ftp://${this.host}/`,
+          note: 'Log in anonymously. Browsers stopped opening ftp:// links, so paste this into Finder, Explorer or an FTP client.',
+        },
+      ],
     }
   }
 

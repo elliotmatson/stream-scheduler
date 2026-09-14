@@ -2,28 +2,51 @@ import { useMemo, useState } from 'react'
 import type { ReactNode } from 'react'
 import { api, useResource, type Occurrence } from '../api.ts'
 import { Card, Empty, ErrorBanner, StatusPill, toneFor } from '../components.tsx'
-import { dateTimeIn, duration, isForeignZone, localDateKey, monthLabel, relative, shortZone, timeIn } from '../format.ts'
+import {
+  dateTimeIn,
+  dayLabel,
+  duration,
+  isForeignZone,
+  localDateKey,
+  minutesOfDayIn,
+  monthLabel,
+  relative,
+  shortZone,
+  timeIn,
+  weekLabel,
+} from '../format.ts'
 
-type View = 'calendar' | 'list'
+type View = 'month' | 'week' | 'list'
 
 export function Schedule({ navigate }: { navigate: (path: string) => void }): ReactNode {
-  const [view, setView] = useState<View>('calendar')
-  const [cursor, setCursor] = useState(() => {
-    const now = new Date()
-    return { year: now.getFullYear(), month: now.getMonth() }
-  })
+  const [view, setView] = useState<View>('month')
+  // One anchor for both calendars: the month it falls in, or the week it
+  // falls in. Switching views then keeps you looking at the same dates
+  // rather than jumping back to today.
+  const [anchor, setAnchor] = useState(() => new Date())
 
-  // A month's worth either side, so a calendar cell for an event in another
-  // timezone is never missing just because the UTC instant fell outside.
-  const from = Date.UTC(cursor.year, cursor.month - 1, 1)
-  const to = Date.UTC(cursor.year, cursor.month + 2, 1)
-  const { data, error, reload } = useResource(() => api.occurrences(from, to), [from, to])
+  const weekStart = startOfWeek(anchor)
+  // A month's worth either side in the month view, a few days in the week
+  // view: a calendar cell for an event in another timezone must never be
+  // missing just because the UTC instant fell outside the range.
+  const range =
+    view === 'week'
+      ? { from: addDays(weekStart, -2).getTime(), to: addDays(weekStart, 9).getTime() }
+      : {
+          from: Date.UTC(anchor.getFullYear(), anchor.getMonth() - 1, 1),
+          to: Date.UTC(anchor.getFullYear(), anchor.getMonth() + 2, 1),
+        }
+  const { data, error, reload } = useResource(() => api.occurrences(range.from, range.to), [range.from, range.to])
 
   const shift = (by: number): void =>
-    setCursor((c) => {
-      const next = new Date(c.year, c.month + by, 1)
-      return { year: next.getFullYear(), month: next.getMonth() }
-    })
+    setAnchor((current) =>
+      view === 'week'
+        ? addDays(current, by * 7)
+        : new Date(current.getFullYear(), current.getMonth() + by, 1),
+    )
+
+  const select = (occurrence: Occurrence): void =>
+    navigate(occurrence.runId ? `/runs/${occurrence.runId}` : `/occurrences/${occurrence.id}`)
 
   return (
     <>
@@ -31,41 +54,57 @@ export function Schedule({ navigate }: { navigate: (path: string) => void }): Re
         <h1>Schedule</h1>
         <div className="row">
           <div className="toggle">
-            <button aria-pressed={view === 'calendar'} onClick={() => setView('calendar')}>
-              Calendar
+            <button aria-pressed={view === 'month'} onClick={() => setView('month')}>
+              Month
+            </button>
+            <button aria-pressed={view === 'week'} onClick={() => setView('week')}>
+              Week
             </button>
             <button aria-pressed={view === 'list'} onClick={() => setView('list')}>
               List
             </button>
           </div>
-          {view === 'calendar' ? (
+          {view === 'list' ? null : (
             <div className="row">
-              <button onClick={() => shift(-1)} aria-label="Previous month">
+              <button onClick={() => shift(-1)} aria-label={view === 'week' ? 'Previous week' : 'Previous month'}>
                 ←
               </button>
-              <strong style={{ minWidth: 150, textAlign: 'center' }}>{monthLabel(cursor.year, cursor.month)}</strong>
-              <button onClick={() => shift(1)} aria-label="Next month">
+              <strong style={{ minWidth: 150, textAlign: 'center' }}>
+                {view === 'week' ? weekLabel(weekStart) : monthLabel(anchor.getFullYear(), anchor.getMonth())}
+              </strong>
+              <button onClick={() => shift(1)} aria-label={view === 'week' ? 'Next week' : 'Next month'}>
                 →
               </button>
+              <button onClick={() => setAnchor(new Date())}>Today</button>
             </div>
-          ) : null}
+          )}
         </div>
       </div>
 
       <ErrorBanner error={error} />
 
-      {view === 'calendar' ? (
+      {view === 'month' ? (
         <CalendarGrid
-          year={cursor.year}
-          month={cursor.month}
+          year={anchor.getFullYear()}
+          month={anchor.getMonth()}
           occurrences={data ?? []}
-          onSelect={(o) => navigate(o.runId ? `/runs/${o.runId}` : `/occurrences/${o.id}`)}
+          onSelect={select}
         />
+      ) : view === 'week' ? (
+        <WeekGrid start={weekStart} occurrences={data ?? []} onSelect={select} />
       ) : (
         <ScheduleList occurrences={data ?? []} navigate={navigate} reload={reload} />
       )}
     </>
   )
+}
+
+function startOfWeek(date: Date): Date {
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate() - date.getDay())
+}
+
+function addDays(date: Date, days: number): Date {
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate() + days)
 }
 
 const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
@@ -135,6 +174,179 @@ function CalendarGrid({
       })}
     </div>
   )
+}
+
+/** Pixels per hour. Enough that a 75-minute service is a readable block. */
+const HOUR_PX = 44
+/** What a week shows when nothing forces it wider: a normal church day. */
+const DEFAULT_WINDOW = { from: 6, to: 22 }
+
+/**
+ * A week laid out by time of day.
+ *
+ * The month grid answers "what is on this month"; this answers "what is on
+ * at the same time as what". Two services an hour apart are an hour apart
+ * here, and two things running at once are side by side rather than stacked
+ * in a box — which is the whole reason to have it.
+ *
+ * Every position is computed in the *event's* timezone, like every other
+ * date in this app: an evening service abroad belongs at its own evening.
+ */
+function WeekGrid({
+  start,
+  occurrences,
+  onSelect,
+}: {
+  start: Date
+  occurrences: Occurrence[]
+  onSelect: (occurrence: Occurrence) => void
+}): ReactNode {
+  // Keyed on the week itself, not on the array: a fresh array every render
+  // would make every memo below recompute and defeat the point of them.
+  const weekKey = keyOf(start)
+  const days = useMemo(
+    () => Array.from({ length: 7 }, (_, index) => addDays(start, index)),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [weekKey],
+  )
+  const shown = useMemo(() => new Set(days.map(keyOf)), [days])
+
+  const laid = useMemo(() => {
+    const byDay = new Map<string, Span[]>()
+    for (const occurrence of occurrences) {
+      const key = localDateKey(occurrence.scheduledStart, occurrence.timezone)
+      // The fetch reaches a couple of days either side so nothing is lost to
+      // a timezone edge. Those extra days must not be laid out here, or an
+      // early service next week stretches this week's hours to fit it.
+      if (!shown.has(key)) continue
+      const from = minutesOfDayIn(occurrence.scheduledStart, occurrence.timezone)
+      // An event running past midnight is clipped at the end of its own day
+      // rather than drawn into the next one, which would claim it starts
+      // there.
+      const to = Math.min(from + Math.round((occurrence.scheduledEnd - occurrence.scheduledStart) / 60_000), 24 * 60)
+      const list = byDay.get(key) ?? []
+      list.push({ occurrence, from, to: Math.max(to, from + 15) })
+      byDay.set(key, list)
+    }
+    const packed = new Map<string, Placed[]>()
+    for (const [key, list] of byDay) packed.set(key, packIntoLanes(list))
+    return packed
+  }, [occurrences, shown])
+
+  // Widen the window rather than always drawing all 24 hours: most of a day
+  // is empty, and a 6am start is nobody's idea of scrolling.
+  const window = useMemo(() => {
+    let { from, to } = DEFAULT_WINDOW
+    for (const list of laid.values()) {
+      for (const placed of list) {
+        from = Math.min(from, Math.floor(placed.from / 60))
+        to = Math.max(to, Math.ceil(placed.to / 60))
+      }
+    }
+    return { from: Math.max(0, from), to: Math.min(24, Math.max(to, from + 1)) }
+  }, [laid])
+
+  const hours = Array.from({ length: window.to - window.from }, (_, index) => window.from + index)
+  const todayKey = keyOf(new Date())
+  const offset = (minutes: number): number => (minutes / 60 - window.from) * HOUR_PX
+
+  return (
+    <div className="week" role="grid" aria-label="Scheduled events by time of day">
+      <div className="week-head">
+        <div className="week-gutter" />
+        {days.map((day) => (
+          <div key={keyOf(day)} className={`week-day-head${keyOf(day) === todayKey ? ' today' : ''}`}>
+            {dayLabel(day)}
+          </div>
+        ))}
+      </div>
+      <div className="week-body">
+        <div className="week-gutter">
+          {hours.map((hour) => (
+            <div key={hour} className="week-hour-label" style={{ height: HOUR_PX }}>
+              {formatHour(hour)}
+            </div>
+          ))}
+        </div>
+        {days.map((day) => {
+          const key = keyOf(day)
+          return (
+            <div
+              key={key}
+              className={`week-day${key === todayKey ? ' today' : ''}`}
+              style={{ height: hours.length * HOUR_PX, backgroundSize: `100% ${HOUR_PX}px` }}
+            >
+              {(laid.get(key) ?? []).map((placed) => (
+                <button
+                  key={placed.occurrence.id}
+                  className={`event ${placed.occurrence.runState === 'running' ? 'live' : ''} ${placed.occurrence.status}`}
+                  style={{
+                    position: 'absolute',
+                    top: offset(placed.from),
+                    height: Math.max(offset(placed.to) - offset(placed.from), 18),
+                    // Side by side when they overlap, so neither hides the
+                    // other and the clash is visible.
+                    left: `${(placed.lane / placed.lanes) * 100}%`,
+                    width: `${(1 / placed.lanes) * 100}%`,
+                  }}
+                  onClick={() => onSelect(placed.occurrence)}
+                  title={`${placed.occurrence.seriesLabel} — ${dateTimeIn(placed.occurrence.scheduledStart, placed.occurrence.timezone)} ${shortZone(placed.occurrence.scheduledStart, placed.occurrence.timezone)}`}
+                >
+                  <span className="event-time">
+                    {timeIn(placed.occurrence.scheduledStart, placed.occurrence.timezone)}
+                  </span>
+                  <span className="event-name">{placed.occurrence.seriesLabel}</span>
+                </button>
+              ))}
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
+interface Span {
+  occurrence: Occurrence
+  /** Minutes from midnight, in the event's own zone. */
+  from: number
+  to: number
+}
+
+interface Placed extends Span {
+  /** Which of the day's side-by-side lanes this one sits in. */
+  lane: number
+  /** How many lanes the day ended up needing. */
+  lanes: number
+}
+
+/**
+ * Puts overlapping events in adjacent lanes.
+ *
+ * Earliest first, each one taking the first lane whose previous occupant has
+ * finished. Everything that overlaps at all then shares the width of the day
+ * evenly — cruder than a true calendar's packing, and enough to make "these
+ * two are on at once" obvious at a glance.
+ */
+function packIntoLanes(items: Span[]): Placed[] {
+  const sorted = [...items].sort((a, b) => a.from - b.from || a.to - b.to)
+  const lanes: number[] = []
+  const placed = sorted.map((item) => {
+    let lane = lanes.findIndex((endsAt) => endsAt <= item.from)
+    if (lane === -1) {
+      lane = lanes.length
+      lanes.push(item.to)
+    } else {
+      lanes[lane] = item.to
+    }
+    return { ...item, lane }
+  })
+  // One width for the whole day: simple, and stable as the week scrolls.
+  return placed.map((item) => ({ ...item, lanes: Math.max(lanes.length, 1) }))
+}
+
+function formatHour(hour: number): string {
+  return new Intl.DateTimeFormat(undefined, { hour: 'numeric' }).format(new Date(2026, 0, 1, hour))
 }
 
 function keyOf(date: Date): string {

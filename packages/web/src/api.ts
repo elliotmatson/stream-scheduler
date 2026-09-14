@@ -34,7 +34,13 @@ export interface Device {
   /** Secret fields arrive as a masked marker; there is no read path for them. */
   config: Record<string, unknown>
   probedModel: string | null
-  capabilities: { model: string; firmware?: string; features: string[] } | null
+  capabilities: {
+    model: string
+    firmware?: string
+    features: string[]
+    /** Ways to reach the device outside this app, as the plugin builds them. */
+    links?: { label: string; url: string; note?: string }[]
+  } | null
   health: string
   lastError: string | null
   lastSeenAt: number | null

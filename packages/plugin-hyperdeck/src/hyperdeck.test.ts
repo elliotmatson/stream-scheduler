@@ -191,6 +191,17 @@ describe('connecting', () => {
     expect(capabilities.features).toContain('slots:2')
   })
 
+  it('offers the deck\u2019s own file share, since this app does not move media', async () => {
+    const hyperdeck = await connect()
+    const capabilities = await hyperdeck.probe()
+
+    const ftp = capabilities.links?.find((link) => link.url.startsWith('ftp://'))
+    expect(ftp?.url).toBe('ftp://127.0.0.1/')
+    // The note carries the two things the address does not say.
+    expect(ftp?.note).toMatch(/anonymous/i)
+    expect(ftp?.note).toMatch(/browser/i)
+  })
+
   it('reports a named, actionable error when nothing is listening', async () => {
     await expect(connect({ port: 9 })).rejects.toMatchObject({
       name: 'DeviceError',

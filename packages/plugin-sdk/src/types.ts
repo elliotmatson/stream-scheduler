@@ -152,6 +152,24 @@ export interface DeviceCapabilities {
   model: string
   firmware?: string
   features: string[]
+  /** Ways to reach this device outside the app, if it offers any. */
+  links?: DeviceLink[]
+}
+
+/**
+ * Somewhere to go that this app does not do itself — a deck's file share,
+ * a device's own web page.
+ *
+ * The plugin builds the address because only it knows the shape: which
+ * protocol the device speaks, on which port, and whether it needs a path.
+ */
+export interface DeviceLink {
+  label: string
+  /** Complete and ready to paste, e.g. `ftp://10.0.0.5/`. */
+  url: string
+  /** Anything the address alone does not say — a login, or that a browser
+   *  will not open it. */
+  note?: string
 }
 
 /**

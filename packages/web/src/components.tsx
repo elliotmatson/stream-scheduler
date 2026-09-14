@@ -173,6 +173,56 @@ export function ConfigFields({
 }
 
 /**
+ * Copies a piece of text, and says it did.
+ *
+ * The clipboard API is only available in a secure context, and this app is
+ * routinely reached over plain HTTP on a LAN, so there is a fallback and —
+ * when even that is refused — the text stays selectable for copying by hand.
+ */
+export function CopyButton({ value, label = 'Copy' }: { value: string; label?: string }): ReactNode {
+  const [done, setDone] = useState(false)
+
+  useEffect(() => {
+    if (!done) return
+    const timer = setTimeout(() => setDone(false), 1500)
+    return () => clearTimeout(timer)
+  }, [done])
+
+  const copy = (): void => {
+    void (async () => {
+      try {
+        if (navigator.clipboard?.writeText) {
+          await navigator.clipboard.writeText(value)
+          setDone(true)
+          return
+        }
+      } catch {
+        // Falls through to the older path below.
+      }
+      try {
+        const field = document.createElement('textarea')
+        field.value = value
+        field.setAttribute('readonly', '')
+        field.style.position = 'fixed'
+        field.style.opacity = '0'
+        document.body.appendChild(field)
+        field.select()
+        setDone(document.execCommand('copy'))
+        document.body.removeChild(field)
+      } catch {
+        setDone(false)
+      }
+    })()
+  }
+
+  return (
+    <button onClick={copy} aria-label={`${label} ${value}`}>
+      {done ? 'Copied' : label}
+    </button>
+  )
+}
+
+/**
  * A delete button that asks first.
  *
  * Removing a device or an event is a click away from a screen an operator

@@ -64,6 +64,46 @@ export function localDateKey(instant: number, timeZone: string): string {
   return parts
 }
 
+/**
+ * Minutes since midnight for an instant, read in the event's own zone.
+ *
+ * What lets a week view put a 9:30 service at 9:30 for the church running
+ * it, rather than at whatever hour the browser happens to be in.
+ */
+export function minutesOfDayIn(instant: number, timeZone: string): number {
+  const parts = new Intl.DateTimeFormat('en-GB', {
+    timeZone,
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).formatToParts(instant)
+  const hour = Number(parts.find((part) => part.type === 'hour')?.value ?? 0)
+  const minute = Number(parts.find((part) => part.type === 'minute')?.value ?? 0)
+  // Midnight comes back as 24 in some locales' output.
+  return (hour % 24) * 60 + minute
+}
+
+/** `Sun 8 Mar`, for a week heading. */
+export function dayLabel(date: Date): string {
+  return new Intl.DateTimeFormat(undefined, { weekday: 'short', day: 'numeric', month: 'short' }).format(date)
+}
+
+/** The span a week view is looking at, e.g. `8 – 14 March 2026`. */
+export function weekLabel(start: Date): string {
+  const end = new Date(start.getFullYear(), start.getMonth(), start.getDate() + 6)
+  const sameMonth = start.getMonth() === end.getMonth()
+  const startPart = new Intl.DateTimeFormat(undefined, {
+    day: 'numeric',
+    ...(sameMonth ? {} : { month: 'short' }),
+  }).format(start)
+  const endPart = new Intl.DateTimeFormat(undefined, {
+    day: 'numeric',
+    month: 'short',
+    year: 'numeric',
+  }).format(end)
+  return `${startPart} – ${endPart}`
+}
+
 export function monthLabel(year: number, month: number): string {
   return new Intl.DateTimeFormat(undefined, { month: 'long', year: 'numeric' }).format(new Date(year, month, 1))
 }
