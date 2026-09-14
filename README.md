@@ -92,12 +92,14 @@ archive of it is the entire backup.
 
 ```
 packages/
-  plugin-sdk/    the versioned extension contract
-  core/          scheduling, runs, secrets, devices, API
-  plugin-mock/   a fake encoder and recorder, for tests and evaluation
-  host/          the composition root: the only place that names plugins
-  web/           the React UI
-  desktop/       the Electron tray shell
+  plugin-sdk/       the versioned extension contract
+  core/             scheduling, runs, secrets, devices, API
+  plugin-atem/      Blackmagic ATEM switchers
+  plugin-hyperdeck/ Blackmagic HyperDeck recorders
+  plugin-mock/      a fake encoder and recorder, for tests and evaluation
+  host/             the composition root: the only place that names plugins
+  web/              the React UI
+  desktop/          the Electron tray shell
 ```
 
 `core` never imports a plugin — it discovers them through a registry — and
