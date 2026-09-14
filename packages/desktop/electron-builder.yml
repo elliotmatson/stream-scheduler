@@ -1,0 +1,29 @@
+appId: org.streamscheduler.app
+productName: Stream Scheduler
+directories:
+  output: ../../release
+files:
+  - dist/**
+  - web/**
+  - node_modules/**
+# better-sqlite3 is native and must be rebuilt against Electron's ABI.
+npmRebuild: true
+
+mac:
+  category: public.app-category.video
+  target: [dmg, zip]
+  # Gatekeeper blocks an unsigned build for ordinary users, and the
+  # workaround instructions are where people give up. A Developer ID and
+  # notarization are a real cost line, not an optional polish step.
+  hardenedRuntime: true
+  gatekeeperAssess: false
+  notarize: true
+
+win:
+  target: [nsis]
+  # Without a code-signing certificate SmartScreen warns on every download
+  # until the binary builds reputation.
+
+linux:
+  target: [AppImage, deb]
+  category: AudioVideo

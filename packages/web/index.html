@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="light dark" />
+    <title>Stream Scheduler</title>
+    <script>
+      // Applies the saved theme before first paint. Without this the page
+      // renders light, then flips — which at 7am in a dark booth is a
+      // faceful of white. Kept inline and tiny for that reason; it mirrors
+      // applyTheme() in src/theme.ts.
+      try {
+        var saved = localStorage.getItem('scheduler.theme')
+        if (saved === 'light' || saved === 'dark') {
+          document.documentElement.setAttribute('data-theme', saved)
+        }
+      } catch (error) {
+        // Storage blocked: fall through to the system preference.
+      }
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

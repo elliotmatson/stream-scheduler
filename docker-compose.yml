@@ -1,0 +1,21 @@
+services:
+  scheduler:
+    build: .
+    image: stream-scheduler:local
+    restart: unless-stopped
+    # Device discovery uses broadcast and mDNS, which do not cross a bridge
+    # network. Host networking is the practical default for a control VLAN;
+    # switch to a published port if you add every device by IP instead.
+    network_mode: host
+    environment:
+      # Required. Without a key source the app refuses to start rather than
+      # storing stream keys and OAuth tokens in plaintext.
+      SCHEDULER_SECRET: ${SCHEDULER_SECRET:?set SCHEDULER_SECRET to a long random string}
+      # Required because the container binds 0.0.0.0.
+      SCHEDULER_UI_PASSWORD: ${SCHEDULER_UI_PASSWORD:?set SCHEDULER_UI_PASSWORD}
+      SCHEDULER_PORT: 8500
+    volumes:
+      - scheduler-config:/config
+
+volumes:
+  scheduler-config:

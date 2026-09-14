@@ -1,0 +1,12 @@
+node_modules/
+dist/
+build/
+release/
+packages/host/web/
+coverage/
+.turbo/
+*.tsbuildinfo
+.env
+.env.local
+.DS_Store
+/tmp-config/
