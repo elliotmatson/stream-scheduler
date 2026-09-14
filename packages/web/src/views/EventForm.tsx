@@ -26,6 +26,8 @@ interface Draft {
   prepareLeadMinutes: number
   repeat: Repeat
   byday: string[]
+  /** True once the operator has clicked a day chip themselves. */
+  bydayTouched: boolean
   customRrule: string
   title: string
   description: string
@@ -62,7 +64,15 @@ export function EventForm({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pipelines])
 
-  const rrule = useMemo(() => toRrule(draft), [draft])
+  // Until the operator picks days themselves, "every week" means the weekday
+  // of the first date. Deriving it here rather than freezing it at mount is
+  // what stops "Sunday Service, first date the 20th" quietly recurring on
+  // Tuesdays because that was the default date when the form opened.
+  const byday = useMemo(
+    () => (draft.bydayTouched ? draft.byday : [weekdayOf(draft.date)]),
+    [draft.bydayTouched, draft.byday, draft.date],
+  )
+  const rrule = useMemo(() => toRrule(draft, byday), [draft, byday])
   const request = useMemo(
     () => ({
       label: draft.label || 'Untitled event',
@@ -169,14 +179,16 @@ export function EventForm({
               {WEEKDAYS.map((day) => (
                 <button
                   key={day.code}
-                  className={draft.byday.includes(day.code) ? 'primary' : ''}
+                  className={byday.includes(day.code) ? 'primary' : ''}
+                  aria-pressed={byday.includes(day.code)}
                   onClick={() =>
-                    set(
-                      'byday',
-                      draft.byday.includes(day.code)
-                        ? draft.byday.filter((code) => code !== day.code)
-                        : [...draft.byday, day.code],
-                    )
+                    setDraft((current) => ({
+                      ...current,
+                      bydayTouched: true,
+                      byday: byday.includes(day.code)
+                        ? byday.filter((code) => code !== day.code)
+                        : [...byday, day.code],
+                    }))
                   }
                 >
                   {day.label}
@@ -331,7 +343,10 @@ function toDraft(series: Series | undefined): Draft {
     durationMinutes: Math.round((series?.durationMs ?? 90 * 60_000) / 60_000),
     prepareLeadMinutes: Math.round((series?.prepareLeadMs ?? 30 * 60_000) / 60_000),
     repeat: parsed.repeat,
-    byday: parsed.byday.length > 0 ? parsed.byday : [WEEKDAYS[new Date(start).getDay()]!.code],
+    byday: parsed.byday,
+    // An existing series already says which days it runs; a new one follows
+    // the first date until told otherwise.
+    bydayTouched: parsed.byday.length > 0,
     customRrule: parsed.repeat === 'custom' ? (series?.rrule ?? '') : '',
     title: series?.templates.title ?? '',
     description: series?.templates.description ?? '',
@@ -347,14 +362,16 @@ function templatesOf(draft: Draft): Record<string, string> {
   return out
 }
 
-function toRrule(draft: Draft): string | null {
+function toRrule(draft: Draft, byday: string[]): string | null {
   switch (draft.repeat) {
     case 'once':
       return null
     case 'daily':
       return 'FREQ=DAILY'
     case 'weekly':
-      return draft.byday.length > 0 ? `FREQ=WEEKLY;BYDAY=${draft.byday.join(',')}` : 'FREQ=WEEKLY'
+      // No day selected at all is a rule that would never fire, so fall back
+      // to plain weekly rather than emitting BYDAY= with nothing after it.
+      return byday.length > 0 ? `FREQ=WEEKLY;BYDAY=${byday.join(',')}` : 'FREQ=WEEKLY'
     case 'monthly':
       return 'FREQ=MONTHLY;BYDAY=' + nthWeekdayOf(draft)
     case 'custom':
@@ -366,8 +383,14 @@ function toRrule(draft: Draft): string | null {
 function nthWeekdayOf(draft: Draft): string {
   const [, , day] = draft.date.split('-').map(Number) as [number, number, number]
   const nth = Math.floor((day - 1) / 7) + 1
-  const weekday = WEEKDAYS[new Date(`${draft.date}T12:00:00Z`).getUTCDay()]!.code
-  return `${nth}${weekday}`
+  return `${nth}${weekdayOf(draft.date)}`
+}
+
+/** The `SU`..`SA` code for a `YYYY-MM-DD` date. Read at noon UTC so the
+ *  browser's own offset cannot roll it onto the day before. */
+function weekdayOf(date: string): string {
+  const day = new Date(`${date}T12:00:00Z`).getUTCDay()
+  return WEEKDAYS[Number.isNaN(day) ? 0 : day]!.code
 }
 
 function parseRrule(rrule: string | null): { repeat: Repeat; byday: string[] } {
