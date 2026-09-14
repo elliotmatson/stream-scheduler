@@ -112,35 +112,56 @@ async function main() {
   const credentials = await api('GET', '/api/credentials')
   check('stream key is never returned', !JSON.stringify(credentials).includes(STREAM_KEY))
 
-  const pipeline = await api('POST', '/api/pipelines', {
-    label: 'Smoke pipeline',
-    graph: { nodes: [{ id: 'enc', deviceId: device.id, nodeId: 'stream', credentialId: credential.id }] },
-  })
-
   // Two minutes out, so the scheduler would not pick it up on its own and
   // "start now" is genuinely exercising the operator override.
   const start = Date.now() + 120_000
   const series = await api('POST', '/api/series', {
     label: 'Smoke Service',
-    pipelineId: pipeline.id,
+    sourceDeviceId: device.id,
+    sourceNodeId: 'stream',
     timezone: 'America/Chicago',
     rrule: 'FREQ=WEEKLY',
     dtstart: start,
     durationMs: 3_600_000,
     templates: { title: '{{event.name}} - {{date "yyyy-MM-dd"}}' },
   })
+  const firstOutput = await api('POST', `/api/series/${series.id}/outputs`, {
+    kind: 'stream',
+    label: 'Main',
+    durationMs: 3_600_000,
+    credentialId: credential.id,
+  })
+  check('an output is attached with no clashes', firstOutput.conflicts.length === 0, JSON.stringify(firstOutput.conflicts))
+
+  // A second stream on the same encoder, overlapping the first: one
+  // Blackmagic encoder cannot do both, and saying so now beats finding out
+  // on a Sunday.
+  const clashing = await api('POST', `/api/series/${series.id}/outputs`, {
+    kind: 'stream',
+    label: 'Worship',
+    offsetMs: 600_000,
+    durationMs: 1_800_000,
+    credentialId: credential.id,
+  })
+  check(
+    'two streams fighting over one encoder are reported',
+    clashing.conflicts.length === 1 && clashing.conflicts[0].detail.includes('Smoke encoder'),
+    JSON.stringify(clashing.conflicts),
+  )
+  await api('DELETE', `/api/outputs/${clashing.id}`)
 
   const preview = await api('GET', `/api/series/${series.id}/preview`)
-  check('name templates render', typeof preview[0]?.title === 'string' && preview[0].title.startsWith('Smoke Service - '), JSON.stringify(preview[0]))
+  const firstTitle = preview[0]?.outputs?.[0]?.title
+  check('name templates render', typeof firstTitle === 'string' && firstTitle.startsWith('Smoke Service - '), JSON.stringify(preview[0]))
 
   const occurrences = await api('GET', `/api/occurrences?from=${Date.now()}&to=${Date.now() + 40 * 86_400_000}`)
   check('occurrences are materialized', occurrences.length >= 4, `got ${occurrences.length}`)
 
   const started = await api('POST', `/api/occurrences/${occurrences[0].id}/start-now`)
-  check('an operator can start an event ahead of its window', started.state === 'live', `state was ${started.state}`)
+  check('an operator can start an event ahead of its window', started.state === 'running', `state was ${started.state}`)
 
   const run = await api('GET', `/api/runs/${started.runId}`)
-  const steps = run.steps.map((s) => `${s.kind}:${s.state}`).join(', ')
+  const steps = run.steps.map((s) => `${s.label ?? s.kind}:${s.state}`).join(', ')
   check('stream target was applied and verified', run.steps[0]?.state === 'done', steps)
   check('streaming was started', run.steps[1]?.state === 'done', steps)
   check('the run timeline contains no stream key', !JSON.stringify(run).includes(STREAM_KEY))
@@ -149,7 +170,7 @@ async function main() {
   check('an operator can stop a live run', cancelled.state === 'cancelled')
 
   const afterCancel = await api('GET', `/api/runs/${started.runId}`)
-  const stopStep = afterCancel.steps.find((s) => s.kind === 'enc.stopStreaming')
+  const stopStep = afterCancel.steps.find((s) => s.label === 'Main: stop')
   check('cancelling really told the encoder to stop', stopStep?.state === 'done', JSON.stringify(stopStep))
 
   const index = await fetch(`${BASE}/`)
@@ -307,7 +328,8 @@ async function main() {
 
   const uiSeries = await api('POST', '/api/series', {
     label: 'Form Service',
-    pipelineId: pipeline.id,
+    sourceDeviceId: device.id,
+    sourceNodeId: 'stream',
     timezone: 'America/Chicago',
     rrule: 'FREQ=WEEKLY;BYDAY=SU',
     dtstartLocal: { date: '2026-03-01', time: '09:00' },
@@ -322,28 +344,28 @@ async function main() {
     new Date(savedSeries?.dtstart ?? 0).toISOString(),
   )
 
-  let pipelineLocked = false
+  let deviceLocked = false
   try {
-    await api('DELETE', `/api/pipelines/${pipeline.id}`)
+    await api('DELETE', `/api/devices/${device.id}`)
   } catch (error) {
-    pipelineLocked = String(error).includes('Form Service')
+    deviceLocked = String(error).includes('Form Service')
   }
-  check('a pipeline an event still runs cannot be deleted, and says which event', pipelineLocked)
+  check('the encoder an event sources from cannot be deleted, and it says which event', deviceLocked)
 
   let keyLocked = false
   try {
     await api('DELETE', `/api/credentials/${credential.id}`)
   } catch (error) {
-    keyLocked = String(error).includes('Smoke pipeline')
+    keyLocked = String(error).includes('Smoke Service')
   }
-  check('a stream key a pipeline still points at cannot be deleted', keyLocked)
+  check('a stream key an output still points at cannot be deleted', keyLocked)
+
+  const reordered = await api('POST', `/api/series/${series.id}/outputs/order`, {
+    order: [firstOutput.id],
+  })
+  check('outputs can be reordered in one call', reordered.outputs.length === 1, JSON.stringify(reordered.outputs))
 
   await api('DELETE', `/api/series/${uiSeries.id}`)
-  await api('PATCH', `/api/pipelines/${pipeline.id}`, { label: 'Renamed pipeline' })
-  check(
-    'a pipeline can be renamed in place',
-    (await api('GET', '/api/pipelines')).some((row) => row.label === 'Renamed pipeline'),
-  )
 }
 
 try {

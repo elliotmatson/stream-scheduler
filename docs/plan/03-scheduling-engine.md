@@ -54,28 +54,64 @@ Each occurrence produces exactly one `run` (plus retries as new attempts). The
 state machine:
 
 ```
-  scheduled ──► preparing ──► ready ──► starting ──► live ──► stopping ──► completing ──► completed
-       │            │                       │                                   │
-       └────────────┴───────────────┬───────┴───────────────────────────────────┘
-                                    ▼
-                            failed  /  cancelled
+  scheduled ──► preparing ──► ready ──► running ──► completing ──► completed
+       │            │                      │             │
+       └────────────┴──────────────┬───────┴─────────────┘
+                                   ▼
+                           failed  /  cancelled
 ```
 
-Phases, for a typical ATEM Mini Pro → YouTube run:
+`running` is one state covering the whole window, not a moment. An event has
+several outputs inside that window and they go on and come off on their own
+clocks, so there is no single instant at which the run is "live". What each
+output is doing is read back from its own step rows rather than stored a second
+time — the steps are already the durable record of what was attempted and what
+landed, and a second copy of the same fact is a second thing that can be wrong
+after a crash.
 
 | Phase | At | Does |
 |---|---|---|
-| `preparing` | `start − prepare_lead_ms` (default T−30m) | Render templates. Create the YouTube broadcast. Ensure/bind the ingestion stream. Resolve the stream key. Push key + ingest URL to the encoder. Verify by reading back. |
-| `ready` | — | Everything staged. The UI shows a green "ready" and the resolved title, so an operator can eyeball it before it goes out. |
-| `starting` | `start − preroll_ms` | Tell the encoder to start streaming. Start the HyperDeck recording. Wait for YouTube to report ingest health. |
-| `live` | — | Poll health on a backoff. Sample bitrate into the run log. |
-| `stopping` | `end + postroll_ms` | Stop encoder streaming, stop recording. |
-| `completing` | — | Let YouTube finish the broadcast. Insert into the playlist. Apply final metadata. |
+| prepare | `window start − prepare_lead_ms` (default T−30m) | For **every** output at once: render templates, create the broadcast, ensure and bind the ingestion stream, resolve the key. |
+| ready | — | Everything staged. The UI shows a green "ready" and the resolved titles, so an operator can eyeball them before anything goes out. |
+| start | per output, at `window start + offset − preroll_ms` | Point the encoder at this output's key and read it back, then tell it to start. Or roll the recorder. |
+| stop | per output, at `... + duration + postroll_ms` | Stop that output, releasing the encoder for whatever comes next. |
+| complete | window end | Let each broadcast finish. Insert into playlists. Apply final metadata. |
+
+Stops are serviced before starts on any given tick, so an encoder handing over
+from the 9:00 service to the 11:00 one is released before the next output
+claims it.
 
 A long prepare lead is the single highest-value reliability feature: it moves
 every failure that can be detected in advance — expired token, unreachable
-encoder, quota exhausted, bad template — from 09:00:00 to 08:30:00, where a human
-can still fix it.
+encoder, quota exhausted, bad template — from 09:00:00 to 08:30:00, where a
+human can still fix it. Preparing *all* the outputs then, rather than each just
+before it airs, is the same argument: finding out at 08:30 that the 11:00
+broadcast cannot be created is worth something; finding out at 11:00 is not.
+
+### One output failing does not abandon the event
+
+A broadcast that cannot be created for the 9:00 service is no reason to give up
+on the 11:00 one or to stop recording. A failure takes that output out and
+leaves the rest running, and is reported on its own.
+
+Whether its work is undone depends on whether it ever got on air:
+
+- **Never on air** (prepare or start failed) → the broadcast it created is
+  litter, and is discarded.
+- **On air, then failed to stop** → the broadcast is kept and closed out
+  normally at the end. Deleting it would delete a service people watched. The
+  alert says the encoder may still be streaming, because it may be.
+
+The run itself fails only when nothing at all made it to air, and it keeps the
+cause a step recorded rather than replacing it with the summary: "the stored
+YouTube authorization was rejected, reconnect the account" is the sentence
+somebody can act on, and "every output failed" is not.
+
+### Late is per output, not per event
+
+An app that comes back at 10:00 has missed the 9:00 service, but the 11:00 one
+and the recording that runs to 12:45 are still perfectly deliverable. See
+[Missed events](#missed-events) below for the policy.
 
 ## Idempotency and crash recovery
 
@@ -95,8 +131,14 @@ startup, for every run not in a terminal state:
    with three broadcasts for one service.
 2. **Adopt or redo.** If the external resource exists, record its id and mark the
    step done. If it does not, the call never landed; re-run it with the same key.
-3. **Resume or compensate.** If the run's window is still open, continue from the
-   first incomplete step. If the window has passed, run compensation.
+3. **Resume or compensate.** If the run's window is still open, continue from
+   the first incomplete step. If the window has passed, run compensation.
+
+A crash part-way through a window is the one case where the single prepare gate
+is not enough: the run comes back in `running`, with later outputs never
+prepared and no second prepare gate coming. So starting an output also picks up
+any of its prepare steps still outstanding. In the ordinary case they are all
+done already and it costs nothing.
 
 **Compensation** matters because a half-prepared run leaves litter. If preparation
 fails after creating a broadcast, the cleanup step deletes it — or, if deletion
@@ -134,11 +176,13 @@ exist so that a future multi-node mode does not need a migration.
 A laptop closed at 08:45 and opened at 09:05 has missed a 09:00 start. The policy
 is per-series and explicit, because both answers are correct for different users:
 
-- **Start late** if now is within `late_start_grace_ms` (default 5 minutes) of the
-  scheduled start. The run proceeds with a shortened prepare phase and the UI
-  flags it as a late start.
-- **Skip** otherwise. The occurrence is marked `failed` with reason
-  `missed_window`, and the notification fires.
+- **Start late** if now is within `late_start_grace_ms` (default 5 minutes) of
+  the output's own start. The run proceeds with a shortened prepare phase and
+  the UI flags it as a late start.
+- **Skip that output** otherwise, writing the reason onto its start steps. The
+  rest of the event carries on.
+- **Fail the run** as `missed_window` only when every output is past saving,
+  firing the notification.
 
 Never silently start a 90-minute stream four hours late.
 

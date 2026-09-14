@@ -177,7 +177,7 @@ function ProviderSection({
       <h3>3. Destinations</h3>
       <p className="muted" style={{ marginTop: 0 }}>
         A destination is an account plus the settings every broadcast gets — privacy, and the playlist to file it
-        under. Pipelines point at one of these.
+        under. An event's outputs point at one of these.
       </p>
       {destinations.length === 0 ? null : (
         <ul className="plain">

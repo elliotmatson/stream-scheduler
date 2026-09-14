@@ -8,7 +8,6 @@ import {
   IconDevices,
   IconEvents,
   IconMoon,
-  IconPipelines,
   IconRuns,
   IconSchedule,
   IconServices,
@@ -20,7 +19,6 @@ import { Devices } from './views/Devices.tsx'
 import { SeriesList } from './views/SeriesList.tsx'
 import { RunDetail, Runs } from './views/RunDetail.tsx'
 import { Alerts } from './views/Alerts.tsx'
-import { Pipelines } from './views/Pipelines.tsx'
 import { Services } from './views/Services.tsx'
 
 /**
@@ -47,7 +45,6 @@ const NAV = [
   { to: '/', label: 'Schedule', icon: <IconSchedule /> },
   { to: '/events', label: 'Events', icon: <IconEvents /> },
   { to: '/devices', label: 'Devices', icon: <IconDevices /> },
-  { to: '/pipelines', label: 'Pipelines', icon: <IconPipelines /> },
   { to: '/services', label: 'Services', icon: <IconServices /> },
   { to: '/runs', label: 'Runs', icon: <IconRuns /> },
   { to: '/alerts', label: 'Alerts', icon: <IconAlerts /> },
@@ -57,7 +54,7 @@ export function App(): ReactNode {
   const [path, navigate] = useHashRoute()
   const live = useLive()
   const theme = useTheme()
-  const liveRuns = live.runs.filter((run) => run.state === 'live').length
+  const liveRuns = live.runs.filter((run) => run.state === 'running').length
 
   return (
     <div className="app">
@@ -132,7 +129,6 @@ function Route({ path, navigate }: { path: string; navigate: (path: string) => v
   const run = /^\/runs\/(.+)$/.exec(path)
   if (run) return <RunDetail runId={run[1]!} navigate={navigate} />
   if (path === '/devices') return <Devices />
-  if (path === '/pipelines') return <Pipelines />
   if (path === '/services') return <Services />
   if (path === '/events') return <SeriesList />
   if (path === '/runs') return <Runs navigate={navigate} />

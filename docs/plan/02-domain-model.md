@@ -1,70 +1,79 @@
 # 02 — Domain model
 
-## The central abstraction: a pipeline graph
+## The central abstraction: an event and its outputs
 
-The requirement is that new encoders, streaming services and "intermediaries to
-route video" can all be added later. That only holds if they are the same kind of
-thing to the core. So the core knows about exactly one structure: a **Pipeline**,
-a directed graph of **Nodes** connected by **Links**.
+An **event** is one source encoder and one long window. Inside that window sit
+several **outputs**, each with its own start, its own length, and its own name.
 
 ```
-   Source ──► [ Router ] ──► [ Relay ] ──► Sink
-   (ATEM,     (ATEM aux,     (ffmpeg/SRT   (YouTube, RTMP,
-    Web        Videohub)      restreamer)   HyperDeck record)
-    Presenter)
+EventSeries  "Sunday // Anderson"      source: Web Presenter   window 07:00-12:45
+  ├─ Output  "Grace Anderson // 9:00"   +2h00   75m   -> YouTube (main channel)
+  ├─ Output  "AND Worship // 9:00"      +2h00   75m   -> YouTube (worship channel)
+  ├─ Output  "Grace Anderson // 11:00"  +4h00   75m   -> YouTube (main channel)
+  ├─ Output  "AND Worship // 11:00"     +4h00   75m   -> YouTube (worship channel)
+  └─ Output  "Archive"                  +0h00  345m   -> HyperDeck
 ```
 
-Every node is provided by a plugin and declares a **role** and **capabilities**:
+This is the shape a Sunday actually has, and it is the shape Resi uses. The
+alternative — one event per stream — makes five things a human has to keep in
+step by hand, gives no way to say "this encoder is busy until 12:45", and has
+no place to hang the recording that spans all of it.
+
+Offsets are stored relative to the window, never as absolute times. Move the
+event and everything moves with it; cross a clock change and the whole morning
+shifts together rather than the 11:00 service landing an hour out from the
+9:00 one.
+
+### What a plugin provides
+
+Every device is provided by a plugin and exposes **nodes**, each declaring a
+**role** and **capabilities**:
 
 | Role | Means | Examples |
 |---|---|---|
 | `source` | produces video, and may itself push a stream | ATEM Mini Pro, Web Presenter, Streaming Bridge |
 | `router` | selects or routes an existing signal | ATEM aux output, Videohub, ATEM macro |
 | `relay` | ingests a stream and re-emits one or more | built-in ffmpeg/SRT relay, external restreamer |
-| `sink` | terminates the pipeline | YouTube, generic RTMP/RTMPS/SRT, HyperDeck recording, local file |
+| `sink` | terminates the chain | YouTube, generic RTMP/RTMPS/SRT, HyperDeck recording |
 
 A node can hold more than one role — an ATEM Mini Pro is both a `source` (it has
 a hardware H.264 streamer) and a `router` (its aux output). Roles are a set, not
 an enum.
 
-### Capability negotiation
+Adding Vimeo means writing a plugin that declares a destination provider. The
+core, the scheduler, the calendar and the templating engine need no changes.
 
-Links are typed. Each port declares what it emits or accepts:
+### One encoder, one stream at a time
 
-```ts
-interface Port {
-  direction: 'out' | 'in'
-  transport: ('rtmp' | 'rtmps' | 'srt' | 'sdi' | 'hdmi' | 'ndi' | 'file')[]
-  maxLinks: number          // an ATEM Mini Pro has exactly one stream output
-  requiresCredential?: 'stream-key' | 'none'
-}
-```
+A Blackmagic encoder holds one stream target and pushes one stream. Point it
+somewhere else while it is live and the first stream drops — and the device
+accepts the command and says nothing, which is exactly the class of failure
+that only shows up on a Sunday.
 
-When the user draws a link, the core intersects the two ports. Incompatible links
-are rejected in the UI with the reason, not silently accepted and then failed at
-09:59 on Sunday morning. Examples the negotiation catches for free:
+Two consequences run right through the design:
 
-- A HyperDeck has no `out` port of transport `rtmp` — it cannot be a source for
-  a YouTube sink.
-- An ATEM Mini Pro's stream output has `maxLinks: 1` — fanning it out to YouTube
-  *and* Facebook requires inserting a `relay` node, and the UI can suggest that.
-- A YouTube sink declares `requiresCredential: 'stream-key'`, so the core knows a
-  key must be resolved during the prepare phase.
+- **The target is applied when an output goes on air, not during prepare.** An
+  encoder feeding four services across a morning cannot hold four targets at
+  T-30; it is retargeted at 09:00 and again at 11:00.
+- **Two outputs wanting the same device at the same time is a real clash**, and
+  it is reported when the event is saved and again at pre-flight rather than
+  discovered live. Two YouTube channels *simultaneously* needs a relay in front
+  of the encoder, which is
+  [issue #5](https://github.com/elliotmatson/stream-scheduler/issues/5).
 
-This is what makes "extendable" structural rather than a promise. Adding Vimeo
-means writing a plugin that declares a `sink` with an `rtmps` in-port. The core,
-the scheduler, the calendar and the templating engine need no changes.
+A recording and a stream can share one device — a Web Presenter records to USB
+while it streams — so the check is per device *and* per kind, not per device.
 
 ## Entities
 
 ```
 Device            a physical box on the network (IP, credentials, model, health)
   └─ Node         a logical capability of that device, in the plugin's terms
-Pipeline          a named graph of Nodes + Links + per-node settings
 Destination       a configured sink target (a YouTube channel + defaults, an RTMP URL)
 Account           an OAuth identity (a YouTube channel), owning refresh tokens
 StreamCredential  a stream key, from manual entry / YouTube / a reusable stream
-EventSeries       a named recurring (or one-off) event: schedule + pipeline + template set
+EventSeries       a named recurring (or one-off) event: schedule + source encoder + defaults
+  └─ EventOutput  one stream or recording, with its own slot inside the window
 Occurrence        one materialized instance of a series at a concrete instant
 Run               the execution record of an Occurrence
   └─ RunStep      one idempotent unit of work within a Run
@@ -95,13 +104,6 @@ CREATE TABLE device (
   last_error    TEXT,
   last_seen_at  INTEGER,
   enabled       INTEGER NOT NULL DEFAULT 1
-);
-
--- pipelines ---------------------------------------------------------------
-CREATE TABLE pipeline (
-  id     TEXT PRIMARY KEY,
-  label  TEXT NOT NULL,
-  graph  TEXT NOT NULL                      -- JSON { nodes[], links[] }
 );
 
 -- destinations and identities ---------------------------------------------
@@ -139,7 +141,8 @@ CREATE TABLE stream_credential (
 CREATE TABLE event_series (
   id             TEXT PRIMARY KEY,
   label          TEXT NOT NULL,
-  pipeline_id    TEXT NOT NULL REFERENCES pipeline(id),
+  source_device_id TEXT REFERENCES device(id),  -- the one feed this event comes off
+  source_node_id TEXT,
   timezone       TEXT NOT NULL,              -- IANA, e.g. 'America/Chicago'
   rrule          TEXT,                       -- NULL for a one-off
   dtstart        INTEGER NOT NULL,           -- first occurrence, UTC epoch ms
@@ -149,10 +152,27 @@ CREATE TABLE event_series (
   preroll_ms     INTEGER NOT NULL DEFAULT 0,
   postroll_ms    INTEGER NOT NULL DEFAULT 0,
   late_start_grace_ms INTEGER NOT NULL DEFAULT 300000,
-  templates      TEXT NOT NULL,              -- JSON: title, description, filename, ...
+  templates      TEXT NOT NULL,              -- JSON defaults; an output overrides per key
   enabled        INTEGER NOT NULL DEFAULT 1,
   updated_at     INTEGER NOT NULL
 );
+
+CREATE TABLE event_output (
+  id             TEXT PRIMARY KEY,
+  series_id      TEXT NOT NULL REFERENCES event_series(id) ON DELETE CASCADE,
+  kind           TEXT NOT NULL,              -- 'stream' | 'recording'
+  label          TEXT NOT NULL,
+  position       INTEGER NOT NULL,
+  offset_ms      INTEGER NOT NULL,           -- from the window's start, never absolute
+  duration_ms    INTEGER NOT NULL,
+  destination_id TEXT REFERENCES destination(id),        -- a service that issues a key
+  credential_id  TEXT REFERENCES stream_credential(id),  -- ...or a key entered by hand
+  device_id      TEXT REFERENCES device(id), -- NULL means the event's source encoder
+  node_id        TEXT,
+  templates      TEXT NOT NULL DEFAULT '{}',
+  enabled        INTEGER NOT NULL DEFAULT 1
+);
+CREATE INDEX event_output_series ON event_output (series_id, position);
 
 CREATE TABLE occurrence (
   id             TEXT PRIMARY KEY,
@@ -185,7 +205,8 @@ CREATE TABLE run_step (
   id              TEXT PRIMARY KEY,
   run_id          TEXT NOT NULL REFERENCES run(id) ON DELETE CASCADE,
   seq             INTEGER NOT NULL,
-  kind            TEXT NOT NULL,             -- 'youtube.createBroadcast' | 'atem.setStreamKey' | ...
+  kind            TEXT NOT NULL,             -- '<output id>.startStreaming' | ...
+  label           TEXT,                      -- the readable half, for the timeline
   state           TEXT NOT NULL,             -- 'pending'|'running'|'done'|'failed'|'compensated'
   idempotency_key TEXT NOT NULL,             -- generated BEFORE the external call
   external_id     TEXT,                      -- what the outside world called the thing we made
@@ -221,6 +242,13 @@ CREATE INDEX quota_day ON quota_ledger (provider, client_ref, day);
 
 ### Notes on specific columns
 
+- **`event_output.offset_ms`** is measured from the window's start rather than
+  stored as a time of day. It is what keeps a morning together when the event
+  moves, and what makes a clock change shift the whole thing rather than
+  putting the 11:00 service an hour out from the 9:00 one.
+- **`event_output.device_id` being NULL** means "the event's source encoder".
+  Repeating the source on every output would be a second copy of the same fact,
+  and changing the source would then have to be a fan-out write.
 - **`occurrence.local_date`** is stored, not derived at read time. Template
   rendering and the calendar both need the date *in the series' timezone*, and
   recomputing it from a UTC instant in a container running UTC is exactly where

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { ReactNode } from 'react'
-import { api, useResource, type Pipeline, type SchedulePreview, type Series } from '../api.ts'
+import { api, useResource, type SchedulePreview, type Series } from '../api.ts'
+import { Outputs } from './Outputs.tsx'
 import { Card, ErrorBanner, Field } from '../components.tsx'
 import { shortZone, timeIn } from '../format.ts'
 
@@ -18,7 +19,8 @@ type Repeat = 'once' | 'daily' | 'weekly' | 'monthly' | 'custom'
 
 interface Draft {
   label: string
-  pipelineId: string
+  sourceDeviceId: string | null
+  sourceNodeId: string | null
   timezone: string
   date: string
   time: string
@@ -49,20 +51,17 @@ export function EventForm({
   series?: Series
   onDone: () => void
 }): ReactNode {
-  const { data: pipelines } = useResource(() => api.pipelines(), [])
+  const { data: devices } = useResource(() => api.devices(), [])
   const [draft, setDraft] = useState<Draft>(() => toDraft(series))
   const [error, setError] = useState<string>()
   const [saving, setSaving] = useState(false)
+  // An event has to exist before its outputs can hang off it. Rather than
+  // hiding that, a new event saves and then reveals the outputs editor in
+  // place, so the flow is one screen either way.
+  const [saved, setSaved] = useState<Series | undefined>(series)
 
   const set = <K extends keyof Draft>(key: K, value: Draft[K]): void =>
     setDraft((current) => ({ ...current, [key]: value }))
-
-  // Adopt the first pipeline once the list arrives, so a new event is
-  // valid without touching the picker when there is only one.
-  useEffect(() => {
-    if (!draft.pipelineId && pipelines?.[0]) set('pipelineId', pipelines[0].id)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pipelines])
 
   // Until the operator picks days themselves, "every week" means the weekday
   // of the first date. Deriving it here rather than freezing it at mount is
@@ -92,7 +91,8 @@ export function EventForm({
     try {
       const input = {
         label: draft.label,
-        pipelineId: draft.pipelineId,
+        sourceDeviceId: draft.sourceDeviceId,
+        sourceNodeId: draft.sourceNodeId,
         timezone: draft.timezone,
         rrule,
         dtstartLocal: { date: draft.date, time: draft.time },
@@ -100,9 +100,16 @@ export function EventForm({
         prepareLeadMs: draft.prepareLeadMinutes * 60_000,
         templates: templatesOf(draft),
       }
-      if (series) await api.updateSeries(series.id, input)
-      else await api.createSeries(input)
-      onDone()
+      if (saved) {
+        await api.updateSeries(saved.id, input)
+        setSaved({ ...saved, ...input, dtstart: saved.dtstart })
+        const fresh = (await api.series()).find((row) => row.id === saved.id)
+        if (fresh) setSaved(fresh)
+      } else {
+        const created = await api.createSeries(input)
+        const fresh = (await api.series()).find((row) => row.id === created.id)
+        setSaved(fresh)
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
     } finally {
@@ -123,14 +130,29 @@ export function EventForm({
             />
           </Field>
 
-          <Field label="Pipeline" hint="Which devices this event drives, and where they send.">
-            <select value={draft.pipelineId} onChange={(event) => set('pipelineId', event.target.value)}>
-              {(pipelines ?? []).length === 0 ? <option value="">— none set up —</option> : null}
-              {(pipelines ?? []).map((pipeline: Pipeline) => (
-                <option key={pipeline.id} value={pipeline.id}>
-                  {pipeline.label}
-                </option>
-              ))}
+          <Field
+            label="Source encoder"
+            hint="The one feed this event comes off. Its outputs all use it unless they name their own device."
+          >
+            <select
+              value={draft.sourceDeviceId ? `${draft.sourceDeviceId}/${draft.sourceNodeId}` : ''}
+              onChange={(event) => {
+                const [deviceId, nodeId] = event.target.value.split('/')
+                setDraft((current) => ({
+                  ...current,
+                  sourceDeviceId: event.target.value ? (deviceId ?? null) : null,
+                  sourceNodeId: event.target.value ? (nodeId ?? null) : null,
+                }))
+              }}
+            >
+              <option value="">— none set —</option>
+              {(devices ?? []).flatMap((device) =>
+                device.nodes.map((node) => (
+                  <option key={`${device.id}/${node.id}`} value={`${device.id}/${node.id}`}>
+                    {device.label} — {node.label}
+                  </option>
+                )),
+              )}
             </select>
           </Field>
 
@@ -154,7 +176,7 @@ export function EventForm({
             <Field label="Start time">
               <input type="time" value={draft.time} onChange={(event) => set('time', event.target.value)} />
             </Field>
-            <Field label="Runs for (min)">
+            <Field label="Window (min)" hint="Doors open to doors shut. The outputs sit inside it.">
               <input
                 type="number"
                 min={1}
@@ -215,11 +237,11 @@ export function EventForm({
             />
           </Field>
 
-          <h3>Names</h3>
+          <h3>Default names</h3>
           <p className="muted" style={{ margin: 0 }}>
-            Tokens: <code>{'{{date "MMMM d, yyyy"}}'}</code>, <code>{'{{event.name}}'}</code>,{' '}
-            <code>{'{{time}}'}</code>, <code>{'{{occurrence.index}}'}</code>. Dates resolve against the
-            occurrence, in the zone above.
+            What every output is called unless it says otherwise. Tokens:{' '}
+            <code>{'{{date "MMMM d, yyyy"}}'}</code>, <code>{'{{event.name}}'}</code>, <code>{'{{time}}'}</code>,{' '}
+            <code>{'{{occurrence.index}}'}</code>. Dates resolve against the occurrence, in the zone above.
           </p>
           <Field label="Broadcast title">
             <input
@@ -240,19 +262,25 @@ export function EventForm({
           </Field>
 
           <div className="row">
-            <button
-              className="primary"
-              disabled={saving || !draft.label || !draft.pipelineId}
-              onClick={() => void save()}
-            >
-              {saving ? 'Saving…' : series ? 'Save' : 'Create'}
+            <button className="primary" disabled={saving || !draft.label} onClick={() => void save()}>
+              {saving ? 'Saving…' : saved ? 'Save' : 'Create'}
             </button>
-            <button onClick={onDone}>Cancel</button>
+            <button onClick={onDone}>{saved ? 'Done' : 'Cancel'}</button>
           </div>
         </div>
 
         <PreviewPanel request={request} timezone={draft.timezone} />
       </div>
+
+      {saved ? (
+        <div style={{ marginTop: 16 }}>
+          <Outputs series={saved} />
+        </div>
+      ) : (
+        <p className="muted" style={{ marginBottom: 0 }}>
+          Create the event and its outputs — what it streams and records, and when — appear here.
+        </p>
+      )}
     </Card>
   )
 }
@@ -336,7 +364,8 @@ function toDraft(series: Series | undefined): Draft {
 
   return {
     label: series?.label ?? '',
-    pipelineId: series?.pipelineId ?? '',
+    sourceDeviceId: series?.sourceDeviceId ?? null,
+    sourceNodeId: series?.sourceNodeId ?? null,
     timezone: zone,
     date: dateInZone(start, zone),
     time: timeInZone(start, zone),

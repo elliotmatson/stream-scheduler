@@ -89,7 +89,7 @@ function Step({ step }: { step: RunStep }): ReactNode {
       <div className="marker" aria-hidden />
       <div style={{ minWidth: 0 }}>
         <div className="row" style={{ gap: 8 }}>
-          <span className="step-kind">{step.kind}</span>
+          <span className="step-kind">{step.label ?? step.kind}</span>
           {step.attempts > 1 ? <span className="muted">{step.attempts} attempts</span> : null}
           {step.externalId ? <span className="muted">→ {step.externalId}</span> : null}
         </div>

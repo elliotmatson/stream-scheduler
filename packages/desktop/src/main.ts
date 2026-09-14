@@ -1,7 +1,7 @@
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { app, BrowserWindow, dialog, Menu, nativeImage, shell, Tray } from 'electron'
-import { Application, createServer } from '@scheduler/core'
+import { Application, createServer, isOnAir } from '@scheduler/core'
 import { mockPlugin } from '@scheduler/plugin-mock'
 import { safeStorageKeySource } from './key-source.js'
 
@@ -98,7 +98,10 @@ function buildTray(): void {
 
 /** Quitting mid-broadcast needs a confirmation, not a silent stop. */
 async function requestQuit(): Promise<void> {
-  const live = scheduler?.store.listActiveRuns().filter((run) => run.state === 'live') ?? []
+  // Every run inside its window, whether or not an output happens to be on
+  // air this minute: quitting at 10:30 on a Sunday abandons the 11:00
+  // service just as surely as it abandons the 9:00 one.
+  const live = scheduler?.store.listActiveRuns().filter((run) => isOnAir(run.state)) ?? []
 
   if (live.length > 0) {
     const { response } = await dialog.showMessageBox({
@@ -106,7 +109,7 @@ async function requestQuit(): Promise<void> {
       buttons: ['Keep running', 'Quit anyway'],
       defaultId: 0,
       cancelId: 0,
-      message: live.length === 1 ? 'A stream is on air.' : `${live.length} streams are on air.`,
+      message: live.length === 1 ? 'An event is running.' : `${live.length} events are running.`,
       detail:
         'Quitting stops the scheduler. Encoders already streaming will keep going, but nothing will stop them ' +
         'at the scheduled time.',

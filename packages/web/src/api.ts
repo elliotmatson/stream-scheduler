@@ -17,7 +17,9 @@ export interface Occurrence {
 export interface Series {
   id: string
   label: string
-  pipelineId: string
+  /** The one encoder this event's outputs run on, unless one names its own. */
+  sourceDeviceId: string | null
+  sourceNodeId: string | null
   timezone: string
   rrule: string | null
   dtstart: number
@@ -46,6 +48,8 @@ export interface Device {
 export interface RunStep {
   seq: number
   kind: string
+  /** The readable half; the kind carries an output id so it stays stable. */
+  label: string | null
   state: string
   attempts: number
   externalId: string | null
@@ -86,11 +90,20 @@ export interface NotificationChannel {
   lastSentAt: number | null
 }
 
-export interface Preview {
-  occurrenceId: string
+export interface OutputPreview {
+  outputId: string
+  label: string
+  kind: 'stream' | 'recording'
+  startsAt: number
+  endsAt: number
   title?: string
   description?: string
   filename?: string
+}
+
+export interface Preview {
+  occurrenceId: string
+  outputs?: OutputPreview[]
   error?: string
 }
 
@@ -163,20 +176,45 @@ export interface Credential {
   key: string
 }
 
-export interface PipelineNode {
+/**
+ * One thing an event does: a stream to a service or a recording on a deck,
+ * with its own slot inside the event's window.
+ */
+export interface EventOutput {
   id: string
-  deviceId: string
-  nodeId: string
-  credentialId?: string
-  ingestFrom?: string
-  filenameTemplate?: string
+  seriesId: string
+  kind: 'stream' | 'recording'
+  label: string
+  position: number
+  /** From the start of the event's window. */
+  offsetMs: number
+  durationMs: number
+  destinationId: string | null
+  credentialId: string | null
+  /** Null means the event's source encoder. */
+  deviceId: string | null
+  nodeId: string | null
+  templates: Record<string, string>
+  enabled: boolean
 }
 
-export interface Pipeline {
-  id: string
-  label: string
-  graph: { nodes: PipelineNode[]; destinations?: { id: string; destinationId: string }[] }
+/** Two outputs that would need the same hardware at the same time. */
+export interface OutputConflict {
+  deviceLabel: string
+  first: { id: string; label: string }
+  second: { id: string; label: string }
+  from: number
+  to: number
+  detail: string
 }
+
+export interface OutputsResponse {
+  outputs: EventOutput[]
+  conflicts: OutputConflict[]
+}
+
+export type OutputInput = Partial<Omit<EventOutput, 'id' | 'seriesId' | 'position'>> &
+  Pick<EventOutput, 'kind' | 'label' | 'durationMs'>
 
 export interface PreviewOccurrence {
   start: number
@@ -196,7 +234,8 @@ export interface SchedulePreview {
 
 export interface SeriesInput {
   label: string
-  pipelineId: string
+  sourceDeviceId: string | null
+  sourceNodeId: string | null
   timezone: string
   rrule: string | null
   /** The wall time as typed. The server resolves it in `timezone`. */
@@ -296,12 +335,20 @@ export const api = {
     request<{ id: string }>('/api/credentials', { method: 'POST', body: JSON.stringify(input) }),
   deleteCredential: (id: string) => request<unknown>(`/api/credentials/${id}`, { method: 'DELETE' }),
 
-  pipelines: () => request<Pipeline[]>('/api/pipelines'),
-  createPipeline: (input: { label: string; graph: Pipeline['graph'] }) =>
-    request<{ id: string }>('/api/pipelines', { method: 'POST', body: JSON.stringify(input) }),
-  updatePipeline: (id: string, input: { label?: string; graph?: Pipeline['graph'] }) =>
-    request<unknown>(`/api/pipelines/${id}`, { method: 'PATCH', body: JSON.stringify(input) }),
-  deletePipeline: (id: string) => request<unknown>(`/api/pipelines/${id}`, { method: 'DELETE' }),
+  outputs: (seriesId: string) => request<OutputsResponse>(`/api/series/${seriesId}/outputs`),
+  createOutput: (seriesId: string, input: OutputInput) =>
+    request<OutputsResponse & { id: string }>(`/api/series/${seriesId}/outputs`, {
+      method: 'POST',
+      body: JSON.stringify(input),
+    }),
+  updateOutput: (id: string, input: Partial<OutputInput>) =>
+    request<OutputsResponse>(`/api/outputs/${id}`, { method: 'PATCH', body: JSON.stringify(input) }),
+  deleteOutput: (id: string) => request<OutputsResponse>(`/api/outputs/${id}`, { method: 'DELETE' }),
+  reorderOutputs: (seriesId: string, order: string[]) =>
+    request<OutputsResponse>(`/api/series/${seriesId}/outputs/order`, {
+      method: 'POST',
+      body: JSON.stringify({ order }),
+    }),
 
   schedulePreview: (input: {
     label: string

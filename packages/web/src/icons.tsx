@@ -55,17 +55,6 @@ export function IconDevices(): ReactNode {
   )
 }
 
-export function IconPipelines(): ReactNode {
-  return (
-    <Glyph>
-      <circle cx="3.5" cy="8" r="2" />
-      <circle cx="12.5" cy="4" r="1.75" />
-      <circle cx="12.5" cy="12" r="1.75" />
-      <path d="M5.4 7.1 10.8 4.6M5.4 8.9l5.4 2.5" />
-    </Glyph>
-  )
-}
-
 export function IconServices(): ReactNode {
   return (
     <Glyph>
