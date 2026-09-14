@@ -43,13 +43,18 @@ const configSchema: ConfigField[] = [
       { id: 'unreachable', label: 'Refuses to connect' },
       { id: 'ignores-writes', label: 'Accepts commands and ignores them' },
       { id: 'flaky', label: 'Fails the first command after connecting' },
+      { id: 'slow-to-settle', label: 'Takes a few reads to report a change' },
     ],
     default: 'none',
   },
   { type: 'secret', id: 'password', label: 'Password' },
 ]
 
-type Fault = 'none' | 'unreachable' | 'ignores-writes' | 'flaky'
+/** Enough reads to fail a single-shot verify, few enough to settle well
+ *  inside any caller's window. */
+const SLOW_READS = 3
+
+type Fault = 'none' | 'unreachable' | 'ignores-writes' | 'flaky' | 'slow-to-settle'
 
 class MockDevice {
   private streaming = false
@@ -57,6 +62,15 @@ class MockDevice {
   private target: StreamTarget | undefined
   private filename: string | undefined
   private commandCount = 0
+  /**
+   * Reads still owed before a change becomes visible, for `slow-to-settle`.
+   *
+   * This is what real hardware does and what the single-shot verify used to
+   * trip over: an ATEM told to stream reports Idle for a moment, then
+   * Connecting, then Streaming. Accepting the command and reflecting it are
+   * two different events.
+   */
+  private settleReads = 0
   private readonly connectedAt: number
 
   constructor(
@@ -121,6 +135,7 @@ class MockDevice {
         },
         startStreaming: async () => {
           this.guard()
+          if (this.fault === 'slow-to-settle') this.settleReads = SLOW_READS
           if (!this.target) {
             throw new DeviceError('no-stream-target', 'No stream target has been applied.', {
               remediation: 'Push the ingest URL and key before starting the stream.',
@@ -141,6 +156,7 @@ class MockDevice {
       return {
         startRecording: async ({ filename }) => {
           this.guard()
+          if (this.fault === 'slow-to-settle') this.settleReads = SLOW_READS
           if (this.fault !== 'ignores-writes') {
             this.recording = true
             this.filename = filename
@@ -175,21 +191,34 @@ class MockDevice {
     if (nodeId === 'record') {
       return {
         recording: {
-          active: this.recording,
+          active: this.settled(this.recording),
           ...(this.filename === undefined ? {} : { filename: this.filename }),
           remainingMs: 4 * 3_600_000,
+          slots: [
+            { id: 1, status: 'mounted', volumeName: 'Sunday A', remainingMs: 4 * 3_600_000, active: true },
+            { id: 2, status: 'mounted', volumeName: 'Sunday B', remainingMs: 40 * 60_000 },
+          ],
+          rollover: true,
         },
+        input: { present: true, format: '1080p50', source: 'SDI' },
       }
     }
     return {
       streaming: {
-        active: this.streaming,
+        active: this.settled(this.streaming),
         ...(this.target === undefined
           ? {}
           : { targetUrl: this.target.url, keyFingerprint: fingerprint(this.target.key) }),
         bitrateBps: this.streaming ? 6_000_000 : 0,
       },
     }
+  }
+
+  /** Counts down `slow-to-settle`, so the Nth read is the one that agrees. */
+  private settled(value: boolean): boolean {
+    if (this.settleReads === 0) return value
+    this.settleReads--
+    return !value
   }
 
   private guard(): void {

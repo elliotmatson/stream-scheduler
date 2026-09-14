@@ -137,6 +137,11 @@ export class EventPlanner implements RunPlanner {
           what: 'Streaming',
           expected: 'active',
           satisfiedBy: (state) => state.streaming?.active === true,
+          // Going live is not a local setting: the encoder has to open an
+          // RTMP session across the internet before it will say it is
+          // streaming. An ATEM sits in Connecting for several seconds
+          // doing it, and that is a stream coming up, not a failure.
+          settleMs: 25_000,
         })
       },
     })
@@ -273,7 +278,10 @@ export class EventPlanner implements RunPlanner {
             {
               what: 'Recording',
               expected: `active as ${filename}`,
+              // A deck spinning up media takes a moment, and reports the
+              // transport status only once it has.
               satisfiedBy: (state) => state.recording?.active === true,
+              settleMs: 10_000,
             },
           )
           return { response: { filename } }

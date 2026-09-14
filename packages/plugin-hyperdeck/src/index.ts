@@ -175,9 +175,13 @@ class HyperdeckDevice {
           select.slotId = this.slot
           await this.send(select)
         }
-        // The deck appends its own extension, and rejects some characters the
-        // core sanitizer already removes.
-        await this.send(new Commands.RecordCommand(filename))
+        try {
+          // The deck appends its own extension, and rejects some characters
+          // the core sanitizer already removes.
+          await this.send(new Commands.RecordCommand(filename))
+        } catch (error) {
+          throw await this.explain(error)
+        }
       },
       stopRecording: async () => {
         await this.send(new Commands.StopCommand())
@@ -189,6 +193,8 @@ class HyperdeckDevice {
   async readState(): Promise<NodeState> {
     const transport = await this.send(new Commands.TransportInfoCommand())
     const slot = await this.slotInfo(transport)
+    const slots = await this.allSlots(transport)
+    const config = await this.configuration()
 
     return {
       recording: {
@@ -197,11 +203,28 @@ class HyperdeckDevice {
         // `recordingTime` is seconds of headroom left on the media, which is
         // the number an operator actually wants before a long service.
         ...(slot === undefined ? {} : { remainingMs: slot.recordingTime * 1000 }),
+        ...(slots.length === 0 ? {} : { slots }),
+        // The deck spills onto the next mounted slot on its own when the
+        // current one fills; there is no setting to read, only whether
+        // there is somewhere for it to go.
+        rollover: slots.filter((entry) => entry.status === SlotStatus.MOUNTED).length > 1,
+      },
+      input: {
+        // `inputVideoFormat` is what the deck sees on the wire, as opposed
+        // to `videoFormat`, which is the format of the clip it is on. Older
+        // protocols do not report it, so its absence is not "no signal".
+        present: transport.inputVideoFormat !== null && transport.inputVideoFormat !== undefined,
+        ...(transport.inputVideoFormat ? { format: String(transport.inputVideoFormat) } : {}),
+        ...(config?.videoInput ? { source: config.videoInput } : {}),
       },
       raw: {
         transportStatus: transport.status,
         timecode: transport.timecode,
         ...(transport.videoFormat === null ? {} : { videoFormat: transport.videoFormat }),
+        ...(transport.inputVideoFormat == null ? {} : { inputVideoFormat: transport.inputVideoFormat }),
+        ...(config === undefined
+          ? {}
+          : { videoInput: config.videoInput, audioInput: config.audioInput, fileFormat: config.fileFormat }),
         ...(slot === undefined
           ? {}
           : { slotId: slot.slotId, slotStatus: slot.status, volumeName: slot.volumeName }),
@@ -233,6 +256,77 @@ class HyperdeckDevice {
     } catch {
       // An empty or unmounted slot answers with an error code. That is a
       // legitimate state to report, not a failure of readState.
+      return undefined
+    }
+  }
+
+  /**
+   * Turns a refusal into something with the deck's own evidence attached.
+   *
+   * "No video input" from a deck that visibly has a feed is a dead end for
+   * whoever is holding it at 08:40. Asking the deck what it thinks it is
+   * looking at — which input it is set to, and what format it sees there —
+   * turns that into a fact. The extra round trip only happens on the
+   * failure path.
+   */
+  private async explain(error: unknown): Promise<DeviceError> {
+    // `send` has already translated this. Running it through again would
+    // look for a numeric protocol code on a DeviceError, not find one, and
+    // flatten every specific diagnosis back to a generic failure.
+    const translated = error instanceof DeviceError ? error : toDeviceError(error)
+    if (translated.code !== 'no-input') return translated
+
+    let seen = 'the deck did not say what it is looking at'
+    try {
+      const transport = await this.send(new Commands.TransportInfoCommand())
+      const config = await this.configuration()
+      const source = config?.videoInput ? `set to record from ${config.videoInput}` : 'input setting unknown'
+      seen = transport.inputVideoFormat
+        ? // The interesting case: the deck refuses and yet reports a signal.
+          `${source}, and reports ${transport.inputVideoFormat} on its input`
+        : `${source}, and reports no signal there`
+    } catch {
+      // The deck is refusing commands generally; the original error stands.
+    }
+
+    return new DeviceError('no-input', `The HyperDeck will not record: it is ${seen}.`, {
+      retryable: true,
+      remediation:
+        'Check the feed into the deck and that its video input setting matches the socket it is plugged ' +
+        'into. If the deck reports a format above and still refuses, the refusal is about something else ' +
+        'and is worth reporting.',
+    })
+  }
+
+  /** Every slot the deck has, so the UI can show the card it would roll onto. */
+  private async allSlots(
+    transport: Commands.TransportInfoCommandResponse,
+  ): Promise<{ id: number; status: string; volumeName?: string; remainingMs?: number; active?: boolean }[]> {
+    const out: { id: number; status: string; volumeName?: string; remainingMs?: number; active?: boolean }[] = []
+    for (let id = 1; id <= this.slots; id++) {
+      try {
+        const info = await this.send(new Commands.SlotInfoCommand(id))
+        out.push({
+          id,
+          status: String(info.status),
+          ...(info.volumeName ? { volumeName: info.volumeName } : {}),
+          remainingMs: info.recordingTime * 1000,
+          active: transport.slotId === id,
+        })
+      } catch {
+        // An empty slot answers with an error code. Reporting it as empty is
+        // the useful answer; dropping it would hide the card you can put in.
+        out.push({ id, status: 'empty', active: transport.slotId === id })
+      }
+    }
+    return out
+  }
+
+  /** What the deck is set to record *from*. Older firmware may not answer. */
+  private async configuration(): Promise<Commands.ConfigurationCommandResponse | undefined> {
+    try {
+      return await this.send(new Commands.ConfigurationGetCommand())
+    } catch {
       return undefined
     }
   }

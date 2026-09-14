@@ -64,7 +64,7 @@ beforeEach(() => {
   destinationState = { state: 'ok' }
 
   const plugins = new PluginRegistry().register(mockPlugin({ now: () => clock.now() }))
-  connections = new ConnectionManager({ db, registry: plugins, clock, random: () => 0.5 })
+  connections = new ConnectionManager({ db, registry: plugins, clock, random: () => 0.5, sleep: async () => {} })
   destinations = new DestinationRegistry({ db, clock, vault })
   destinations.register(fakeProvider)
   notifier = new Notifier({ db, clock, vault, fetchImpl })

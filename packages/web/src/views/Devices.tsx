@@ -11,7 +11,7 @@ import {
   type Plugin,
 } from '../api.ts'
 import { Card, ConfigFields, ConfirmButton, Empty, ErrorBanner, Field, StatusPill } from '../components.tsx'
-import { relative } from '../format.ts'
+import { duration, relative } from '../format.ts'
 
 export function Devices(): ReactNode {
   const { data, error, reload } = useResource(() => api.devices(), [])
@@ -261,6 +261,21 @@ function NodeControls({ device, node }: { device: Device; node: DeviceNode }): R
               </p>
             ) : null}
 
+            {state?.input ? (
+              <div
+                className={state.input.present ? 'banner info' : 'banner warn'}
+                style={{ marginBottom: 0 }}
+              >
+                {state.input.present
+                  ? `Input: ${state.input.format ?? 'signal present'}`
+                  : 'No signal on the input.'}
+                {state.input.source ? ` · taking ${state.input.source}` : ''}
+                {/* A recorder with no signal refuses to record. Saying so
+                    here means nobody has to learn it from a failure. */}
+                {!state.input.present && canRecord ? ' A recording will be refused until there is one.' : ''}
+              </div>
+            ) : null}
+
             {state?.routing && Object.keys(state.routing).length > 0 ? (
               <div className="table-wrap">
                 <table>
@@ -305,6 +320,41 @@ function NodeControls({ device, node }: { device: Device; node: DeviceNode }): R
               ) : null}
               {streaming?.targetUrl ? <Fact label="Pointed at" value={streaming.targetUrl} /> : null}
             </div>
+
+            {state?.recording?.slots && state.recording.slots.length > 0 ? (
+              <div className="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Slot</th>
+                      <th>Media</th>
+                      <th>Free</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {state.recording.slots.map((slot) => (
+                      <tr key={slot.id}>
+                        <td>
+                          {slot.id}
+                          {slot.active ? <span className="muted"> · in use</span> : null}
+                        </td>
+                        <td className="muted">{slot.volumeName ?? slot.status}</td>
+                        <td className={lowOn(slot) ? 'bad' : 'muted'}>
+                          {slot.remainingMs === undefined ? '—' : duration(slot.remainingMs)}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                {state.recording.rollover !== undefined ? (
+                  <p className="muted" style={{ margin: '6px 0 0' }}>
+                    {state.recording.rollover
+                      ? 'Rolls onto the other slot when this one fills.'
+                      : 'Nowhere to roll onto: recording stops when this slot fills.'}
+                  </p>
+                ) : null}
+              </div>
+            ) : null}
 
             {canRecord ? (
               <Field label="Recording name" hint="Needed before a recording can start. Named by you, not by us.">
@@ -488,6 +538,11 @@ function DeviceForm({
       </div>
     </Card>
   )
+}
+
+/** Less than an hour of headroom before a service is worth shouting about. */
+function lowOn(slot: { remainingMs?: number }): boolean {
+  return slot.remainingMs !== undefined && slot.remainingMs < 3_600_000
 }
 
 function Fact({ label, value }: { label: string; value: string }): ReactNode {

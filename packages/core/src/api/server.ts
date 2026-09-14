@@ -240,26 +240,35 @@ function registerRoutes(fastify: FastifyInstance, app: Application): void {
    * The current routing is readable through the state endpoint below; it
    * just cannot be written. See docs/plan/04-plugin-sdk.md.
    */
+  // The settle windows match the scheduled path's, and for the same reason:
+  // going live means opening an RTMP session across the internet, and an
+  // encoder sits part-way through that for several seconds. A button that
+  // gives up in four is a button that reports failure on a stream which is
+  // coming up perfectly.
   const MANUAL_ACTIONS = {
     startStreaming: {
       what: 'Streaming',
       expected: 'active',
       satisfiedBy: (state: NodeState) => state.streaming?.active === true,
+      settleMs: 25_000,
     },
     stopStreaming: {
       what: 'Streaming',
       expected: 'stopped',
       satisfiedBy: (state: NodeState) => state.streaming?.active === false,
+      settleMs: 10_000,
     },
     startRecording: {
       what: 'Recording',
       expected: 'active',
       satisfiedBy: (state: NodeState) => state.recording?.active === true,
+      settleMs: 10_000,
     },
     stopRecording: {
       what: 'Recording',
       expected: 'stopped',
       satisfiedBy: (state: NodeState) => state.recording?.active === false,
+      settleMs: 10_000,
     },
   } as const
 

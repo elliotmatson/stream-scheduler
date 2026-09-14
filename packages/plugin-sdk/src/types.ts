@@ -41,6 +41,17 @@ export interface StreamTarget {
   key: string
 }
 
+/** One card, disk or slot a recorder can write to. */
+export interface StorageSlot {
+  id: number
+  /** As the device reports it: 'mounted', 'empty', 'error', and so on. */
+  status: string
+  volumeName?: string
+  remainingMs?: number
+  /** True for the slot currently being written to. */
+  active?: boolean
+}
+
 /** Read-back state. Never contains a secret: a key is reported as a fingerprint
  *  so the host can verify the right key landed without the value crossing back. */
 export interface NodeState {
@@ -54,7 +65,28 @@ export interface NodeState {
   recording?: {
     active: boolean
     filename?: string
+    /** Headroom on the slot being recorded to. */
     remainingMs?: number
+    /** Every slot the device has, so an operator can see the card they are
+     *  about to fill and the one it would roll onto. */
+    slots?: StorageSlot[]
+    /** Whether the device continues onto another slot when this one fills.
+     *  Absent when the device has no such notion. */
+    rollover?: boolean
+  }
+  /**
+   * What the device sees on its input.
+   *
+   * Worth reporting separately from whether it is recording: a deck with no
+   * signal refuses to record, and finding that out from a failed command is
+   * strictly worse than seeing it beforehand.
+   */
+  input?: {
+    present: boolean
+    /** As the device names it, e.g. '1080p50'. */
+    format?: string
+    /** Which input it is set to take, where the device has a choice. */
+    source?: string
   }
   routing?: Record<string, string>
   raw?: JsonObject

@@ -28,6 +28,9 @@ interface FakeDeck {
     recordingTimeSeconds: number
     slotStatus: string
     failRecordWith?: number
+    /** What the deck sees on the wire, as opposed to the clip it is on. */
+    inputVideoFormat?: string
+    videoInput: string
   }
 }
 
@@ -43,6 +46,8 @@ function makeDeck(): FakeDeck {
     selectedSlot: 1,
     recordingTimeSeconds: 7200,
     slotStatus: 'mounted',
+    inputVideoFormat: '1080p50',
+    videoInput: 'SDI',
   }
   const server = new HyperdeckServer('127.0.0.1', PORT)
 
@@ -76,6 +81,12 @@ function makeDeck(): FakeDeck {
     timecode: '00:00:10:00',
     'video format': '1080p50',
     loop: 'false',
+    ...(state.inputVideoFormat === undefined ? {} : { 'input video format': state.inputVideoFormat }),
+  })
+  server.onConfiguration = async () => ({
+    'video input': state.videoInput,
+    'audio input': 'embedded',
+    'file format': 'QuickTimeProResHQ',
   })
   server.onSlotInfo = async (command) => ({
     'slot id': String(command.parameters['slot id'] ?? state.selectedSlot),
@@ -196,6 +207,31 @@ describe('protocol errors', () => {
     const hyperdeck = await connect()
     await expect(hyperdeck.invoke('record', 'startRecording', { filename: 'service' })).rejects.toMatchObject({
       code: 'no-disk',
+    })
+  })
+
+  it('explains a "no input" refusal with what the deck says it is looking at', async () => {
+    deck.state.failRecordWith = 110
+    const hyperdeck = await connect()
+    // A deck that refuses for "no input" while reporting a format on that
+    // input is the interesting case, and the one a bare code translation
+    // sends somebody chasing cables for nothing.
+    await expect(hyperdeck.invoke('record', 'startRecording', { filename: 'take 1' })).rejects.toMatchObject({
+      code: 'no-input',
+      message: expect.stringContaining('1080p50'),
+    })
+    await expect(hyperdeck.invoke('record', 'startRecording', { filename: 'take 1' })).rejects.toMatchObject({
+      message: expect.stringContaining('SDI'),
+    })
+  })
+
+  it('says the deck sees nothing when it really sees nothing', async () => {
+    deck.state.failRecordWith = 110
+    deck.state.inputVideoFormat = undefined
+    const hyperdeck = await connect()
+    await expect(hyperdeck.invoke('record', 'startRecording', { filename: 'take 1' })).rejects.toMatchObject({
+      code: 'no-input',
+      message: expect.stringContaining('no signal'),
     })
   })
 

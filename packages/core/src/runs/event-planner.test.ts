@@ -34,7 +34,7 @@ beforeEach(() => {
   clock = new ManualClock(START - HOUR)
   vault = new SecretVault(db, resolveMasterKey([keyFileSource(join(dir, 'k'), { create: true })]), new Scrubber())
   const registry = new PluginRegistry().register(mockPlugin({ now: () => clock.now() }))
-  connections = new ConnectionManager({ db, registry, clock, random: () => 0.5, enforceSerialization: true })
+  connections = new ConnectionManager({ db, registry, clock, random: () => 0.5, sleep: async () => {}, enforceSerialization: true })
   store = new RunStore(db, clock, new Scrubber())
 })
 afterEach(async () => {

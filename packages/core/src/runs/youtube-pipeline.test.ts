@@ -46,7 +46,7 @@ beforeEach(() => {
   youtube = new FakeYouTube()
 
   const plugins = new PluginRegistry().register(mockPlugin({ now: () => clock.now() }))
-  connections = new ConnectionManager({ db, registry: plugins, clock, random: () => 0.5, enforceSerialization: true })
+  connections = new ConnectionManager({ db, registry: plugins, clock, random: () => 0.5, sleep: async () => {}, enforceSerialization: true })
 
   destinations = new DestinationRegistry({ db, clock, vault })
   destinations.register(

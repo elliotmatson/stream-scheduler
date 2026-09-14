@@ -63,8 +63,23 @@ export interface NodeState {
     bitrateBps?: number
     durationMs?: number
   }
-  recording?: { active: boolean; filename?: string; remainingMs?: number }
+  recording?: {
+    active: boolean
+    filename?: string
+    remainingMs?: number
+    slots?: StorageSlot[]
+    rollover?: boolean
+  }
+  input?: { present: boolean; format?: string; source?: string }
   routing?: Record<string, string>
+}
+
+export interface StorageSlot {
+  id: number
+  status: string
+  volumeName?: string
+  remainingMs?: number
+  active?: boolean
 }
 
 export type ManualAction = 'startStreaming' | 'stopStreaming' | 'startRecording' | 'stopRecording'
