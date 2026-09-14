@@ -39,6 +39,10 @@ async function post(url: string, body: unknown): Promise<{ status: number; json:
   const response = await server.inject({ method: 'POST', url, payload: body as object })
   return { status: response.statusCode, json: safeJson(response.body) }
 }
+async function patch(url: string, body: unknown): Promise<{ status: number; json: any }> {
+  const response = await server.inject({ method: 'PATCH', url, payload: body as object })
+  return { status: response.statusCode, json: safeJson(response.body) }
+}
 async function del(url: string): Promise<{ status: number; json: any }> {
   const response = await server.inject({ method: 'DELETE', url })
   return { status: response.statusCode, json: safeJson(response.body) }
@@ -493,8 +497,15 @@ async function connectRecorder(): Promise<string> {
 
 describe('the OAuth callback address', () => {
   // The route asks the registry for the provider before it answers, so the
-  // test needs one registered. Nothing here touches Google.
+  // test needs one registered, and a destination needs an account to hang
+  // off. Nothing here touches Google.
   beforeEach(() => {
+    app.db
+      .prepare(
+        `INSERT INTO account (id, provider, external_id, display_name, secret_ref, scopes, created_at)
+         VALUES ('acct-1', 'youtube', 'chan-1', 'Grace Bible Church', 'ref', '', 0)`,
+      )
+      .run()
     app.destinations.register({
       id: 'youtube',
       displayName: 'YouTube',
@@ -535,6 +546,28 @@ describe('the OAuth callback address', () => {
     const answer = await get('/api/destination-providers/youtube/playlists?accountRef=acct-1')
     expect(answer.status).toBe(200)
     expect(answer.json.playlists).toEqual([{ id: 'PL-acct-1', title: 'Sunday Services' }])
+  })
+
+  it('edits a destination in place, rather than making you delete and rebuild it', async () => {
+    const created = await post('/api/destinations', {
+      providerId: 'youtube',
+      label: 'Main channel',
+      accountId: 'acct-1',
+      config: { privacy: 'public' },
+    })
+    expect(created.status).toBe(201)
+
+    const changed = await patch(`/api/destinations/${created.json.id}`, {
+      label: 'Main channel (unlisted)',
+      config: { privacy: 'unlisted', playlistId: 'PL-services' },
+    })
+    expect(changed.status).toBe(200)
+
+    const [after] = (await get('/api/destinations')).json
+    expect(after).toMatchObject({
+      label: 'Main channel (unlisted)',
+      config: { privacy: 'unlisted', playlistId: 'PL-services' },
+    })
   })
 
   it('says so rather than 500ing when a service has no such notion', async () => {

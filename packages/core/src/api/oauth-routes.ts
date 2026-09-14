@@ -265,6 +265,41 @@ export function registerOAuthRoutes(fastify: FastifyInstance, app: Application):
     return reply.code(201).send({ id })
   })
 
+  /**
+   * Change a destination's name or its settings.
+   *
+   * Which playlist a channel files into, and who can see a broadcast, are
+   * things that change — and without this the only way to change one was to
+   * delete the destination and build it again, which every event pointing
+   * at it would refuse to let you do.
+   *
+   * The account is deliberately not editable: a destination is settings for
+   * *that* channel, and repointing it at another one silently changes where
+   * every event already using it goes out.
+   */
+  fastify.patch('/api/destinations/:id', async (request) => {
+    const { id } = z.object({ id: z.string() }).parse(request.params)
+    const body = z
+      .object({ label: z.string().min(1).optional(), config: z.record(z.unknown()).optional() })
+      .parse(request.body)
+
+    const row = app.db.prepare('SELECT * FROM destination WHERE id = ?').get(id) as
+      | { id: string; plugin_id: string; label: string; account_id: string | null; config: string }
+      | undefined
+    if (!row) throw new NotFoundError(`No destination with id "${id}".`)
+
+    const config = body.config ?? (JSON.parse(row.config) as Record<string, unknown>)
+    app.destinations.assertValidConfig(row.plugin_id, {
+      ...(config as Record<string, never>),
+      accountRef: row.account_id ?? '',
+    })
+
+    app.db
+      .prepare('UPDATE destination SET label = ?, config = ? WHERE id = ?')
+      .run(body.label ?? row.label, JSON.stringify(config), id)
+    return { ok: true }
+  })
+
   fastify.delete('/api/destinations/:id', async (request) => {
     const { id } = z.object({ id: z.string() }).parse(request.params)
     assertUnreferenced(app.db, 'destination_id', id, 'streaming service')

@@ -443,6 +443,8 @@ export const api = {
     accountId: string
     config: Record<string, unknown>
   }) => request<{ id: string }>('/api/destinations', { method: 'POST', body: JSON.stringify(input) }),
+  updateDestination: (id: string, input: { label?: string; config?: Record<string, unknown> }) =>
+    request<{ ok: true }>(`/api/destinations/${id}`, { method: 'PATCH', body: JSON.stringify(input) }),
   deleteDestination: (id: string) => request<unknown>(`/api/destinations/${id}`, { method: 'DELETE' }),
 
   credentials: () => request<Credential[]>('/api/credentials'),
