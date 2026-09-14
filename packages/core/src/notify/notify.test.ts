@@ -331,13 +331,16 @@ describe('a failed run reaching a channel', () => {
     const start = Date.parse('2026-03-08T14:00:00Z') // 09:00 America/Chicago
     clock.set(start - 30 * 60_000)
 
-    db.prepare('INSERT INTO pipeline (id, label, graph, created_at) VALUES (?, ?, ?, ?)').run('p1', 'Main', '{}', 0)
     db.prepare(
       `INSERT INTO event_series
-         (id, label, pipeline_id, timezone, rrule, dtstart, duration_ms, prepare_lead_ms, late_start_grace_ms,
+         (id, label, timezone, rrule, dtstart, duration_ms, prepare_lead_ms, late_start_grace_ms,
           created_at, updated_at)
-       VALUES ('s1', 'Sunday Service', 'p1', 'America/Chicago', NULL, ?, 5400000, 1800000, 300000, 0, 0)`,
+       VALUES ('s1', 'Sunday Service', 'America/Chicago', NULL, ?, 5400000, 1800000, 300000, 0, 0)`,
     ).run(start)
+    db.prepare(
+      `INSERT INTO event_output (id, series_id, kind, label, position, offset_ms, duration_ms, created_at)
+       VALUES ('out1', 's1', 'stream', 'Main', 0, 0, 5400000, 0)`,
+    ).run()
     db.prepare(
       `INSERT INTO occurrence (id, series_id, scheduled_start, scheduled_end, local_date, status, series_version)
        VALUES ('o1', 's1', ?, ?, '2026-03-08', 'pending', 1)`,
@@ -357,6 +360,7 @@ describe('a failed run reaching a channel', () => {
           {
             kind: 'encoder.applyStreamTarget',
             phase: 'prepare' as const,
+            outputId: 'out1',
             retryable: false,
             execute: async () => {
               throw Object.assign(new Error('Stream target did not take effect'), {
@@ -395,13 +399,16 @@ describe('a failed run reaching a channel', () => {
 
     const start = Date.parse('2026-03-08T14:00:00Z')
     clock.set(start - 30 * 60_000)
-    db.prepare('INSERT INTO pipeline (id, label, graph, created_at) VALUES (?, ?, ?, ?)').run('p1', 'Main', '{}', 0)
     db.prepare(
       `INSERT INTO event_series
-         (id, label, pipeline_id, timezone, rrule, dtstart, duration_ms, prepare_lead_ms, late_start_grace_ms,
+         (id, label, timezone, rrule, dtstart, duration_ms, prepare_lead_ms, late_start_grace_ms,
           created_at, updated_at)
-       VALUES ('s1', 'Sunday Service', 'p1', 'America/Chicago', NULL, ?, 5400000, 1800000, 300000, 0, 0)`,
+       VALUES ('s1', 'Sunday Service', 'America/Chicago', NULL, ?, 5400000, 1800000, 300000, 0, 0)`,
     ).run(start)
+    db.prepare(
+      `INSERT INTO event_output (id, series_id, kind, label, position, offset_ms, duration_ms, created_at)
+       VALUES ('out1', 's1', 'stream', 'Main', 0, 0, 5400000, 0)`,
+    ).run()
     db.prepare(
       `INSERT INTO occurrence (id, series_id, scheduled_start, scheduled_end, local_date, status, series_version)
        VALUES ('o1', 's1', ?, ?, '2026-03-08', 'pending', 1)`,
@@ -415,7 +422,7 @@ describe('a failed run reaching a channel', () => {
       sleeper: immediateSleeper,
       planner: {
         plan: () => [
-          { kind: 'step', phase: 'prepare' as const, retryable: false, execute: async () => { throw new Error('nope') } },
+          { kind: 'step', phase: 'prepare' as const, outputId: 'out1', retryable: false, execute: async () => { throw new Error('nope') } },
         ],
       },
       onFailure: () => {

@@ -9,7 +9,9 @@ export function StatusPill({ status }: { status: string }): ReactNode {
 /** Maps every run, occurrence and device state onto one of four tones. */
 export function toneFor(status: string): string {
   switch (status) {
-    case 'live':
+    // A run is `running` for the whole of its window, with outputs coming
+    // and going inside it; that is the state worth shouting about.
+    case 'running':
       return 'live'
     case 'completed':
     case 'done':
@@ -22,10 +24,7 @@ export function toneFor(status: string): string {
     case 'reauth_required':
       return 'bad'
     case 'preparing':
-    case 'starting':
-    case 'stopping':
     case 'completing':
-    case 'running':
     case 'degraded':
       return 'warn'
     default:

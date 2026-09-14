@@ -26,6 +26,7 @@ export interface StepRecord {
   run_id: string
   seq: number
   kind: string
+  label: string | null
   state: StepState
   idempotency_key: string
   external_id: string | null
@@ -76,8 +77,8 @@ export class RunStore {
         )
         .run(runId, occurrenceId, 'scheduled', attempt, now, options.forcedAt ?? null)
       const insert = this.db.prepare(
-        `INSERT INTO run_step (id, run_id, seq, kind, state, idempotency_key, request)
-         VALUES (?, ?, ?, ?, 'pending', ?, ?)`,
+        `INSERT INTO run_step (id, run_id, seq, kind, label, state, idempotency_key, request)
+         VALUES (?, ?, ?, ?, ?, 'pending', ?, ?)`,
       )
       plan.forEach((step, index) => {
         insert.run(
@@ -85,6 +86,7 @@ export class RunStore {
           runId,
           index,
           step.kind,
+          step.label ?? null,
           idempotencyKey(runId, index, step.kind),
           step.request ? JSON.stringify(this.scrubber.redactValue(step.request)) : null,
         )

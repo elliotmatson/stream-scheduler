@@ -248,7 +248,7 @@ export function registerOAuthRoutes(fastify: FastifyInstance, app: Application):
 
   fastify.delete('/api/destinations/:id', async (request) => {
     const { id } = z.object({ id: z.string() }).parse(request.params)
-    assertUnreferenced(app.db, 'destinationId', id, 'streaming service')
+    assertUnreferenced(app.db, 'destination_id', id, 'streaming service')
     app.db.prepare('DELETE FROM destination WHERE id = ?').run(id)
     return { ok: true }
   })

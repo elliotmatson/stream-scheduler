@@ -19,13 +19,25 @@ records, stops and tidies up — without anyone touching it.
 
 **Working now**
 
+- An event is one source encoder and one long window, with several streams and
+  recordings inside it that start and stop on their own clocks — a Sunday
+  morning is one event from 7:00 to 12:45 with services at 9:00 and 11:00 and a
+  recorder running the length of it, not five events kept in step by hand
 - Recurring events via RFC 5545 `RRULE`, timezone- and DST-correct, with
   per-occurrence skips and edits that survive changes to the series
-- A durable run engine: prepare/start/stop/complete phases, retries,
-  compensation, and crash recovery that cannot create duplicate work
-- Date-aware name templates with a live preview of the next occurrences
+- A durable run engine: everything prepares at T−30, each output goes on and
+  comes off at its own time, retries, compensation, and crash recovery that
+  cannot create duplicate work. One stream failing leaves the others running
+  and reports itself
+- Date-aware name templates, per output, with a live preview of the next
+  occurrences
+- Two outputs that would fight over one encoder are reported when the event is
+  saved and again the evening before, rather than found out live
 - Encrypted stream keys and device passwords, write-only over the API
 - Device connection management with capability probing and verify-after-write
+- Manual control from the Devices page — start and stop a stream or a
+  recording by hand, read what a device is actually doing, and see which
+  event is mid-run on it before you touch it
 - **HyperDeck** adapter (TCP 9993), tested against a protocol-level emulator
 - **ATEM** adapter, with capabilities read from what the switcher reports
   rather than a model table that goes stale on the next firmware release
@@ -40,15 +52,15 @@ records, stops and tidies up — without anyone touching it.
   YouTube token or an unplugged encoder while there is still time
 - Calendar and list views, a run timeline, and a device health page
 - Setup entirely in the browser: adding a device (with network discovery
-  where a plugin supports it), connecting a YouTube account, building a
-  pipeline, and writing a recurring event against a live preview of what the
-  rule and the name templates would actually produce
+  where a plugin supports it), connecting a YouTube account, and writing a
+  recurring event and its outputs against a live preview of what the rule and
+  the name templates would actually produce
 - Runs headless, in Docker, or as an Electron tray app from one codebase
 
 **Not built yet**
 
-- Fanning one encoder out to several services at once, which needs a relay
-  in the pipeline
+- Fanning one encoder out to several services *at once*, which needs a relay in
+  front of it. Several services one after another across a morning does work
 - Week and day calendar views, and dragging an occurrence to reschedule it
 - Backup and restore, and signed installers
 
@@ -193,7 +205,7 @@ Start with [`docs/plan/README.md`](./docs/plan/README.md).
 | Document | Covers |
 |---|---|
 | [01 Architecture](./docs/plan/01-architecture.md) | Process model, runtime topology, what's borrowed from Companion |
-| [02 Domain model](./docs/plan/02-domain-model.md) | The pipeline graph, entities, database schema |
+| [02 Domain model](./docs/plan/02-domain-model.md) | Events and their outputs, entities, database schema |
 | [03 Scheduling engine](./docs/plan/03-scheduling-engine.md) | Recurrence, run state machine, crash recovery |
 | [04 Plugin SDK](./docs/plan/04-plugin-sdk.md) | The extension contract and the Phase 1 device adapters |
 | [05 YouTube](./docs/plan/05-youtube.md) | OAuth, broadcast lifecycle, quota budget |

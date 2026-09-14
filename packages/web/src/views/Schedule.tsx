@@ -120,7 +120,7 @@ function CalendarGrid({
             {events.map((occurrence) => (
               <button
                 key={occurrence.id}
-                className={`event ${occurrence.runState === 'live' ? 'live' : ''} ${occurrence.status}`}
+                className={`event ${occurrence.runState === 'running' ? 'live' : ''} ${occurrence.status}`}
                 onClick={() => onSelect(occurrence)}
                 title={`${occurrence.seriesLabel} — ${dateTimeIn(occurrence.scheduledStart, occurrence.timezone)} ${shortZone(occurrence.scheduledStart, occurrence.timezone)}`}
               >

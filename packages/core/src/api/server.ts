@@ -5,8 +5,10 @@ import type { FastifyInstance } from 'fastify'
 import websocket from '@fastify/websocket'
 import fastifyStatic from '@fastify/static'
 import { z } from 'zod'
-import type { ConfigValues } from '@scheduler/plugin-sdk'
+import { DeviceError, VerificationError } from '@scheduler/plugin-sdk'
+import type { ConfigValues, JsonObject, NodeDefinition, NodeState } from '@scheduler/plugin-sdk'
 import type { Application } from '../app.js'
+import type { Db } from '../db/index.js'
 import {
   describeSchedule,
   expandOccurrences,
@@ -18,6 +20,8 @@ import { isValidTimeZone, zonedWallTimeToUtc } from '../schedule/zoned.js'
 import { ConfigInvalidError, UnknownPluginError } from '../plugins/registry.js'
 import { renderTemplate, TemplateError } from '../template/render.js'
 import { sanitizeFilename } from '../template/index.js'
+import { outputsForSeries, toOutput, type EventOutput } from '../events/outputs.js'
+import { describeConflict, overlapsForSeries } from '../events/overlap.js'
 import { assertUnreferenced, ConflictError, NotFoundError } from './errors.js'
 import { registerNotifyRoutes } from './notify-routes.js'
 import { registerOAuthRoutes } from './oauth-routes.js'
@@ -110,9 +114,33 @@ function registerRoutes(fastify: FastifyInstance, app: Application): void {
 
   fastify.get('/api/devices', async () => {
     const rows = db.prepare('SELECT * FROM device ORDER BY label').all() as DeviceRowShape[]
+    // Which events are mid-run on each device, so the manual controls can
+    // say whose stream they are about to interfere with.
+    const busy = db.prepare(
+      `SELECT DISTINCT r.id AS run_id, s.label AS label, s.source_device_id AS source_device_id,
+              o.id AS occurrence_id
+         FROM run r
+         JOIN occurrence o ON o.id = r.occurrence_id
+         JOIN event_series s ON s.id = o.series_id
+        WHERE r.state NOT IN ('completed', 'failed', 'cancelled')`,
+    ).all() as { run_id: string; label: string; source_device_id: string | null; occurrence_id: string }[]
+    const usesDevice = db.prepare(
+      `SELECT 1 FROM event_output eo
+         JOIN occurrence o ON o.series_id = eo.series_id
+        WHERE o.id = ? AND eo.device_id = ? AND eo.enabled = 1
+        LIMIT 1`,
+    )
+
     return rows.map((row) => {
       const connection = app.connections.get(row.id)
       return {
+        inUseBy: busy
+          .filter(
+            (run) =>
+              run.source_device_id === row.id ||
+              usesDevice.get(run.occurrence_id, row.id) !== undefined,
+          )
+          .map((run) => ({ runId: run.run_id, label: run.label })),
         id: row.id,
         pluginId: row.plugin_id,
         label: row.label,
@@ -172,6 +200,7 @@ function registerRoutes(fastify: FastifyInstance, app: Application): void {
 
   fastify.delete('/api/devices/:id', async (request) => {
     const { id } = z.object({ id: z.string() }).parse(request.params)
+    assertUnreferenced(db, 'device_id', id, 'device')
     await app.connections.close(id)
     db.prepare('DELETE FROM device WHERE id = ?').run(id)
     return { ok: true }
@@ -181,6 +210,84 @@ function registerRoutes(fastify: FastifyInstance, app: Application): void {
     const { id } = z.object({ id: z.string() }).parse(request.params)
     const connection = await app.connections.open(id)
     return { capabilities: connection.capabilities, nodes: connection.nodes, health: connection.health }
+  })
+
+
+  /**
+   * Drive a device by hand.
+   *
+   * The scheduler must never be the only way to control the hardware: an
+   * operator standing in a control room at 09:02 needs a stop button, not a
+   * support ticket.
+   *
+   * Every action here is one the node declared it supports, and every write
+   * is read back and checked, for the same reason the run engine does it — a
+   * Blackmagic device will accept a command and quietly ignore it, and a
+   * button that lies is worse than no button.
+   *
+   * `applyStreamTarget` is deliberately not offered. It takes a stream key,
+   * so exposing it here would mean posting a key in the clear to be pushed
+   * at a device outside any run, with nothing to clean it up afterwards.
+   * Getting a key onto an encoder is what stream credentials and the prepare
+   * phase are for.
+   */
+  const MANUAL_ACTIONS = {
+    startStreaming: {
+      what: 'Streaming',
+      expected: 'active',
+      satisfiedBy: (state: NodeState) => state.streaming?.active === true,
+    },
+    stopStreaming: {
+      what: 'Streaming',
+      expected: 'stopped',
+      satisfiedBy: (state: NodeState) => state.streaming?.active === false,
+    },
+    startRecording: {
+      what: 'Recording',
+      expected: 'active',
+      satisfiedBy: (state: NodeState) => state.recording?.active === true,
+    },
+    stopRecording: {
+      what: 'Recording',
+      expected: 'stopped',
+      satisfiedBy: (state: NodeState) => state.recording?.active === false,
+    },
+  } as const
+
+  fastify.get('/api/devices/:id/nodes/:nodeId/state', async (request) => {
+    const { id, nodeId } = z.object({ id: z.string(), nodeId: z.string() }).parse(request.params)
+    nodeOr404(app, id, nodeId)
+    return { state: await app.connections.invoke(id, nodeId, 'readState') }
+  })
+
+  fastify.post('/api/devices/:id/nodes/:nodeId/:action', async (request) => {
+    const { id, nodeId, action } = z
+      .object({
+        id: z.string(),
+        nodeId: z.string(),
+        action: z.enum(['startStreaming', 'stopStreaming', 'startRecording', 'stopRecording']),
+      })
+      .parse(request.params)
+    const body = z.object({ filename: z.string().min(1).max(200).optional() }).parse(request.body ?? {})
+
+    const node = nodeOr404(app, id, nodeId)
+    if (!node.supports.includes(action)) {
+      throw new ConflictError(`"${node.label}" does not do ${action}.`)
+    }
+
+    const check = MANUAL_ACTIONS[action]
+    // A recording has to be called something: the node contract takes a
+    // filename, and the device would otherwise refuse with a message about
+    // arguments rather than about what the operator left blank.
+    if (action === 'startRecording' && !body.filename) {
+      throw new ConflictError('Give the recording a name before starting it.')
+    }
+    const args: JsonObject =
+      action === 'startRecording' ? { filename: sanitizeFilename(body.filename!) } : {}
+    const state = await app.connections.applyAndVerify(id, nodeId, action, args, check)
+
+    app.logger.info('an operator drove a device by hand', { deviceId: id, nodeId, action })
+    return { state }
   })
 
   // -- credentials --------------------------------------------------------
@@ -219,66 +326,8 @@ function registerRoutes(fastify: FastifyInstance, app: Application): void {
 
   fastify.delete('/api/credentials/:id', async (request) => {
     const { id } = z.object({ id: z.string() }).parse(request.params)
-    assertUnreferenced(db, 'credentialId', id, 'stream key')
+    assertUnreferenced(db, 'credential_id', id, 'stream key')
     db.prepare('DELETE FROM stream_credential WHERE id = ?').run(id)
-    return { ok: true }
-  })
-
-  // -- pipelines ----------------------------------------------------------
-
-  fastify.get('/api/pipelines', async () =>
-    (db.prepare('SELECT id, label, graph FROM pipeline ORDER BY label').all() as {
-      id: string
-      label: string
-      graph: string
-    }[]).map((row) => ({ id: row.id, label: row.label, graph: JSON.parse(row.graph) })),
-  )
-
-  fastify.post('/api/pipelines', async (request, reply) => {
-    const body = z.object({ label: z.string().min(1), graph: z.record(z.unknown()).default({ nodes: [] }) }).parse(
-      request.body,
-    )
-    const id = randomUUID()
-    db.prepare('INSERT INTO pipeline (id, label, graph, created_at) VALUES (?, ?, ?, ?)').run(
-      id,
-      body.label,
-      JSON.stringify(body.graph),
-      app.clock.now(),
-    )
-    return reply.code(201).send({ id })
-  })
-
-  fastify.patch('/api/pipelines/:id', async (request) => {
-    const { id } = z.object({ id: z.string() }).parse(request.params)
-    const body = z
-      .object({ label: z.string().min(1).optional(), graph: z.record(z.unknown()).optional() })
-      .parse(request.body)
-    const row = db.prepare('SELECT id, label, graph FROM pipeline WHERE id = ?').get(id) as
-      | { id: string; label: string; graph: string }
-      | undefined
-    if (!row) throw new NotFoundError(`No pipeline with id "${id}".`)
-
-    db.prepare('UPDATE pipeline SET label = ?, graph = ? WHERE id = ?').run(
-      body.label ?? row.label,
-      body.graph ? JSON.stringify(body.graph) : row.graph,
-      id,
-    )
-    return { ok: true }
-  })
-
-  fastify.delete('/api/pipelines/:id', async (request) => {
-    const { id } = z.object({ id: z.string() }).parse(request.params)
-    // The foreign key would raise this anyway, as an opaque SQLITE_CONSTRAINT.
-    // Naming the events that depend on it is the difference between a fixable
-    // mistake and a puzzle.
-    const users = db.prepare('SELECT label FROM event_series WHERE pipeline_id = ?').all(id) as { label: string }[]
-    if (users.length > 0) {
-      throw new ConflictError(
-        `This pipeline still runs ${users.map((row) => `"${row.label}"`).join(', ')}. ` +
-          'Point those events at another pipeline first.',
-      )
-    }
-    db.prepare('DELETE FROM pipeline WHERE id = ?').run(id)
     return { ok: true }
   })
 
@@ -351,7 +400,11 @@ function registerRoutes(fastify: FastifyInstance, app: Application): void {
 
   const seriesBody = z.object({
     label: z.string().min(1),
-    pipelineId: z.string().min(1),
+    /** The one encoder this event's outputs run on, unless an output names
+     *  its own. Nullable so an event can be written before the hardware is
+     *  added. */
+    sourceDeviceId: z.string().nullable().default(null),
+    sourceNodeId: z.string().nullable().default(null),
     timezone: z.string().min(1),
     rrule: z.string().nullable().default(null),
     dtstart: z.number().int().optional(),
@@ -380,13 +433,15 @@ function registerRoutes(fastify: FastifyInstance, app: Application): void {
     const now = app.clock.now()
     db.prepare(
       `INSERT INTO event_series
-         (id, label, pipeline_id, timezone, rrule, dtstart, duration_ms, exdates, prepare_lead_ms, preroll_ms,
-          postroll_ms, late_start_grace_ms, templates, version, enabled, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)`,
+         (id, label, source_device_id, source_node_id, timezone, rrule, dtstart, duration_ms, exdates,
+          prepare_lead_ms, preroll_ms, postroll_ms, late_start_grace_ms, templates, version, enabled,
+          created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)`,
     ).run(
       id,
       body.label,
-      body.pipelineId,
+      body.sourceDeviceId,
+      body.sourceNodeId,
       body.timezone,
       body.rrule,
       body.dtstart,
@@ -418,12 +473,13 @@ function registerRoutes(fastify: FastifyInstance, app: Application): void {
     assertSchedulable(merged)
 
     db.prepare(
-      `UPDATE event_series SET label = ?, pipeline_id = ?, timezone = ?, rrule = ?, dtstart = ?, duration_ms = ?,
-         exdates = ?, prepare_lead_ms = ?, preroll_ms = ?, postroll_ms = ?, late_start_grace_ms = ?, templates = ?,
-         enabled = ? WHERE id = ?`,
+      `UPDATE event_series SET label = ?, source_device_id = ?, source_node_id = ?, timezone = ?, rrule = ?,
+         dtstart = ?, duration_ms = ?, exdates = ?, prepare_lead_ms = ?, preroll_ms = ?, postroll_ms = ?,
+         late_start_grace_ms = ?, templates = ?, enabled = ? WHERE id = ?`,
     ).run(
       merged.label,
-      merged.pipelineId,
+      merged.sourceDeviceId,
+      merged.sourceNodeId,
       merged.timezone,
       merged.rrule,
       merged.dtstart,
@@ -457,11 +513,157 @@ function registerRoutes(fastify: FastifyInstance, app: Application): void {
       .all(id) as { id: string }[]
     return upcoming.map((row) => {
       try {
-        return { occurrenceId: row.id, ...app.planner.previewNames(row.id) }
+        // Per output, not just the event: with four streams carrying four
+        // different titles, the event-level template is no longer what
+        // anybody actually sees on a channel.
+        return { occurrenceId: row.id, outputs: app.planner.previewOutputs(row.id) }
       } catch (error) {
         return { occurrenceId: row.id, error: error instanceof Error ? error.message : String(error) }
       }
     })
+  })
+
+
+  // -- outputs ------------------------------------------------------------
+
+  /**
+   * An event's outputs: what it streams and records, and when inside its
+   * window each of those happens.
+   *
+   * Every response carries `conflicts` alongside the outputs. The clash that
+   * matters — two streams wanting the same encoder at the same time — is a
+   * property of the set, not of the one you just edited, so it has to be
+   * recomputed and shown after every change rather than validated on the way
+   * in. Saving is not blocked: an operator part-way through rearranging a
+   * morning would otherwise be stopped by a clash they are about to fix.
+   */
+  const outputBody = z.object({
+    kind: z.enum(['stream', 'recording']),
+    label: z.string().min(1),
+    offsetMs: z.number().int().nonnegative().default(0),
+    durationMs: z.number().int().positive(),
+    destinationId: z.string().nullable().default(null),
+    credentialId: z.string().nullable().default(null),
+    /** Null means the event's source encoder. */
+    deviceId: z.string().nullable().default(null),
+    nodeId: z.string().nullable().default(null),
+    templates: z.record(z.string()).default({}),
+    enabled: z.boolean().default(true),
+    position: z.number().int().nonnegative().optional(),
+  })
+
+  const outputsResponse = (seriesId: string) => ({
+    outputs: outputsForSeries(db, seriesId),
+    conflicts: overlapsForSeries(db, seriesId).map((conflict) => ({
+      ...conflict,
+      detail: describeConflict(conflict),
+    })),
+  })
+
+  fastify.get('/api/series/:id/outputs', async (request) => {
+    const { id } = z.object({ id: z.string() }).parse(request.params)
+    seriesOr404(db, id)
+    return outputsResponse(id)
+  })
+
+  fastify.post('/api/series/:id/outputs', async (request, reply) => {
+    const { id } = z.object({ id: z.string() }).parse(request.params)
+    seriesOr404(db, id)
+    const body = outputBody.parse(request.body)
+    assertDeliverable(body)
+
+    const next =
+      body.position ??
+      ((db.prepare('SELECT COALESCE(MAX(position), -1) AS p FROM event_output WHERE series_id = ?').get(id) as {
+        p: number
+      }).p +
+        1)
+
+    const outputId = randomUUID()
+    db.prepare(
+      `INSERT INTO event_output
+         (id, series_id, kind, label, position, offset_ms, duration_ms, destination_id, credential_id,
+          device_id, node_id, templates, enabled, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      outputId,
+      id,
+      body.kind,
+      body.label,
+      next,
+      body.offsetMs,
+      body.durationMs,
+      body.destinationId,
+      body.credentialId,
+      body.deviceId,
+      body.nodeId,
+      JSON.stringify(body.templates),
+      body.enabled ? 1 : 0,
+      app.clock.now(),
+    )
+    // An output changes what the event does, so occurrences already
+    // materialized are now out of date in the same way a schedule edit
+    // makes them.
+    bumpSeriesVersion(db, id, app.clock)
+    return reply.code(201).send({ id: outputId, ...outputsResponse(id) })
+  })
+
+  fastify.patch('/api/outputs/:id', async (request) => {
+    const { id } = z.object({ id: z.string() }).parse(request.params)
+    const row = db.prepare('SELECT * FROM event_output WHERE id = ?').get(id) as
+      | Record<string, unknown>
+      | undefined
+    if (!row) throw new NotFoundError(`No output with id "${id}".`)
+
+    const current = toOutput(row as never)
+    const body = outputBody.partial().parse(request.body)
+    const merged = { ...current, ...body }
+    assertDeliverable(merged)
+
+    db.prepare(
+      `UPDATE event_output SET kind = ?, label = ?, position = ?, offset_ms = ?, duration_ms = ?,
+         destination_id = ?, credential_id = ?, device_id = ?, node_id = ?, templates = ?, enabled = ?
+       WHERE id = ?`,
+    ).run(
+      merged.kind,
+      merged.label,
+      merged.position,
+      merged.offsetMs,
+      merged.durationMs,
+      merged.destinationId,
+      merged.credentialId,
+      merged.deviceId,
+      merged.nodeId,
+      JSON.stringify(merged.templates),
+      merged.enabled ? 1 : 0,
+      id,
+    )
+    bumpSeriesVersion(db, current.seriesId, app.clock)
+    return outputsResponse(current.seriesId)
+  })
+
+  fastify.delete('/api/outputs/:id', async (request) => {
+    const { id } = z.object({ id: z.string() }).parse(request.params)
+    const row = db.prepare('SELECT series_id FROM event_output WHERE id = ?').get(id) as
+      | { series_id: string }
+      | undefined
+    if (!row) throw new NotFoundError(`No output with id "${id}".`)
+    db.prepare('DELETE FROM event_output WHERE id = ?').run(id)
+    bumpSeriesVersion(db, row.series_id, app.clock)
+    return outputsResponse(row.series_id)
+  })
+
+  /** Reorders in one call, so dragging a list does not fire N patches. */
+  fastify.post('/api/series/:id/outputs/order', async (request) => {
+    const { id } = z.object({ id: z.string() }).parse(request.params)
+    seriesOr404(db, id)
+    const body = z.object({ order: z.array(z.string()) }).parse(request.body)
+
+    const update = db.prepare('UPDATE event_output SET position = ? WHERE id = ? AND series_id = ?')
+    db.transaction(() => {
+      body.order.forEach((outputId, index) => update.run(index, outputId, id))
+    })()
+    return outputsResponse(id)
   })
 
   // -- occurrences --------------------------------------------------------
@@ -553,6 +755,9 @@ function registerRoutes(fastify: FastifyInstance, app: Application): void {
       steps: app.store.steps(id).map((step) => ({
         seq: step.seq,
         kind: step.kind,
+        // The kind carries an output id so it stays stable across an edit;
+        // the label is the half a human can read.
+        label: step.label,
         state: step.state,
         attempts: step.attempts,
         externalId: step.external_id,
@@ -634,6 +839,13 @@ function isLoopback(host: string): boolean {
 function statusFor(error: Error): number {
   if (error instanceof NotFoundError || error instanceof UnknownPluginError) return 404
   if (error instanceof ConflictError) return 409
+  // The device accepted the command and then did not do it. That is a
+  // failure upstream of this app, and calling it a 500 tells an operator to
+  // look in the wrong place.
+  if (error instanceof VerificationError) return 502
+  // The device refused: busy, not pointed anywhere, wrong mode. Its own
+  // message is the useful one.
+  if (error instanceof DeviceError) return 409
   if (error instanceof ConfigInvalidError || error instanceof InvalidScheduleError || error instanceof TemplateError) {
     return 400
   }
@@ -643,6 +855,9 @@ function statusFor(error: Error): number {
 }
 
 function detailsFor(error: Error): Record<string, unknown> {
+  if (error instanceof DeviceError) {
+    return { code: error.code, ...(error.remediation === undefined ? {} : { remediation: error.remediation }) }
+  }
   if (error instanceof z.ZodError) return { issues: error.issues }
   if (error instanceof ConfigInvalidError) return { issues: error.issues }
   if (error instanceof TemplateError) return { issues: error.issues }
@@ -665,7 +880,8 @@ interface DeviceRowShape {
 interface SeriesRowShape {
   id: string
   label: string
-  pipeline_id: string
+  source_device_id: string | null
+  source_node_id: string | null
   timezone: string
   rrule: string | null
   dtstart: number
@@ -709,7 +925,8 @@ function toSeriesDto(row: SeriesRowShape) {
   return {
     id: row.id,
     label: row.label,
-    pipelineId: row.pipeline_id,
+    sourceDeviceId: row.source_device_id,
+    sourceNodeId: row.source_node_id,
     timezone: row.timezone,
     rrule: row.rrule,
     dtstart: row.dtstart,
@@ -844,4 +1061,48 @@ function maskSecrets(app: Application, pluginId: string, config: ConfigValues): 
     return {}
   }
   return out
+}
+
+function seriesOr404(db: Db, id: string): void {
+  const row = db.prepare('SELECT id FROM event_series WHERE id = ?').get(id)
+  if (!row) throw new NotFoundError(`No event with id "${id}".`)
+}
+
+/**
+ * A stream has to know where it is going, and cannot be told twice.
+ *
+ * Refused at the API rather than left to fail in the prepare phase: an
+ * output with both a service and a hand-typed key is not a preference the
+ * app gets to resolve, and one with neither is a stream that would silently
+ * do nothing at 09:00.
+ */
+function assertDeliverable(output: Pick<EventOutput, 'kind' | 'destinationId' | 'credentialId' | 'label'>): void {
+  if (output.kind !== 'stream') return
+  if (output.destinationId && output.credentialId) {
+    throw new ConflictError(
+      `"${output.label}" has both a streaming service and a stream key. Pick one: the service issues its own key.`,
+    )
+  }
+  if (!output.destinationId && !output.credentialId) {
+    throw new ConflictError(`"${output.label}" has nowhere to stream to. Pick a streaming service or a stream key.`)
+  }
+}
+
+/**
+ * The node as the device actually reported it, not as something was
+ * configured to expect.
+ *
+ * A device that has never connected has no nodes, and saying so beats a
+ * command that fails somewhere inside a plugin.
+ */
+function nodeOr404(app: Application, deviceId: string, nodeId: string): NodeDefinition {
+  const connection = app.connections.get(deviceId)
+  if (!connection) {
+    throw new NotFoundError(
+      `"${deviceId}" is not connected. Press Connect first, so the app knows what this device can do.`,
+    )
+  }
+  const node = connection.nodes.find((candidate) => candidate.id === nodeId)
+  if (!node) throw new NotFoundError(`This device has no "${nodeId}".`)
+  return node
 }

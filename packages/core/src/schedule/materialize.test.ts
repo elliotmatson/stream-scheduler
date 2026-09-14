@@ -29,7 +29,6 @@ function createSeries(over: Partial<Record<string, unknown>> = {}): string {
   const row = {
     id,
     label: 'Sunday Service',
-    pipeline_id: 'p1',
     timezone: 'America/Chicago',
     rrule: 'FREQ=WEEKLY;BYDAY=SU',
     dtstart: Date.parse('2026-02-01T15:00:00Z'), // 09:00 CST
@@ -38,8 +37,8 @@ function createSeries(over: Partial<Record<string, unknown>> = {}): string {
     ...over,
   }
   db.prepare(
-    `INSERT INTO event_series (id, label, pipeline_id, timezone, rrule, dtstart, duration_ms, enabled, created_at, updated_at)
-     VALUES (@id, @label, @pipeline_id, @timezone, @rrule, @dtstart, @duration_ms, @enabled, ${clock.now()}, ${clock.now()})`,
+    `INSERT INTO event_series (id, label, timezone, rrule, dtstart, duration_ms, enabled, created_at, updated_at)
+     VALUES (@id, @label, @timezone, @rrule, @dtstart, @duration_ms, @enabled, ${clock.now()}, ${clock.now()})`,
   ).run(row)
   return id
 }

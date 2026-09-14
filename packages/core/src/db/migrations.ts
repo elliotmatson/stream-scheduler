@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto'
+
 /**
  * Migrations are embedded as strings rather than shipped as .sql files so they
  * survive every packaging path unchanged — tsc output, an Electron asar, and
@@ -9,6 +11,24 @@ export interface Migration {
   id: number
   name: string
   sql: string
+  /**
+   * Data conversion the SQL cannot express readably.
+   *
+   * Runs inside the same transaction as `sql`, immediately after it. Needed
+   * where old rows carry JSON that has to be reshaped into real tables:
+   * doing that with `json_each` is possible but produces SQL nobody can
+   * check, and getting a data migration wrong loses somebody's schedule.
+   */
+  convert?(db: MigrationDb): void
+}
+
+/** The slice of the database handle a conversion is allowed to use. */
+export interface MigrationDb {
+  prepare(sql: string): {
+    run(...params: unknown[]): unknown
+    get(...params: unknown[]): unknown
+    all(...params: unknown[]): unknown[]
+  }
 }
 
 export const migrations: Migration[] = [
@@ -226,4 +246,247 @@ CREATE TABLE setting (
 );
 `,
   },
+  {
+    id: 5,
+    name: 'event-outputs',
+    sql: `
+-- An event is one source encoder and one long window, with several
+-- independently scheduled outputs inside it.
+--
+-- The old model had an event point at a pipeline, and the pipeline start and
+-- stop as a unit. A Sunday morning is not that shape: one campus feed runs
+-- 7:00 to 12:45, and inside it two services stream to two channels each at
+-- 9:00 and 11:00 while a recorder runs the whole way through. Expressed as
+-- pipelines that is five events which all have to be kept in step by hand,
+-- and nothing stops two of them fighting over the same encoder.
+
+ALTER TABLE event_series ADD COLUMN source_device_id TEXT REFERENCES device(id);
+ALTER TABLE event_series ADD COLUMN source_node_id TEXT;
+
+CREATE TABLE event_output (
+  id             TEXT PRIMARY KEY,
+  series_id      TEXT NOT NULL REFERENCES event_series(id) ON DELETE CASCADE,
+  -- 'stream' or 'recording'.
+  kind           TEXT NOT NULL,
+  label          TEXT NOT NULL,
+  position       INTEGER NOT NULL,
+  -- Both measured from the event window's start, so an output keeps its
+  -- place when the event is moved and survives a DST change with the rest
+  -- of the day.
+  offset_ms      INTEGER NOT NULL DEFAULT 0,
+  duration_ms    INTEGER NOT NULL,
+  -- A stream goes to a service that issues a key (destination_id) or to a
+  -- key entered by hand (credential_id). Never both.
+  destination_id TEXT REFERENCES destination(id),
+  credential_id  TEXT REFERENCES stream_credential(id),
+  -- Null means "the event's source encoder". Set only when this output
+  -- lives on different hardware, which is the usual case for a recorder.
+  device_id      TEXT REFERENCES device(id),
+  node_id        TEXT,
+  -- Overrides the event's templates for this output, so two streams from
+  -- one service can be titled differently.
+  templates      TEXT NOT NULL DEFAULT '{}',
+  enabled        INTEGER NOT NULL DEFAULT 1,
+  created_at     INTEGER NOT NULL
+);
+CREATE INDEX event_output_series ON event_output (series_id, position);
+
+-- A step used to be identifiable from its kind alone, because there was one
+-- of each. Now there is a start and a stop per output and the kind carries
+-- an output id, which is stable but unreadable. The label is what the run
+-- timeline shows a human.
+ALTER TABLE run_step ADD COLUMN label TEXT;
+
+-- A run that was in flight when this upgrade landed cannot be driven any
+-- further: its steps were planned against the old shape, and the engine now
+-- looks for different ones. Reconciling that is guesswork, and guessing is
+-- how a run ends up telling an encoder to stop something it never started.
+--
+-- So they are ended here, visibly, rather than left to fail at the next
+-- tick with something cryptic. Anything actually on air stays on air --
+-- restarting the app was never going to stop an encoder -- and the message
+-- says so.
+UPDATE run
+   SET state = 'failed',
+       ended_at = COALESCE(ended_at, CAST(strftime('%s','now') AS INTEGER) * 1000),
+       failure = json_object(
+         'code', 'interrupted_by_upgrade',
+         'message', 'This run was part-way through when the app was upgraded to the event-and-outputs model.',
+         'remediation', 'Nothing was stopped on your behalf. Check the encoder and any broadcast this run created, then start the event again if it is still wanted.'
+       )
+ WHERE state NOT IN ('completed', 'failed', 'cancelled');
+
+UPDATE occurrence SET status = 'failed' WHERE status = 'running';
+`,
+    convert: convertPipelinesToOutputs,
+  },
+  {
+    id: 6,
+    name: 'drop-pipeline-link',
+    sql: `
+-- Migration 5 copied every pipeline onto its events. Nothing reads
+-- pipeline_id now, so the column goes.
+--
+-- The 'pipeline' table itself stays, unreferenced, for one release. The
+-- conversion above is the only thing standing between an operator and their
+-- Sunday, it has never run against their data, and keeping the rows costs a
+-- few kilobytes against being able to see what an event used to be. A later
+-- migration drops it.
+ALTER TABLE event_series DROP COLUMN pipeline_id;
+`,
+  },
 ]
+
+interface GraphNode {
+  id?: string
+  deviceId?: string
+  nodeId?: string
+  credentialId?: string
+  ingestFrom?: string
+  filenameTemplate?: string
+}
+
+interface GraphDestination {
+  id?: string
+  destinationId?: string
+}
+
+/**
+ * Rewrites each event's pipeline as a source encoder plus outputs.
+ *
+ * The mapping is the one the old graph already implied: a node pointed at an
+ * ingest is a stream, a node that is not is a recorder, and the first
+ * streaming node is the source. Everything converted keeps the window it had
+ * — offset 0, the event's full duration — because that is what it did
+ * before. Splitting a window into services is the new thing, and it is a
+ * choice for whoever owns the event, not for a migration.
+ */
+function convertPipelinesToOutputs(db: MigrationDb): void {
+  const series = db
+    .prepare(
+      `SELECT s.id AS id, s.duration_ms AS duration_ms, p.graph AS graph
+         FROM event_series s JOIN pipeline p ON p.id = s.pipeline_id`,
+    )
+    .all() as { id: string; duration_ms: number; graph: string }[]
+  if (series.length === 0) return
+
+  const setSource = db.prepare(
+    'UPDATE event_series SET source_device_id = ?, source_node_id = ? WHERE id = ?',
+  )
+  const insertOutput = db.prepare(
+    `INSERT INTO event_output
+       (id, series_id, kind, label, position, offset_ms, duration_ms, destination_id, credential_id,
+        device_id, node_id, templates, enabled, created_at)
+     VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, 1, ?)`,
+  )
+  const labelOf = (table: 'device' | 'destination' | 'stream_credential', id: string | undefined): string | undefined => {
+    if (!id) return undefined
+    const row = db.prepare(`SELECT label FROM ${table} WHERE id = ?`).get(id) as { label: string } | undefined
+    return row?.label
+  }
+
+  const now = Date.now()
+
+  for (const row of series) {
+    const graph = parseGraph(row.graph)
+    const nodes = graph.nodes.filter((node) => node.deviceId && node.nodeId)
+    const streaming = nodes.filter((node) => node.credentialId ?? node.ingestFrom)
+
+    // The source is whatever was being pointed at an ingest. A pipeline with
+    // no streaming node at all (a recorder on its own) still has a source:
+    // there is one device, and it is that one.
+    const source = streaming[0] ?? nodes[0]
+    if (source) setSource.run(source.deviceId, source.nodeId, row.id)
+
+    const destinationOf = (ingestFrom: string | undefined): string | undefined =>
+      graph.destinations.find((spec) => spec.id === ingestFrom)?.destinationId
+
+    // A node and the source may be the same hardware; that is expressed by
+    // leaving the output's device null rather than repeating it.
+    const deviceColumns = (node: GraphNode): [string | null, string | null] =>
+      node.deviceId === source?.deviceId && node.nodeId === source?.nodeId
+        ? [null, null]
+        : [node.deviceId ?? null, node.nodeId ?? null]
+
+    const claimed = new Set<string>()
+    let position = 0
+
+    for (const node of streaming) {
+      const destinationId = destinationOf(node.ingestFrom) ?? null
+      if (node.ingestFrom) claimed.add(node.ingestFrom)
+      const [deviceId, nodeId] = deviceColumns(node)
+      insertOutput.run(
+        randomUUID(),
+        row.id,
+        'stream',
+        labelOf('destination', destinationId ?? undefined) ??
+          labelOf('stream_credential', node.credentialId) ??
+          'Stream',
+        position++,
+        row.duration_ms,
+        destinationId,
+        node.credentialId ?? null,
+        deviceId,
+        nodeId,
+        '{}',
+        now,
+      )
+    }
+
+    // A destination nothing was pointed at still had its broadcast created
+    // and finalized by the old planner, so it survives as an output driven
+    // by the source.
+    for (const spec of graph.destinations) {
+      if (!spec.destinationId || (spec.id && claimed.has(spec.id))) continue
+      insertOutput.run(
+        randomUUID(),
+        row.id,
+        'stream',
+        labelOf('destination', spec.destinationId) ?? 'Stream',
+        position++,
+        row.duration_ms,
+        spec.destinationId,
+        null,
+        null,
+        null,
+        '{}',
+        now,
+      )
+    }
+
+    for (const node of nodes) {
+      if (streaming.includes(node)) continue
+      const [deviceId, nodeId] = deviceColumns(node)
+      insertOutput.run(
+        randomUUID(),
+        row.id,
+        'recording',
+        labelOf('device', node.deviceId) ?? 'Recording',
+        position++,
+        row.duration_ms,
+        null,
+        null,
+        deviceId,
+        nodeId,
+        node.filenameTemplate ? JSON.stringify({ filename: node.filenameTemplate }) : '{}',
+        now,
+      )
+    }
+  }
+}
+
+function parseGraph(raw: string): { nodes: GraphNode[]; destinations: GraphDestination[] } {
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(raw)
+  } catch {
+    // A graph nobody can parse converts to an event with no outputs rather
+    // than aborting the whole upgrade. The event is still there to fix.
+    return { nodes: [], destinations: [] }
+  }
+  const graph = (parsed ?? {}) as { nodes?: unknown; destinations?: unknown }
+  return {
+    nodes: Array.isArray(graph.nodes) ? (graph.nodes as GraphNode[]) : [],
+    destinations: Array.isArray(graph.destinations) ? (graph.destinations as GraphDestination[]) : [],
+  }
+}

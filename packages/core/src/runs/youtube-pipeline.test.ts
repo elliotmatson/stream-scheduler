@@ -14,7 +14,7 @@ import { keyFileSource, resolveMasterKey } from '../secrets/master-key.js'
 import { Scrubber } from '../secrets/scrubber.js'
 import { SecretVault } from '../secrets/vault.js'
 import { RunEngine } from './engine.js'
-import { PipelinePlanner } from './pipeline-planner.js'
+import { EventPlanner } from './event-planner.js'
 import { RunStore } from './store.js'
 import { immediateSleeper } from './steps.js'
 import { idempotencyKey } from './store.js'
@@ -122,27 +122,38 @@ function addEncoder(): string {
   return id
 }
 
-function seedEvent(graph: unknown, templates: Record<string, string>): string {
-  const pipelineId = randomUUID()
+/** One event: one encoder, one stream to YouTube for the whole window. */
+function seedEvent(
+  options: { encoderId: string; destinationId: string; templates: Record<string, string> },
+): { occurrenceId: string; outputId: string } {
   const seriesId = randomUUID()
   const occurrenceId = randomUUID()
-  db.prepare('INSERT INTO pipeline (id, label, graph, created_at) VALUES (?, ?, ?, ?)').run(
-    pipelineId,
-    'Main',
-    JSON.stringify(graph),
-    clock.now(),
-  )
+  const outputId = randomUUID()
+
   db.prepare(
     `INSERT INTO event_series
-       (id, label, pipeline_id, timezone, rrule, dtstart, duration_ms, prepare_lead_ms, preroll_ms, postroll_ms,
-        late_start_grace_ms, templates, created_at, updated_at)
-     VALUES (?, 'Sunday Service', ?, 'America/Chicago', NULL, ?, ?, ?, 0, 0, ?, ?, 0, 0)`,
-  ).run(seriesId, pipelineId, START, DURATION, 30 * MINUTE, 30 * MINUTE, JSON.stringify(templates))
+       (id, label, source_device_id, source_node_id, timezone, rrule, dtstart, duration_ms, prepare_lead_ms,
+        preroll_ms, postroll_ms, late_start_grace_ms, templates, created_at, updated_at)
+     VALUES (?, 'Sunday Service', ?, 'stream', 'America/Chicago', NULL, ?, ?, ?, 0, 0, ?, ?, 0, 0)`,
+  ).run(
+    seriesId,
+    options.encoderId,
+    START,
+    DURATION,
+    30 * MINUTE,
+    30 * MINUTE,
+    JSON.stringify(options.templates),
+  )
+  db.prepare(
+    `INSERT INTO event_output
+       (id, series_id, kind, label, position, offset_ms, duration_ms, destination_id, created_at)
+     VALUES (?, ?, 'stream', 'Church YouTube', 0, 0, ?, ?, ?)`,
+  ).run(outputId, seriesId, DURATION, options.destinationId, clock.now())
   db.prepare(
     `INSERT INTO occurrence (id, series_id, scheduled_start, scheduled_end, local_date, status, series_version)
      VALUES (?, ?, ?, ?, '2026-03-08', 'pending', 1)`,
   ).run(occurrenceId, seriesId, START, START + DURATION)
-  return occurrenceId
+  return { occurrenceId, outputId }
 }
 
 async function fullPipeline(destinationConfig: Record<string, unknown> = {}) {
@@ -151,17 +162,15 @@ async function fullPipeline(destinationConfig: Record<string, unknown> = {}) {
   const encoderId = addEncoder()
   await connections.open(encoderId)
 
-  const occurrenceId = seedEvent(
-    {
-      destinations: [{ id: 'yt', destinationId }],
-      nodes: [{ id: 'enc', deviceId: encoderId, nodeId: 'stream', ingestFrom: 'yt' }],
-    },
-    { title: '{{event.name}} - {{date "MMMM d, yyyy"}}' },
-  )
+  const { occurrenceId, outputId } = seedEvent({
+    encoderId,
+    destinationId,
+    templates: { title: '{{event.name}} - {{date "MMMM d, yyyy"}}' },
+  })
 
-  const planner = new PipelinePlanner({ db, connections, vault, clock, destinations })
+  const planner = new EventPlanner({ db, connections, vault, clock, destinations })
   const engine = new RunEngine({ db, store, clock, planner, sleeper: immediateSleeper })
-  return { engine, planner, occurrenceId, encoderId, destinationId }
+  return { engine, planner, occurrenceId, outputId, encoderId, destinationId }
 }
 
 describe('a scheduled event delivering to YouTube', () => {
@@ -178,16 +187,18 @@ describe('a scheduled event delivering to YouTube', () => {
     expect(broadcast.title).toBe('Sunday Service - March 8, 2026')
     expect(broadcast.boundStreamId).toBeDefined()
 
-    // And the encoder is pointed at the key YouTube issued, verified by a
-    // read-back rather than assumed.
-    const encoderState = await connections.invoke(encoderId, 'stream', 'readState')
-    expect(encoderState?.streaming?.targetUrl).toMatch(/^rtmps:\/\//)
-    expect(encoderState?.streaming?.active).toBe(false)
+    // Nothing has touched the encoder yet: it holds one target at a time,
+    // so it is pointed at this key when this output goes on, not now.
+    expect((await connections.invoke(encoderId, 'stream', 'readState'))?.streaming?.targetUrl).toBeUndefined()
 
     clock.set(START)
     await engine.tick()
-    expect(store.getRun(runId).state).toBe('live')
-    expect((await connections.invoke(encoderId, 'stream', 'readState'))?.streaming?.active).toBe(true)
+    expect(store.getRun(runId).state).toBe('running')
+    // Pointed at the key YouTube issued, verified by a read-back rather
+    // than assumed.
+    const encoderState = await connections.invoke(encoderId, 'stream', 'readState')
+    expect(encoderState?.streaming?.targetUrl).toMatch(/^rtmps:\/\//)
+    expect(encoderState?.streaming?.active).toBe(true)
 
     clock.set(START + DURATION)
     await engine.tick()
@@ -207,11 +218,11 @@ describe('a scheduled event delivering to YouTube', () => {
   })
 
   it('cleans up the per-run key once the event is finished', async () => {
-    const { engine } = await fullPipeline()
+    const { engine, outputId } = await fullPipeline()
     clock.set(START - 30 * MINUTE)
     const runId = (await engine.tick()).created[0]!
 
-    const ref = `run-ingest:${runId}:yt`
+    const ref = `run-ingest:${runId}:${outputId}`
     expect(vault.has(ref)).toBe(true)
 
     clock.set(START)
@@ -263,26 +274,32 @@ describe('failure and recovery', () => {
     )
     await connections.open(encoderId)
 
-    const occurrenceId = seedEvent(
-      {
-        destinations: [{ id: 'yt', destinationId }],
-        nodes: [{ id: 'enc', deviceId: encoderId, nodeId: 'stream', ingestFrom: 'yt' }],
-      },
-      { title: '{{event.name}}' },
-    )
-    void occurrenceId
+    const { outputId } = seedEvent({ encoderId, destinationId, templates: { title: '{{event.name}}' } })
 
-    const planner = new PipelinePlanner({ db, connections, vault, clock, destinations })
+    const planner = new EventPlanner({ db, connections, vault, clock, destinations })
     const engine = new RunEngine({ db, store, clock, planner, sleeper: immediateSleeper })
 
     clock.set(START - 30 * MINUTE)
     const runId = (await engine.tick()).created[0]!
+    // Prepare succeeds: the broadcast is real, and the encoder is not
+    // touched until the output goes on air.
+    expect(store.getRun(runId).state).toBe('ready')
 
+    clock.set(START)
+    await engine.tick()
+    // Its one output failed to go on air, but the run is not over until
+    // its window is.
+    expect(store.getRun(runId).state).toBe('running')
+
+    clock.set(START + DURATION)
+    await engine.tick()
+
+    // Nothing aired, so the whole run failed.
     expect(store.getRun(runId).state).toBe('failed')
     // The channel is left clean rather than accumulating an empty public
     // broadcast for an event that never happened.
     expect(youtube.liveBroadcastCount).toBe(0)
-    expect(vault.has(`run-ingest:${runId}:yt`)).toBe(false)
+    expect(vault.has(`run-ingest:${runId}:${outputId}`)).toBe(false)
   })
 
   it('adopts the broadcast a crashed prepare had already created', async () => {
@@ -339,7 +356,7 @@ describe('failure and recovery', () => {
         resolveClient: async () => ({ client: { clientId: 'c', clientSecret: 's' }, refreshToken: 'rt' }),
       }),
     )
-    const planner = new PipelinePlanner({ db, connections, vault, clock, destinations })
+    const planner = new EventPlanner({ db, connections, vault, clock, destinations })
     const freshEngine = new RunEngine({ db, store, clock, planner, sleeper: immediateSleeper })
     void engine
 

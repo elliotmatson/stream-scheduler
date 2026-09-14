@@ -1,6 +1,15 @@
 import { useState } from 'react'
 import type { ReactNode } from 'react'
-import { api, useResource, type Device, type DiscoveredDevice, type Plugin } from '../api.ts'
+import {
+  api,
+  useResource,
+  type Device,
+  type DeviceNode,
+  type DiscoveredDevice,
+  type ManualAction,
+  type NodeState,
+  type Plugin,
+} from '../api.ts'
 import { Card, ConfigFields, ConfirmButton, Empty, ErrorBanner, Field, StatusPill } from '../components.tsx'
 import { relative } from '../format.ts'
 
@@ -135,25 +144,10 @@ function DeviceCard({
       </div>
 
       {device.nodes.length > 0 ? (
-        <div className="table-wrap" style={{ marginTop: 12 }}>
-          <table>
-            <thead>
-              <tr>
-                <th>Node</th>
-                <th>Roles</th>
-                <th>Supports</th>
-              </tr>
-            </thead>
-            <tbody>
-              {device.nodes.map((node) => (
-                <tr key={node.id}>
-                  <td>{node.label}</td>
-                  <td className="muted">{node.roles.join(', ')}</td>
-                  <td className="muted">{node.supports.join(', ')}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+        <div className="stack" style={{ marginTop: 12, gap: 6 }}>
+          {device.nodes.map((node) => (
+            <NodeControls key={node.id} device={device} node={node} />
+          ))}
         </div>
       ) : (
         <p className="muted" style={{ marginBottom: 0 }}>
@@ -161,6 +155,170 @@ function DeviceCard({
         </p>
       )}
     </Card>
+  )
+}
+
+/**
+ * Drive one node by hand.
+ *
+ * Collapsed until opened, and it reads the device only when it is: an
+ * operator glancing at the Devices page should not set off a round trip to
+ * every HyperDeck in the building.
+ *
+ * Every button here goes through the same verify-after-write the scheduler
+ * uses, so "Stop" going green means the device really stopped rather than
+ * that it accepted the command.
+ */
+function NodeControls({ device, node }: { device: Device; node: DeviceNode }): ReactNode {
+  const [open, setOpen] = useState(false)
+  const [state, setState] = useState<NodeState | null>()
+  const [busy, setBusy] = useState<string>()
+  const [error, setError] = useState<string>()
+  const [filename, setFilename] = useState('')
+
+  const connected = device.health === 'connected' || device.health === 'degraded'
+
+  const run = async (label: string, action: () => Promise<{ state: NodeState | null }>): Promise<void> => {
+    setBusy(label)
+    setError(undefined)
+    try {
+      setState((await action()).state)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setBusy(undefined)
+    }
+  }
+
+  const read = (): void => void run('read', () => api.nodeState(device.id, node.id))
+  const drive = (action: ManualAction): void =>
+    void run(action, () =>
+      api.driveNode(device.id, node.id, action, action === 'startRecording' && filename ? { filename } : {}),
+    )
+
+  const streaming = state?.streaming
+  const recording = state?.recording
+  const canStream = node.supports.includes('startStreaming')
+  const canRecord = node.supports.includes('startRecording')
+
+  return (
+    <details
+      open={open}
+      onToggle={(event) => {
+        const nowOpen = (event.currentTarget as HTMLDetailsElement).open
+        setOpen(nowOpen)
+        if (nowOpen && state === undefined && connected) read()
+      }}
+    >
+      <summary>
+        {node.label} <span className="muted">· {node.roles.join(', ')}</span>
+      </summary>
+
+      <div className="stack" style={{ marginTop: 10 }}>
+        {!connected ? (
+          <p className="muted" style={{ margin: 0 }}>
+            Not connected. Press Connect above first.
+          </p>
+        ) : (
+          <>
+            {device.inUseBy.length > 0 ? (
+              <div className="banner warn">
+                {device.inUseBy.map((entry) => entry.label).join(', ')}{' '}
+                {device.inUseBy.length === 1 ? 'is' : 'are'} mid-run on this device. Anything you do here the
+                scheduler may undo at the next start or stop in its window — to end it properly, stop the run
+                on its own page.
+              </div>
+            ) : null}
+
+            {error ? (
+              <div className="banner error">
+                {error}
+                {/* The most likely failure on this screen, and the message
+                    alone does not say what to do about it. */}
+                {/no stream target/i.test(error) ? (
+                  <>
+                    {' '}
+                    This encoder has not been pointed anywhere yet. Put it on an event, which applies the key
+                    when the event starts — a stream key never travels through this screen.
+                  </>
+                ) : null}
+              </div>
+            ) : null}
+
+            {/* Only what this node actually does. A recorder with a
+                "Streaming —" line reads as broken rather than as a
+                recorder. */}
+            <div className="row" style={{ gap: 18 }}>
+              {canStream ? (
+                <Fact
+                  label="Streaming"
+                  value={
+                    streaming === undefined
+                      ? '—'
+                      : streaming.active
+                        ? `on${streaming.bitrateBps ? ` · ${Math.round(streaming.bitrateBps / 1000)} kbps` : ''}`
+                        : 'off'
+                  }
+                />
+              ) : null}
+              {canRecord ? (
+                <Fact
+                  label="Recording"
+                  value={
+                    recording === undefined ? '—' : recording.active ? (recording.filename ?? 'on') : 'off'
+                  }
+                />
+              ) : null}
+              {streaming?.targetUrl ? <Fact label="Pointed at" value={streaming.targetUrl} /> : null}
+            </div>
+
+            {canRecord ? (
+              <Field label="Recording name" hint="Needed before a recording can start. Named by you, not by us.">
+                <input
+                  value={filename}
+                  placeholder="2026-09-06 rehearsal"
+                  onChange={(event) => setFilename(event.target.value)}
+                />
+              </Field>
+            ) : null}
+
+            <div className="row">
+              <button disabled={busy !== undefined} onClick={read}>
+                {busy === 'read' ? 'Reading…' : 'Read state'}
+              </button>
+              {(
+                [
+                  ['startStreaming', 'Start streaming'],
+                  ['stopStreaming', 'Stop streaming'],
+                  ['startRecording', 'Start recording'],
+                  ['stopRecording', 'Stop recording'],
+                ] as [ManualAction, string][]
+              )
+                .filter(([action]) => node.supports.includes(action))
+                .map(([action, label]) => (
+                  <button
+                    key={action}
+                    className={action.startsWith('stop') ? 'danger' : ''}
+                    // A recording has to be called something, and greying
+                    // the button out says so better than an error does.
+                    disabled={busy !== undefined || (action === 'startRecording' && !filename)}
+                    onClick={() => drive(action)}
+                  >
+                    {busy === action ? 'Working…' : label}
+                  </button>
+                ))}
+            </div>
+
+            <p className="muted" style={{ margin: 0 }}>
+              {canStream
+                ? 'Starting a stream sends it wherever this device is already pointed. '
+                : ''}
+              Every button here is read back off the device before it reports success.
+            </p>
+          </>
+        )}
+      </div>
+    </details>
   )
 }
 

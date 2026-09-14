@@ -2,7 +2,7 @@ import { useState } from 'react'
 import type { ReactNode } from 'react'
 import { api, useResource, type Series } from '../api.ts'
 import { Card, ConfirmButton, Empty, ErrorBanner } from '../components.tsx'
-import { duration } from '../format.ts'
+import { duration, timeIn } from '../format.ts'
 import { EventForm } from './EventForm.tsx'
 
 export function SeriesList(): ReactNode {
@@ -135,7 +135,19 @@ function SeriesCard({
           <ul style={{ margin: 0, paddingLeft: 18 }}>
             {preview.map((item) => (
               <li key={item.occurrenceId} style={item.error ? { color: 'var(--bad)' } : undefined}>
-                {item.error ?? item.title ?? item.filename ?? <span className="muted">no name templates set</span>}
+                {item.error ?? (
+                  <>
+                    {(item.outputs ?? []).length === 0 ? (
+                      <span className="muted">nothing attached to this event</span>
+                    ) : null}
+                    {(item.outputs ?? []).map((output) => (
+                      <div key={output.outputId}>
+                        <span className="muted">{timeIn(output.startsAt, series.timezone)}</span>{' '}
+                        {output.title ?? output.filename ?? output.label}
+                      </div>
+                    ))}
+                  </>
+                )}
               </li>
             ))}
           </ul>

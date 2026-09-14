@@ -16,30 +16,39 @@ export class ConflictError extends Error {
 }
 
 /**
- * Refuses to delete something a pipeline graph still points at.
+ * Refuses to delete something an event's outputs still point at.
  *
- * Credentials and destinations live inside a pipeline's JSON graph rather
- * than in a foreign key, so nothing in the database stops the delete — the
- * pipeline would just fail at T−30m on the next run with a dangling id.
+ * The foreign keys would raise this anyway, as an opaque SQLITE_CONSTRAINT.
+ * Naming the events that depend on it is the difference between a fixable
+ * mistake and a puzzle.
  */
 export function assertUnreferenced(
   db: Db,
-  field: 'credentialId' | 'ingestFrom' | 'destinationId',
+  column: 'credential_id' | 'destination_id' | 'device_id',
   id: string,
   noun: string,
 ): void {
-  const pipelines = db.prepare('SELECT label, graph FROM pipeline').all() as { label: string; graph: string }[]
-  const users = pipelines.filter((row) => {
-    const graph = JSON.parse(row.graph) as {
-      nodes?: Record<string, unknown>[]
-      destinations?: Record<string, unknown>[]
-    }
-    return [...(graph.nodes ?? []), ...(graph.destinations ?? [])].some((entry) => entry[field] === id)
-  })
-  if (users.length > 0) {
-    throw new ConflictError(
-      `This ${noun} is still used by ${users.map((row) => `"${row.label}"`).join(', ')}. ` +
-        'Change those pipelines first.',
+  const users = db
+    .prepare(
+      `SELECT DISTINCT s.label AS label
+         FROM event_output o JOIN event_series s ON s.id = o.series_id
+        WHERE o.${column} = ?
+        ORDER BY s.label`,
     )
-  }
+    .all(id) as { label: string }[]
+
+  const sources =
+    column === 'device_id'
+      ? (db
+          .prepare('SELECT label FROM event_series WHERE source_device_id = ? ORDER BY label')
+          .all(id) as { label: string }[])
+      : []
+
+  const labels = [...new Set([...users, ...sources].map((row) => row.label))]
+  if (labels.length === 0) return
+
+  throw new ConflictError(
+    `This ${noun} is still used by ${labels.map((label) => `"${label}"`).join(', ')}. ` +
+      'Change those events first.',
+  )
 }

@@ -10,7 +10,7 @@ import { envSecretSource, keyFileSource, resolveMasterKey, type MasterKeySource 
 import { scrubber } from './secrets/scrubber.js'
 import { SecretVault } from './secrets/vault.js'
 import { DEFAULT_HORIZON_MS, materializeAll } from './schedule/materialize.js'
-import { PipelinePlanner } from './runs/pipeline-planner.js'
+import { EventPlanner } from './runs/event-planner.js'
 import { RunEngine } from './runs/engine.js'
 import { RunStore } from './runs/store.js'
 import { Notifier } from './notify/notifier.js'
@@ -52,7 +52,7 @@ export class Application {
   readonly destinations: DestinationRegistry
   readonly connections: ConnectionManager
   readonly store: RunStore
-  readonly planner: PipelinePlanner
+  readonly planner: EventPlanner
   readonly engine: RunEngine
   readonly notifier: Notifier
   readonly preflight: PreflightChecker
@@ -75,7 +75,7 @@ export class Application {
     destinations: DestinationRegistry
     connections: ConnectionManager
     store: RunStore
-    planner: PipelinePlanner
+    planner: EventPlanner
     engine: RunEngine
     notifier: Notifier
     preflight: PreflightChecker
@@ -137,7 +137,7 @@ export class Application {
         : { enforceSerialization: options.enforceSerialization }),
     })
     const store = new RunStore(db, clock, scrubber)
-    const planner = new PipelinePlanner({ db, connections, vault, clock, destinations })
+    const planner = new EventPlanner({ db, connections, vault, clock, destinations })
     const notifier = new Notifier({ db, clock, vault, logger })
     const baseUrl = options.baseUrl ?? 'http://127.0.0.1:8500'
 

@@ -34,11 +34,30 @@ export async function executePhase(
   phase: RunPhase,
   deps: ExecutorDeps,
 ): Promise<PhaseResult> {
+  return executeSteps(runId, plan, (step) => step.phase === phase, deps, { phase })
+}
+
+/**
+ * Runs the selected steps, in plan order, resuming from wherever the run got
+ * to.
+ *
+ * The selector exists because a phase is no longer one unit of work: an
+ * event's four streams each have their own start, gated on their own time,
+ * and one of them failing must not take the other three off air. The engine
+ * selects one output's steps at a time.
+ */
+export async function executeSteps(
+  runId: string,
+  plan: RunPlan,
+  select: (step: StepDefinition, seq: number) => boolean,
+  deps: ExecutorDeps,
+  context: { phase?: RunPhase; outputId?: string } = {},
+): Promise<PhaseResult> {
   const { store } = deps
-  const logger = (deps.logger ?? silentLogger).child({ runId, phase })
+  const logger = (deps.logger ?? silentLogger).child({ runId, ...context })
 
   for (const [seq, step] of plan.entries()) {
-    if (step.phase !== phase) continue
+    if (!select(step, seq)) continue
 
     const record = store.step(runId, seq)
     if (record.state === 'done' || record.state === 'compensated') continue
@@ -47,6 +66,21 @@ export async function executePhase(
     if (!result.ok) return result
   }
   return { ok: true }
+}
+
+/**
+ * Undoes one output's completed steps, leaving every other output alone.
+ *
+ * Used when a single output fails part-way through: its broadcast has to be
+ * discarded, but the event and its other outputs carry on.
+ */
+export async function compensateOutput(
+  runId: string,
+  plan: RunPlan,
+  outputId: string,
+  deps: ExecutorDeps,
+): Promise<void> {
+  await compensateSelected(runId, plan, (step) => step.outputId === outputId, deps)
 }
 
 async function executeStep(
@@ -150,13 +184,22 @@ export async function reconcileRun(runId: string, plan: RunPlan, deps: ExecutorD
  * channel accumulating empty public "Sunday Service" entries.
  */
 export async function compensateRun(runId: string, plan: RunPlan, deps: ExecutorDeps): Promise<void> {
+  await compensateSelected(runId, plan, () => true, deps)
+}
+
+async function compensateSelected(
+  runId: string,
+  plan: RunPlan,
+  select: (step: StepDefinition) => boolean,
+  deps: ExecutorDeps,
+): Promise<void> {
   const { store } = deps
   const logger = (deps.logger ?? silentLogger).child({ runId })
 
   for (const record of [...store.steps(runId)].reverse()) {
     if (record.state !== 'done') continue
     const step = plan[record.seq]
-    if (!step?.compensate) continue
+    if (!step?.compensate || !select(step)) continue
     try {
       await step.compensate(contextFor(runId, record.seq, step, deps, logger))
       store.markStepCompensated(runId, record.seq)

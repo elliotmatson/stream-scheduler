@@ -307,6 +307,60 @@ code {
   gap: 14px;
 }
 
+/* A card nested inside one: one step quieter, so a list of outputs reads as
+   part of its event rather than as a second stack of equals. */
+.card.inner {
+  background: var(--surface-2);
+  box-shadow: none;
+  padding: 12px 14px;
+  gap: 10px;
+  display: flex;
+  flex-direction: column;
+}
+
+/* disclosure -------------------------------------------------------------- */
+
+details {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 8px 12px;
+  background: var(--surface);
+}
+
+details[open] {
+  background: var(--surface-2);
+}
+
+summary {
+  cursor: pointer;
+  font-weight: 500;
+  /* The default triangle is a different shape and colour in every browser;
+     this draws one that follows the theme. */
+  list-style: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+summary::-webkit-details-marker {
+  display: none;
+}
+
+summary::before {
+  content: '';
+  width: 0;
+  height: 0;
+  border-left: 5px solid currentColor;
+  border-top: 4px solid transparent;
+  border-bottom: 4px solid transparent;
+  opacity: 0.55;
+  transition: transform 120ms ease;
+}
+
+details[open] > summary::before {
+  transform: rotate(90deg);
+}
+
 .row {
   display: flex;
   align-items: center;
@@ -807,6 +861,12 @@ pre {
   border-color: color-mix(in srgb, var(--bad) 45%, transparent);
   color: var(--bad);
   background: var(--bad-soft);
+}
+
+.banner.warn {
+  border-color: color-mix(in srgb, var(--warn) 45%, transparent);
+  color: var(--warn);
+  background: var(--warn-soft);
 }
 
 .banner.info {

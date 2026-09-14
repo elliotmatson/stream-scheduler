@@ -10,7 +10,7 @@ import { openTestDatabase, type Db } from '../db/index.js'
 import { DestinationRegistry } from '../destinations/registry.js'
 import { ConnectionManager } from '../devices/connection-manager.js'
 import { PluginRegistry } from '../plugins/registry.js'
-import { PipelinePlanner } from '../runs/pipeline-planner.js'
+import { EventPlanner } from '../runs/event-planner.js'
 import { keyFileSource, resolveMasterKey } from '../secrets/master-key.js'
 import { Scrubber } from '../secrets/scrubber.js'
 import { SecretVault } from '../secrets/vault.js'
@@ -101,21 +101,33 @@ function addDestination(): string {
   return id
 }
 
-function seed(graph: unknown, templates: Record<string, string> = {}): string {
-  const pipelineId = randomUUID()
+interface SeedOptions {
+  source?: string
+  destinationId?: string
+  credentialId?: string
+  templates?: Record<string, string>
+  /** For the "nothing attached" case. */
+  outputs?: 'none'
+}
+
+function seed(options: SeedOptions = {}): string {
   const seriesId = randomUUID()
   const occurrenceId = randomUUID()
-  db.prepare('INSERT INTO pipeline (id, label, graph, created_at) VALUES (?, ?, ?, ?)').run(
-    pipelineId,
-    'Main',
-    JSON.stringify(graph),
-    clock.now(),
-  )
   db.prepare(
     `INSERT INTO event_series
-       (id, label, pipeline_id, timezone, rrule, dtstart, duration_ms, templates, created_at, updated_at)
-     VALUES (?, 'Sunday Service', ?, 'America/Chicago', NULL, ?, 5400000, ?, 0, 0)`,
-  ).run(seriesId, pipelineId, START, JSON.stringify(templates))
+       (id, label, source_device_id, source_node_id, timezone, rrule, dtstart, duration_ms, templates,
+        created_at, updated_at)
+     VALUES (?, 'Sunday Service', ?, 'stream', 'America/Chicago', NULL, ?, 5400000, ?, 0, 0)`,
+  ).run(seriesId, options.source ?? null, START, JSON.stringify(options.templates ?? {}))
+
+  if (options.outputs !== 'none') {
+    db.prepare(
+      `INSERT INTO event_output
+         (id, series_id, kind, label, position, offset_ms, duration_ms, destination_id, credential_id, created_at)
+       VALUES (?, ?, 'stream', 'Main', 0, 0, 5400000, ?, ?, 0)`,
+    ).run(randomUUID(), seriesId, options.destinationId ?? null, options.credentialId ?? null)
+  }
+
   db.prepare(
     `INSERT INTO occurrence (id, series_id, scheduled_start, scheduled_end, local_date, status, series_version)
      VALUES (?, ?, ?, ?, '2026-03-08', 'pending', 1)`,
@@ -123,14 +135,23 @@ function seed(graph: unknown, templates: Record<string, string> = {}): string {
   return occurrenceId
 }
 
+/** A hand-entered key, so an output has somewhere to go. */
+function addCredential(): string {
+  const id = randomUUID()
+  db.prepare(
+    'INSERT INTO stream_credential (id, label, source, ingest_url, secret_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)',
+  ).run(id, 'Manual key', 'manual', 'rtmps://x/live2', vault.store('live_key'), clock.now())
+  return id
+}
+
 const checker = (over: Partial<ConstructorParameters<typeof PreflightChecker>[0]> = {}) =>
-  new PreflightChecker({ db, clock, planner: new PipelinePlanner({ db, connections, vault, clock, destinations }), connections, destinations, notifier, ...over })
+  new PreflightChecker({ db, clock, planner: new EventPlanner({ db, connections, vault, clock, destinations }), connections, destinations, notifier, ...over })
 
 describe('pre-flight', () => {
   it('says nothing when everything is in order', async () => {
     const encoder = addDevice({ kind: 'encoder' })
     await connections.open(encoder)
-    seed({ nodes: [{ id: 'enc', deviceId: encoder, nodeId: 'stream', credentialId: 'c1' }] })
+    seed({ source: encoder, credentialId: addCredential() })
 
     const [result] = await checker().run()
     expect(result?.problems).toEqual([])
@@ -143,10 +164,7 @@ describe('pre-flight', () => {
     // until a stream fails, and Saturday afternoon is when it can be fixed.
     const encoder = addDevice({ kind: 'encoder' })
     await connections.open(encoder)
-    seed({
-      nodes: [{ id: 'enc', deviceId: encoder, nodeId: 'stream', ingestFrom: 'yt' }],
-      destinations: [{ id: 'yt', destinationId: addDestination() }],
-    })
+    seed({ source: encoder, destinationId: addDestination() })
     destinationState = { state: 'reauth_required', message: 'Token has been expired or revoked.' }
 
     const [result] = await checker().run()
@@ -162,7 +180,7 @@ describe('pre-flight', () => {
 
   it('catches an encoder that has been unplugged since last week', async () => {
     const encoder = addDevice({ kind: 'encoder', fault: 'unreachable' })
-    seed({ nodes: [{ id: 'enc', deviceId: encoder, nodeId: 'stream', credentialId: 'c1' }] })
+    seed({ source: encoder, credentialId: addCredential() })
 
     const [result] = await checker().run()
     expect(result?.problems[0]?.what).toBe('Sanctuary encoder')
@@ -172,7 +190,7 @@ describe('pre-flight', () => {
   it('catches a template someone broke on Tuesday', async () => {
     const encoder = addDevice({ kind: 'encoder' })
     await connections.open(encoder)
-    seed({ nodes: [{ id: 'enc', deviceId: encoder, nodeId: 'stream' }] }, { title: '{{speaker.nmae}}' })
+    seed({ source: encoder, credentialId: addCredential(), templates: { title: '{{speaker.nmae}}' } })
 
     const [result] = await checker().run()
     expect(result?.problems.some((p) => p.what === 'Name templates')).toBe(true)
@@ -181,25 +199,22 @@ describe('pre-flight', () => {
   it('warns when the day\'s API budget is nearly gone', async () => {
     const encoder = addDevice({ kind: 'encoder' })
     await connections.open(encoder)
-    seed({
-      nodes: [{ id: 'enc', deviceId: encoder, nodeId: 'stream', ingestFrom: 'yt' }],
-      destinations: [{ id: 'yt', destinationId: addDestination() }],
-    })
+    seed({ source: encoder, destinationId: addDestination() })
     destinationState = { state: 'ok', quotaRemaining: 120 }
 
     const [result] = await checker().run()
     expect(result?.problems[0]?.detail).toMatch(/120 API units/)
   })
 
-  it('notices a pipeline that would do nothing at all', async () => {
-    seed({ nodes: [] })
+  it('notices an event that would do nothing at all', async () => {
+    seed({ source: addDevice({ kind: 'encoder' }), outputs: 'none' })
     const [result] = await checker().run()
     expect(result?.problems.some((p) => p.detail.includes('would do nothing'))).toBe(true)
   })
 
   it('ignores events beyond the window and events already past', async () => {
     const encoder = addDevice({ kind: 'encoder', fault: 'unreachable' })
-    seed({ nodes: [{ id: 'enc', deviceId: encoder, nodeId: 'stream' }] })
+    seed({ source: encoder, credentialId: addCredential() })
 
     clock.set(START - 5 * 86_400_000) // five days out
     expect(await checker().run()).toHaveLength(0)
@@ -210,7 +225,7 @@ describe('pre-flight', () => {
 
   it('reports an event once, not on every hourly check', async () => {
     const encoder = addDevice({ kind: 'encoder', fault: 'unreachable' })
-    seed({ nodes: [{ id: 'enc', deviceId: encoder, nodeId: 'stream' }] })
+    seed({ source: encoder, credentialId: addCredential() })
 
     const preflight = checker()
     await preflight.run()
@@ -226,7 +241,7 @@ describe('pre-flight', () => {
   it('speaks up again when the set of problems changes', async () => {
     // Fixing one of two problems should say so rather than going quiet.
     const encoder = addDevice({ kind: 'encoder', fault: 'unreachable' })
-    seed({ nodes: [{ id: 'enc', deviceId: encoder, nodeId: 'stream' }] }, { title: '{{nope}}' })
+    seed({ source: encoder, credentialId: addCredential(), templates: { title: '{{nope}}' } })
 
     const preflight = checker()
     await preflight.run()
@@ -244,7 +259,7 @@ describe('pre-flight', () => {
   it('only says all-clear when asked to', async () => {
     const encoder = addDevice({ kind: 'encoder' })
     await connections.open(encoder)
-    seed({ nodes: [{ id: 'enc', deviceId: encoder, nodeId: 'stream' }] })
+    seed({ source: encoder, credentialId: addCredential() })
 
     await checker({ announceReady: true }).run()
     await notifier.flush()
@@ -253,7 +268,7 @@ describe('pre-flight', () => {
 
   it('names the time in the event\'s own timezone', async () => {
     const encoder = addDevice({ kind: 'encoder', fault: 'unreachable' })
-    seed({ nodes: [{ id: 'enc', deviceId: encoder, nodeId: 'stream' }] })
+    seed({ source: encoder, credentialId: addCredential() })
 
     await checker().run()
     await notifier.flush()

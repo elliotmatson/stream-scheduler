@@ -48,6 +48,9 @@ export function migrate(db: Db): void {
     if (applied.has(migration.id)) continue
     db.transaction(() => {
       db.exec(migration.sql)
+      // Data conversion runs in the same transaction as the schema change
+      // it belongs to, so a half-converted database is never committed.
+      migration.convert?.(db)
       record.run(migration.id, migration.name, Date.now())
     })()
   }
