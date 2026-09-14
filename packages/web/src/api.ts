@@ -69,8 +69,22 @@ export interface NodeState {
   }
   input?: { present: boolean; format?: string; source?: string }
   routing?: Record<string, string>
-  /** Settings the device says it will accept, and what it is on now. */
-  options?: { quality?: { current?: string; choices: string[] } }
+  /**
+   * Settings the device says it will accept, and what it is on now.
+   *
+   * Three ways a device spells quality, and it declares which one it takes:
+   * named profiles it can list, a bitrate where it stores only numbers, or a
+   * name it takes but will not enumerate. `current` is always in the same
+   * vocabulary as the value to send back.
+   */
+  options?: {
+    quality?: {
+      current?: string
+      choices: string[]
+      bitrate?: { minMbps: number; maxMbps: number; note?: string }
+      freeform?: { note?: string; examples?: string[] }
+    }
+  }
 }
 
 export interface StorageSlot {
