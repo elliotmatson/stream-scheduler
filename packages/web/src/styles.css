@@ -1,47 +1,118 @@
+/*
+ * One palette, three ways in: the light default, a dark override for the
+ * system preference, and a dark override for an explicit choice. Every
+ * colour is defined in the light block so nothing can exist only in dark.
+ *
+ * `data-theme` is set on <html> by src/theme.ts (and, before first paint, by
+ * the inline script in index.html). Absent means "follow the system".
+ */
 :root {
-  --bg: #f7f7f8;
+  --bg: #f5f6f8;
   --surface: #ffffff;
-  --surface-2: #f0f0f2;
-  --border: #dcdce1;
-  --text: #1a1a1f;
-  --muted: #6b6b76;
-  --accent: #2f6fed;
-  --ok: #1f8a4c;
-  --warn: #b26a00;
-  --bad: #c23934;
-  --live: #c23934;
-  --radius: 8px;
-  color-scheme: light dark;
+  --surface-2: #eef0f3;
+  --surface-3: #e5e8ec;
+  --border: #e2e5ea;
+  --border-strong: #cbd1d9;
+
+  --text: #11141a;
+  --text-2: #3d4551;
+  --muted: #6b7382;
+
+  --accent: #4460e0;
+  --accent-hover: #3a53c9;
+  --accent-contrast: #ffffff;
+
+  --ok: #0b8a5b;
+  --warn: #b4650a;
+  --bad: #cf3535;
+  --live: #d23434;
+
+  /* Tints are derived, so a palette change cannot leave a stale pastel. */
+  --accent-soft: color-mix(in srgb, var(--accent) 11%, transparent);
+  --ok-soft: color-mix(in srgb, var(--ok) 12%, transparent);
+  --warn-soft: color-mix(in srgb, var(--warn) 13%, transparent);
+  --bad-soft: color-mix(in srgb, var(--bad) 11%, transparent);
+
+  --radius: 12px;
+  --radius-sm: 8px;
+  --radius-xs: 6px;
+
+  --shadow-sm: 0 1px 2px rgb(15 20 30 / 5%), 0 1px 3px rgb(15 20 30 / 4%);
+  --shadow: 0 2px 4px rgb(15 20 30 / 5%), 0 8px 20px -8px rgb(15 20 30 / 12%);
+
+  --sidebar-w: 224px;
+
+  color-scheme: light;
 }
 
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme='light']) {
-    --bg: #16161a;
-    --surface: #1e1e23;
-    --surface-2: #26262d;
-    --border: #34343d;
-    --text: #ececf1;
-    --muted: #9a9aa8;
-    --accent: #6f9dff;
-    --ok: #4cc47f;
-    --warn: #e0a33c;
-    --bad: #f0645c;
-    --live: #f0645c;
+    --bg: #0d0f13;
+    --surface: #16191f;
+    --surface-2: #1e222a;
+    --surface-3: #272c35;
+    --border: #262b34;
+    --border-strong: #39404c;
+
+    --text: #e9ecf1;
+    --text-2: #c2c8d2;
+    --muted: #8d95a3;
+
+    --accent: #7b95ff;
+    --accent-hover: #90a6ff;
+    --accent-contrast: #0d0f13;
+
+    --ok: #34c98d;
+    --warn: #e5a44c;
+    --bad: #ff7070;
+    --live: #ff6060;
+
+
+    /* Tints need more weight on a dark ground to read as a tint at all. */
+    --accent-soft: color-mix(in srgb, var(--accent) 17%, transparent);
+    --ok-soft: color-mix(in srgb, var(--ok) 17%, transparent);
+    --warn-soft: color-mix(in srgb, var(--warn) 19%, transparent);
+    --bad-soft: color-mix(in srgb, var(--bad) 17%, transparent);
+
+    --shadow-sm: 0 1px 2px rgb(0 0 0 / 32%);
+    --shadow: 0 2px 6px rgb(0 0 0 / 34%), 0 12px 28px -10px rgb(0 0 0 / 50%);
+
+    color-scheme: dark;
   }
 }
 
+/* Same values as the media-query block above. Plain CSS has no way to share
+   them, so the two must be edited together. */
 :root[data-theme='dark'] {
-  --bg: #16161a;
-  --surface: #1e1e23;
-  --surface-2: #26262d;
-  --border: #34343d;
-  --text: #ececf1;
-  --muted: #9a9aa8;
-  --accent: #6f9dff;
-  --ok: #4cc47f;
-  --warn: #e0a33c;
-  --bad: #f0645c;
-  --live: #f0645c;
+  --bg: #0d0f13;
+  --surface: #16191f;
+  --surface-2: #1e222a;
+  --surface-3: #272c35;
+  --border: #262b34;
+  --border-strong: #39404c;
+
+  --text: #e9ecf1;
+  --text-2: #c2c8d2;
+  --muted: #8d95a3;
+
+  --accent: #7b95ff;
+  --accent-hover: #90a6ff;
+  --accent-contrast: #0d0f13;
+
+  --ok: #34c98d;
+  --warn: #e5a44c;
+  --bad: #ff7070;
+  --live: #ff6060;
+
+  --accent-soft: color-mix(in srgb, var(--accent) 17%, transparent);
+  --ok-soft: color-mix(in srgb, var(--ok) 17%, transparent);
+  --warn-soft: color-mix(in srgb, var(--warn) 19%, transparent);
+  --bad-soft: color-mix(in srgb, var(--bad) 17%, transparent);
+
+  --shadow-sm: 0 1px 2px rgb(0 0 0 / 32%);
+  --shadow: 0 2px 6px rgb(0 0 0 / 34%), 0 12px 28px -10px rgb(0 0 0 / 50%);
+
+  color-scheme: dark;
 }
 
 * {
@@ -52,12 +123,24 @@ body {
   margin: 0;
   background: var(--bg);
   color: var(--text);
-  font: 14px/1.5 system-ui, -apple-system, 'Segoe UI', sans-serif;
+  font-family: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  font-size: 14.5px;
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
 }
 
 a {
   color: var(--accent);
 }
+
+/* Times, durations and counts line up in columns rather than jittering. */
+time,
+td,
+.tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+/* layout ------------------------------------------------------------------ */
 
 .app {
   display: flex;
@@ -65,80 +148,163 @@ a {
 }
 
 .sidebar {
-  width: 210px;
-  flex: 0 0 210px;
+  width: var(--sidebar-w);
+  flex: 0 0 var(--sidebar-w);
   border-right: 1px solid var(--border);
   background: var(--surface);
-  padding: 16px 12px;
+}
+
+/* The <nav> stretches so the panel is painted the whole way down a long
+   page; this inner column is what actually sticks to the viewport. */
+.sidebar-inner {
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  padding: 14px 12px 12px;
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 2px;
 }
 
 .brand {
-  font-weight: 650;
-  padding: 4px 8px 14px;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  font-weight: 600;
+  font-size: 14.5px;
   letter-spacing: -0.01em;
+  padding: 6px 8px 16px;
+}
+
+.brand-mark {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  flex: none;
+  border-radius: 8px;
+  background: var(--accent);
+  color: var(--accent-contrast);
 }
 
 .nav-link {
-  display: block;
-  padding: 7px 10px;
-  border-radius: 6px;
-  color: var(--text);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 9px;
+  border-radius: var(--radius-sm);
+  color: var(--text-2);
   text-decoration: none;
+  transition: background-color 0.12s ease, color 0.12s ease;
+}
+
+.nav-link svg {
+  flex: none;
+  opacity: 0.8;
 }
 
 .nav-link:hover {
   background: var(--surface-2);
+  color: var(--text);
 }
 
+/* Tinted rather than a solid block: the sidebar stays quiet, and the state
+   still reads at a glance. */
 .nav-link[aria-current='page'] {
-  background: var(--accent);
-  color: #fff;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-weight: 550;
+}
+
+.nav-link[aria-current='page'] svg {
+  opacity: 1;
+}
+
+.sidebar-foot {
+  margin-top: auto;
+  padding-top: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  border-top: 1px solid var(--border);
+}
+
+/* A status pill is as wide as its text, not as wide as the sidebar. */
+.sidebar-foot .pill {
+  align-self: flex-start;
 }
 
 .content {
   flex: 1;
   min-width: 0;
-  padding: 20px 24px 48px;
+  padding: 26px 30px 64px;
+  max-width: 1280px;
 }
 
 .page-head {
   display: flex;
-  align-items: baseline;
+  align-items: flex-start;
   justify-content: space-between;
   gap: 16px;
   flex-wrap: wrap;
-  margin-bottom: 16px;
+  margin-bottom: 18px;
 }
 
+/* type -------------------------------------------------------------------- */
+
 h1 {
-  font-size: 20px;
+  font-size: 21px;
+  font-weight: 600;
   margin: 0;
-  letter-spacing: -0.01em;
+  letter-spacing: -0.02em;
 }
 
 h2 {
   font-size: 15px;
-  margin: 0 0 8px;
+  font-weight: 600;
+  margin: 0 0 10px;
+  letter-spacing: -0.01em;
+}
+
+h3 {
+  font-size: 11.5px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  margin: 10px 0 0;
 }
 
 .muted {
   color: var(--muted);
 }
 
+code,
+.step-kind {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12.5px;
+}
+
+code {
+  background: var(--surface-2);
+  border-radius: var(--radius-xs);
+  padding: 1.5px 5px;
+}
+
+/* surfaces ---------------------------------------------------------------- */
+
 .card {
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  padding: 14px 16px;
+  padding: 16px 18px;
+  box-shadow: var(--shadow-sm);
 }
 
 .stack {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 14px;
 }
 
 .row {
@@ -148,63 +314,227 @@ h2 {
   flex-wrap: wrap;
 }
 
+/* controls ---------------------------------------------------------------- */
+
 button {
   font: inherit;
-  padding: 5px 11px;
-  border-radius: 6px;
-  border: 1px solid var(--border);
+  font-weight: 500;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 32px;
+  padding: 5px 12px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-strong);
   background: var(--surface);
   color: var(--text);
   cursor: pointer;
+  white-space: nowrap;
+  transition: background-color 0.12s ease, border-color 0.12s ease, color 0.12s ease;
 }
 
 button:hover:not(:disabled) {
   background: var(--surface-2);
 }
 
+button:active:not(:disabled) {
+  background: var(--surface-3);
+}
+
 button:disabled {
-  opacity: 0.5;
+  opacity: 0.45;
   cursor: default;
 }
 
 button.primary {
   background: var(--accent);
   border-color: transparent;
-  color: #fff;
+  color: var(--accent-contrast);
+  box-shadow: var(--shadow-sm);
 }
 
+button.primary:hover:not(:disabled),
+button.primary:active:not(:disabled) {
+  background: var(--accent-hover);
+}
+
+/*
+ * Destructive actions sit on every card, so they are quiet until they mean
+ * something: tinted at rest, solid only once ConfirmButton is armed and the
+ * next click really does delete.
+ */
 button.danger {
+  background: transparent;
+  border-color: var(--border-strong);
+  color: var(--bad);
+}
+
+button.danger:hover:not(:disabled) {
+  background: var(--bad-soft);
+  border-color: var(--bad);
+}
+
+button.danger.armed,
+button.danger.solid {
   background: var(--bad);
   border-color: transparent;
   color: #fff;
 }
 
+button.danger.armed:hover:not(:disabled),
+button.danger.solid:hover:not(:disabled) {
+  background: var(--bad);
+  filter: brightness(1.08);
+}
+
 .toggle {
   display: inline-flex;
+  gap: 2px;
+  padding: 2px;
   border: 1px solid var(--border);
-  border-radius: 6px;
-  overflow: hidden;
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
 }
 
 .toggle button {
   border: 0;
-  border-radius: 0;
+  background: transparent;
+  min-height: 26px;
+  padding: 2px 11px;
+  border-radius: var(--radius-xs);
+  color: var(--muted);
+  box-shadow: none;
+}
+
+.toggle button:hover:not(:disabled) {
+  background: transparent;
+  color: var(--text);
 }
 
 .toggle button[aria-pressed='true'] {
-  background: var(--accent);
-  color: #fff;
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: var(--shadow-sm);
 }
 
-/* status pills ---------------------------------------------------------- */
+/* The theme control is the same segmented control, icon-only. */
+.theme-toggle {
+  width: 100%;
+}
+
+.theme-toggle button {
+  flex: 1;
+  padding: 2px 0;
+}
+
+/* forms ------------------------------------------------------------------- */
+
+/*
+ * Selected by exclusion, not by listing types. `<input>` with no `type`
+ * attribute is a text field but does not match `input[type='text']`, so an
+ * enumerated list silently leaves those fields with the browser's default
+ * chrome — which in dark mode is a grey bar that ignores the theme.
+ */
+input:not([type='checkbox']):not([type='radio']):not([type='range']):not([type='file']),
+textarea,
+select {
+  font: inherit;
+  padding: 6px 10px;
+  min-height: 34px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-strong);
+  background: var(--surface);
+  color: var(--text);
+  width: 100%;
+  max-width: 100%;
+  transition: border-color 0.12s ease, box-shadow 0.12s ease;
+}
+
+input:not([type='checkbox']):not([type='radio']):hover:not(:disabled),
+textarea:hover,
+select:hover {
+  border-color: var(--muted);
+}
+
+input:not([type='checkbox']):not([type='radio']):focus,
+textarea:focus,
+select:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+/* Chromium paints autofilled fields with its own background, which ignores
+   the theme entirely and shows up as a grey bar in dark mode. */
+input:-webkit-autofill,
+input:-webkit-autofill:hover,
+input:-webkit-autofill:focus {
+  -webkit-text-fill-color: var(--text);
+  -webkit-box-shadow: 0 0 0 40px var(--surface) inset;
+  caret-color: var(--text);
+}
+
+input::placeholder,
+textarea::placeholder {
+  color: var(--muted);
+  opacity: 0.75;
+}
+
+textarea {
+  resize: vertical;
+  min-height: 72px;
+}
+
+select {
+  appearance: none;
+  padding-right: 30px;
+  /* A caret drawn in currentColor, so it follows the theme. */
+  background-image: linear-gradient(45deg, transparent 50%, currentColor 50%),
+    linear-gradient(135deg, currentColor 50%, transparent 50%);
+  background-position: calc(100% - 15px) 50%, calc(100% - 10px) 50%;
+  background-size: 5px 5px, 5px 5px;
+  background-repeat: no-repeat;
+}
+
+input[type='checkbox'] {
+  justify-self: start;
+  width: 16px;
+  height: 16px;
+  accent-color: var(--accent);
+}
+
+.field {
+  display: grid;
+  gap: 5px;
+}
+
+.field-label {
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--text-2);
+}
+
+.field-hint {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* status pills ------------------------------------------------------------ */
 
 .pill {
   display: inline-flex;
   align-items: center;
   gap: 5px;
   font-size: 12px;
-  padding: 2px 8px;
-  border-radius: 99px;
+  font-weight: 500;
+  padding: 2px 9px;
+  border-radius: 999px;
   background: var(--surface-2);
   color: var(--muted);
   white-space: nowrap;
@@ -216,16 +546,20 @@ button.danger {
   height: 6px;
   border-radius: 50%;
   background: currentColor;
+  flex: none;
 }
 
 .pill.ok {
   color: var(--ok);
+  background: var(--ok-soft);
 }
 .pill.warn {
   color: var(--warn);
+  background: var(--warn-soft);
 }
 .pill.bad {
   color: var(--bad);
+  background: var(--bad-soft);
 }
 .pill.live {
   color: #fff;
@@ -242,13 +576,7 @@ button.danger {
   }
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .pill.live::before {
-    animation: none;
-  }
-}
-
-/* calendar -------------------------------------------------------------- */
+/* calendar ---------------------------------------------------------------- */
 
 .calendar {
   display: grid;
@@ -258,20 +586,24 @@ button.danger {
   overflow: hidden;
   background: var(--border);
   gap: 1px;
+  box-shadow: var(--shadow-sm);
 }
 
 .calendar .dow {
   background: var(--surface-2);
-  padding: 6px 8px;
-  font-size: 12px;
+  padding: 7px 8px;
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
   color: var(--muted);
   text-align: center;
 }
 
 .calendar .day {
   background: var(--surface);
-  min-height: 92px;
-  padding: 6px;
+  min-height: 104px;
+  padding: 7px;
   display: flex;
   flex-direction: column;
   gap: 4px;
@@ -281,33 +613,68 @@ button.danger {
   background: var(--surface-2);
 }
 
-.calendar .day.today .daynum {
-  background: var(--accent);
-  color: #fff;
-  border-radius: 99px;
-  padding: 0 6px;
+.calendar .day.outside .daynum {
+  opacity: 0.5;
 }
 
 .daynum {
   font-size: 12px;
+  font-weight: 500;
   color: var(--muted);
   align-self: flex-start;
+  min-width: 20px;
+  height: 20px;
+  display: grid;
+  place-items: center;
+  border-radius: 999px;
+  font-variant-numeric: tabular-nums;
 }
 
+.calendar .day.today .daynum {
+  background: var(--accent);
+  color: var(--accent-contrast);
+  font-weight: 600;
+}
+
+/* An event chip: a coloured spine and the time, which is what you scan for. */
 .event {
-  display: block;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0;
   width: 100%;
   text-align: left;
   font-size: 12px;
-  padding: 3px 6px;
-  border-radius: 5px;
+  font-weight: 500;
+  min-height: 0;
+  padding: 4px 7px;
+  border-radius: var(--radius-xs);
   border: 1px solid var(--border);
+  border-left: 3px solid var(--muted);
   background: var(--surface-2);
-  color: var(--text);
+  color: var(--text-2);
   cursor: pointer;
+  overflow: hidden;
+}
+
+.event-time {
+  font-variant-numeric: tabular-nums;
+  font-size: 11.5px;
+  line-height: 1.35;
+}
+
+.event-name {
+  font-weight: 400;
+  font-size: 11.5px;
+  line-height: 1.35;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  opacity: 0.85;
+}
+
+.event:hover:not(:disabled) {
+  background: var(--surface-3);
 }
 
 .event.live {
@@ -317,8 +684,16 @@ button.danger {
 }
 
 .event.failed {
-  border-color: var(--bad);
+  border-left-color: var(--bad);
   color: var(--bad);
+}
+
+.event.completed {
+  border-left-color: var(--ok);
+}
+
+.event.pending {
+  border-left-color: var(--accent);
 }
 
 .event.skipped {
@@ -326,7 +701,7 @@ button.danger {
   text-decoration: line-through;
 }
 
-/* tables ---------------------------------------------------------------- */
+/* tables ------------------------------------------------------------------ */
 
 .table-wrap {
   overflow-x: auto;
@@ -335,34 +710,40 @@ button.danger {
 table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 13px;
+  font-size: 13.5px;
 }
 
 th,
 td {
   text-align: left;
-  padding: 8px 10px;
+  padding: 9px 10px;
   border-bottom: 1px solid var(--border);
   vertical-align: top;
 }
 
 th {
   color: var(--muted);
-  font-weight: 500;
-  font-size: 12px;
+  font-weight: 600;
+  font-size: 11.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+tbody tr:hover td {
+  background: var(--surface-2);
 }
 
 tr:last-child td {
   border-bottom: 0;
 }
 
-/* run timeline ---------------------------------------------------------- */
+/* run timeline ------------------------------------------------------------ */
 
 .step {
   display: grid;
   grid-template-columns: 22px 1fr auto;
-  gap: 10px;
-  padding: 9px 0;
+  gap: 12px;
+  padding: 11px 0;
   border-bottom: 1px solid var(--border);
 }
 
@@ -371,11 +752,11 @@ tr:last-child td {
 }
 
 .step .marker {
-  width: 18px;
-  height: 18px;
+  width: 16px;
+  height: 16px;
   border-radius: 50%;
-  border: 2px solid var(--border);
-  margin-top: 1px;
+  border: 2px solid var(--border-strong);
+  margin-top: 3px;
 }
 
 .step.done .marker {
@@ -402,47 +783,136 @@ tr:last-child td {
   }
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .step.running .marker {
-    animation: none;
-  }
-}
-
-.step-kind {
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 12.5px;
-}
-
 pre {
   background: var(--surface-2);
-  border-radius: 6px;
-  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 9px 11px;
   overflow-x: auto;
   font-size: 12px;
-  margin: 6px 0 0;
+  margin: 8px 0 0;
 }
 
+/* banners and empty states ------------------------------------------------ */
+
 .banner {
-  border-radius: var(--radius);
+  border-radius: var(--radius-sm);
   padding: 10px 14px;
-  border: 1px solid;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  font-size: 13.5px;
 }
 
 .banner.error {
-  border-color: var(--bad);
+  border-color: color-mix(in srgb, var(--bad) 45%, transparent);
   color: var(--bad);
-  background: color-mix(in srgb, var(--bad) 8%, transparent);
+  background: var(--bad-soft);
 }
 
 .banner.info {
-  border-color: var(--border);
-  background: var(--surface);
+  border-color: color-mix(in srgb, var(--accent) 35%, transparent);
+  background: var(--accent-soft);
 }
 
 .empty {
-  padding: 40px 16px;
+  padding: 44px 20px;
   text-align: center;
   color: var(--muted);
+  font-size: 13.5px;
+}
+
+/* lists ------------------------------------------------------------------- */
+
+ul.plain,
+ul.discovered,
+ol.steps {
+  margin: 8px 0;
+  padding-left: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+ul.plain > li,
+ul.discovered > li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+}
+
+ol.steps {
+  list-style: decimal;
+  padding-left: 20px;
+  color: var(--muted);
+  gap: 5px;
+  font-size: 13.5px;
+}
+
+/* pipeline editor --------------------------------------------------------- */
+
+.pipeline-row {
+  display: flex;
+  gap: 14px;
+  align-items: end;
+  flex-wrap: wrap;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+}
+
+.pipeline-row .field {
+  min-width: 170px;
+  flex: 1;
+}
+
+/* the event form, with its live preview alongside ------------------------- */
+
+.split {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 340px);
+  gap: 24px;
+  align-items: start;
+}
+
+.preview {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 14px 16px;
+  background: var(--surface-2);
+  position: sticky;
+  top: 26px;
+}
+
+ol.preview-list {
+  margin: 0;
+  padding-left: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 11px;
+  font-size: 13px;
+}
+
+ol.preview-list::marker,
+ol.preview-list li::marker {
+  color: var(--muted);
+}
+
+/* responsive -------------------------------------------------------------- */
+
+@media (max-width: 980px) {
+  .split {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .preview {
+    position: static;
+  }
 }
 
 @media (max-width: 760px) {
@@ -453,161 +923,40 @@ pre {
     width: auto;
     flex: none;
     flex-direction: row;
+    align-items: center;
     overflow-x: auto;
+    height: auto;
     border-right: 0;
     border-bottom: 1px solid var(--border);
+    padding: 8px 10px;
   }
-  .brand {
+  .brand,
+  .nav-link span {
     display: none;
+  }
+  .sidebar-foot {
+    margin-top: 0;
+    margin-left: auto;
+    padding-top: 0;
+    border-top: 0;
+    flex-direction: row;
+    align-items: center;
+  }
+  .theme-toggle {
+    width: auto;
   }
   .content {
     padding: 16px;
   }
   .calendar .day {
-    min-height: 62px;
+    min-height: 64px;
   }
 }
 
-/* forms ----------------------------------------------------------------- */
-
-input[type='text'],
-input[type='password'],
-input[type='number'],
-input[type='date'],
-input[type='time'],
-textarea,
-select {
-  font: inherit;
-  padding: 6px 9px;
-  border-radius: 6px;
-  border: 1px solid var(--border);
-  background: var(--surface);
-  color: var(--text);
-  width: 100%;
-  max-width: 100%;
-}
-
-input[type='checkbox'] {
-  justify-self: start;
-  width: 16px;
-  height: 16px;
-}
-
-input:focus-visible,
-select:focus-visible,
-button:focus-visible,
-a:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 1px;
-}
-
-.field {
-  display: grid;
-  gap: 4px;
-}
-
-.field-label {
-  font-size: 13px;
-}
-
-.field-hint {
-  font-size: 12px;
-  color: var(--muted);
-}
-
-textarea {
-  resize: vertical;
-}
-
-h3 {
-  font-size: 13px;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  color: var(--muted);
-  margin: 8px 0 0;
-}
-
-code {
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 12px;
-  background: var(--surface-2);
-  border-radius: 4px;
-  padding: 1px 4px;
-}
-
-ul.plain,
-ol.steps {
-  margin: 6px 0;
-  padding-left: 0;
-  list-style: none;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-ol.steps {
-  list-style: decimal;
-  padding-left: 20px;
-  color: var(--muted);
-}
-
-ul.discovered {
-  margin: 8px 0 0;
-  padding-left: 0;
-  list-style: none;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-/* One output of a pipeline: device, node, and where its key comes from. */
-.pipeline-row {
-  display: flex;
-  gap: 12px;
-  align-items: end;
-  flex-wrap: wrap;
-  padding: 10px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  background: var(--surface-2);
-}
-
-.pipeline-row .field {
-  min-width: 170px;
-  flex: 1;
-}
-
-/* The event form, with its live preview alongside. */
-.split {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 340px);
-  gap: 20px;
-  align-items: start;
-}
-
-.preview {
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 12px 14px;
-  background: var(--surface-2);
-  position: sticky;
-  top: 20px;
-}
-
-ol.preview-list {
-  margin: 0;
-  padding-left: 18px;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  font-size: 13px;
-}
-
-@media (max-width: 980px) {
-  .split {
-    grid-template-columns: minmax(0, 1fr);
-  }
-  .preview {
-    position: static;
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
   }
 }

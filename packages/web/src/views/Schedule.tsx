@@ -124,7 +124,10 @@ function CalendarGrid({
                 onClick={() => onSelect(occurrence)}
                 title={`${occurrence.seriesLabel} — ${dateTimeIn(occurrence.scheduledStart, occurrence.timezone)} ${shortZone(occurrence.scheduledStart, occurrence.timezone)}`}
               >
-                {timeIn(occurrence.scheduledStart, occurrence.timezone)} {occurrence.seriesLabel}
+                {/* Two lines: at a glance you want the time, and the name
+                    would otherwise be cut off in a narrow cell. */}
+                <span className="event-time">{timeIn(occurrence.scheduledStart, occurrence.timezone)}</span>
+                <span className="event-name">{occurrence.seriesLabel}</span>
               </button>
             ))}
           </div>

@@ -200,7 +200,8 @@ export function ConfirmButton({
 
   return (
     <button
-      className="danger"
+      // Quiet until armed: the next click really does delete.
+      className={armed ? 'danger armed' : 'danger'}
       disabled={disabled}
       onClick={() => {
         if (armed) onConfirm()

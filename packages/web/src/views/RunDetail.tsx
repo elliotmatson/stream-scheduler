@@ -49,7 +49,7 @@ export function RunDetail({ runId, navigate }: { runId: string; navigate: (path:
           <button onClick={reload}>Refresh</button>
           {/* The scheduler must never be the only way to stop a stream. */}
           {stoppable ? (
-            <button className="danger" disabled={busy} onClick={() => void cancel()}>
+            <button className="danger solid" disabled={busy} onClick={() => void cancel()}>
               Stop now
             </button>
           ) : null}
