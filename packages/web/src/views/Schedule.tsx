@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import type { ReactNode } from 'react'
-import { api, useResource, type Occurrence } from '../api.ts'
+import { api, useLiveRefresh, useResource, type Occurrence } from '../api.ts'
 import { Card, Empty, ErrorBanner, StatusPill, toneFor } from '../components.tsx'
 import {
   dateTimeIn,
@@ -37,6 +37,9 @@ export function Schedule({ navigate }: { navigate: (path: string) => void }): Re
           to: Date.UTC(anchor.getFullYear(), anchor.getMonth() + 2, 1),
         }
   const { data, error, reload } = useResource(() => api.occurrences(range.from, range.to), [range.from, range.to])
+  // A run starting or finishing changes what the chips say, and somebody
+  // watching this screen on a Sunday should not have to press anything.
+  useLiveRefresh(reload)
 
   const shift = (by: number): void =>
     setAnchor((current) =>

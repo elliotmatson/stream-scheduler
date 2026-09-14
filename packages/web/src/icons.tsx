@@ -27,6 +27,16 @@ function Glyph({ children }: { children: ReactNode }): ReactNode {
   )
 }
 
+/** A gauge: what is happening right now, at a glance. */
+export function IconNow(): ReactNode {
+  return (
+    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.8">
+      <path d="M4 18a8 8 0 1 1 16 0" strokeLinecap="round" />
+      <path d="M12 18 15.5 11" strokeLinecap="round" />
+    </svg>
+  )
+}
+
 export function IconSchedule(): ReactNode {
   return (
     <Glyph>

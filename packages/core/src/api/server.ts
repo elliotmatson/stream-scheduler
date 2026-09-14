@@ -24,6 +24,7 @@ import { sanitizeFilename } from '../template/index.js'
 import { outputsForSeries, requiredAction, toOutput, type EventOutput, type OutputKind } from '../events/outputs.js'
 import { describeConflict, overlapsForSeries } from '../events/overlap.js'
 import { assertUnreferenced, ConflictError, NotFoundError } from './errors.js'
+import { buildDashboard } from './dashboard.js'
 import { registerNotifyRoutes } from './notify-routes.js'
 import { registerOAuthRoutes } from './oauth-routes.js'
 import { originOf } from './origin.js'
@@ -925,6 +926,15 @@ function registerRoutes(fastify: FastifyInstance, app: Application): void {
     await app.engine.advance(runId)
     return { runId, state: app.store.getRun(runId).state }
   })
+
+  /**
+   * One screen: what is on air, what is next, what needs somebody.
+   *
+   * One endpoint rather than the page stitching four together, so every
+   * number on it comes from the same instant — a dashboard whose halves
+   * disagree is worse than no dashboard.
+   */
+  fastify.get('/api/dashboard', async () => buildDashboard(app))
 
   // -- runs ---------------------------------------------------------------
 

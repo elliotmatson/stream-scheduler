@@ -702,6 +702,20 @@ input[type='checkbox'] {
   font-weight: 600;
 }
 
+/* An attention item: a banner you can press, which goes to the screen that
+   does something about it. */
+.banner-action {
+  display: block;
+  width: 100%;
+  text-align: left;
+  font: inherit;
+  cursor: pointer;
+}
+
+.banner-action:hover {
+  filter: brightness(1.06);
+}
+
 /* The week view: one column per day, laid out by time of day rather than
    by cell, so what is on at the same time reads as being at the same time. */
 .week {

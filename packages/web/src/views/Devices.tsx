@@ -1,7 +1,9 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import type { ReactNode } from 'react'
 import {
   api,
+  useLive,
+  useLiveRefresh,
   useResource,
   type Device,
   type DeviceNode,
@@ -15,6 +17,8 @@ import { duration, relative } from '../format.ts'
 
 export function Devices(): ReactNode {
   const { data, error, reload } = useResource(() => api.devices(), [])
+  // Health and what is in use change without anybody pressing anything.
+  useLiveRefresh(reload)
   const { data: plugins } = useResource(() => api.plugins(), [])
   const [busy, setBusy] = useState<string>()
   const [actionError, setActionError] = useState<string>()
@@ -196,6 +200,16 @@ function NodeControls({ device, node }: { device: Device; node: DeviceNode }): R
   const [busy, setBusy] = useState<string>()
   const [error, setError] = useState<string>()
   const [filename, setFilename] = useState('')
+  const live = useLive()
+
+  // Devices push their state as it changes — a deck notifies on transport
+  // and slot, an ATEM on every change — so an open panel follows the box
+  // without anybody pressing Read state, and without this screen polling
+  // hardware that is busy recording.
+  const pushed = live.nodeStates[`${device.id}/${node.id}`]
+  useEffect(() => {
+    if (open && pushed) setState(pushed)
+  }, [open, pushed])
   const [credentialId, setCredentialId] = useState('')
   const [quality, setQuality] = useState('')
   // Only fetched for a node that can be pointed somewhere, and only once

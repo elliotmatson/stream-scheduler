@@ -237,6 +237,94 @@ describe('series and occurrences', () => {
   })
 })
 
+describe('the status screen', () => {
+  it('answers what is on air, what is next and what needs somebody, in one read', async () => {
+    const { deviceId } = await seedEverything()
+    const [first] = (await get(`/api/occurrences?from=${START - MINUTE}&to=${START + MINUTE}`)).json
+    clock.set(START)
+    await post(`/api/occurrences/${first.id}/start-now`, {})
+
+    const dashboard = (await get('/api/dashboard')).json
+    // Every number on the page comes from one instant, the server's.
+    expect(dashboard.now).toBe(START)
+
+    expect(dashboard.onAir).toHaveLength(1)
+    const [run] = dashboard.onAir
+    expect(run.seriesLabel).toBe('Sunday Service')
+    expect(run.outputs).toEqual([
+      expect.objectContaining({ label: 'Main', kind: 'stream', state: 'live', deviceLabel: 'Sanctuary encoder' }),
+    ])
+    // Read from what the device pushed, not from asking it again.
+    expect(run.outputs[0].telemetry.bitrateBps).toBe(6_000_000)
+
+    expect(dashboard.devices).toEqual([
+      expect.objectContaining({ id: deviceId, health: 'connected', detail: 'streaming at 6000 kbps' }),
+    ])
+    expect(dashboard.attention).toEqual([])
+  })
+
+  it('shows what is coming, and says nothing is on air when nothing is', async () => {
+    await seedEverything()
+    clock.set(START - 2 * 60 * MINUTE)
+
+    const dashboard = (await get('/api/dashboard')).json
+    expect(dashboard.onAir).toEqual([])
+    expect(dashboard.next[0]).toMatchObject({ seriesLabel: 'Sunday Service', outputs: 1, runId: null })
+  })
+
+  it('names a failed output while the rest of the event carries on', async () => {
+    // The whole point of per-output isolation: one stream down is not the
+    // event down, and somebody has to be told which.
+    const { seriesId } = await seedEverything()
+    const deaf = await post('/api/devices', {
+      pluginId: 'mock',
+      label: 'Deaf encoder',
+      config: { kind: 'encoder', fault: 'ignores-writes' },
+    })
+    await post(`/api/devices/${deaf.json.id}/connect`, {})
+    await post(`/api/series/${seriesId}/outputs`, {
+      kind: 'stream',
+      label: 'Overflow',
+      durationMs: 90 * MINUTE,
+      credentialId: (await post('/api/credentials', {
+        label: 'Overflow key',
+        ingestUrl: 'rtmps://b.rtmp.youtube.com/live2',
+        key: 'live_overflow-key',
+      })).json.id,
+      deviceId: deaf.json.id,
+      nodeId: 'stream',
+    })
+
+    const [first] = (await get(`/api/occurrences?from=${START - MINUTE}&to=${START + MINUTE}`)).json
+    clock.set(START)
+    await post(`/api/occurrences/${first.id}/start-now`, {})
+
+    const dashboard = (await get('/api/dashboard')).json
+    const outputs = dashboard.onAir[0].outputs
+    expect(outputs.find((o: { label: string }) => o.label === 'Main').state).toBe('live')
+    expect(outputs.find((o: { label: string }) => o.label === 'Overflow').state).toBe('failed')
+    expect(dashboard.attention[0].message).toMatch(/Overflow/)
+    expect(dashboard.attention[0].href).toBe(`/runs/${dashboard.onAir[0].runId}`)
+  })
+
+  it('warns about a card with less than a service left on it', async () => {
+    const deck = await post('/api/devices', {
+      pluginId: 'mock',
+      label: 'Deck',
+      config: { kind: 'recorder' },
+    })
+    await post(`/api/devices/${deck.json.id}/connect`, {})
+    // Slot 2 is the nearly-full one in the mock; recording onto it is what
+    // makes its headroom worth warning about.
+    await post(`/api/devices/${deck.json.id}/nodes/record/startRecording`, { filename: 'service', slot: 2 })
+
+    const dashboard = (await get('/api/dashboard')).json
+    expect(dashboard.attention).toEqual([
+      expect.objectContaining({ kind: 'media', message: expect.stringContaining('40 minutes left') }),
+    ])
+  })
+})
+
 describe('runs', () => {
   it('starts an occurrence on demand and exposes a step timeline', async () => {
     await seedEverything()

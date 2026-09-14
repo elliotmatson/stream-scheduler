@@ -9,11 +9,13 @@ import {
   IconEvents,
   IconMoon,
   IconRuns,
+  IconNow,
   IconSchedule,
   IconServices,
   IconSun,
   IconSystem,
 } from './icons.tsx'
+import { Dashboard } from './views/Dashboard.tsx'
 import { Schedule } from './views/Schedule.tsx'
 import { Devices } from './views/Devices.tsx'
 import { SeriesList } from './views/SeriesList.tsx'
@@ -42,7 +44,10 @@ function useHashRoute(): [string, (path: string) => void] {
 }
 
 const NAV = [
-  { to: '/', label: 'Schedule', icon: <IconSchedule /> },
+  // What is on air now comes before what is planned: this is the screen a
+  // booth leaves open, and everything else is for setting up.
+  { to: '/', label: 'Now', icon: <IconNow /> },
+  { to: '/schedule', label: 'Schedule', icon: <IconSchedule /> },
   { to: '/events', label: 'Events', icon: <IconEvents /> },
   { to: '/devices', label: 'Devices', icon: <IconDevices /> },
   { to: '/services', label: 'Services', icon: <IconServices /> },
@@ -128,12 +133,13 @@ function ThemeToggle({
 function Route({ path, navigate }: { path: string; navigate: (path: string) => void }): ReactNode {
   const run = /^\/runs\/(.+)$/.exec(path)
   if (run) return <RunDetail runId={run[1]!} navigate={navigate} />
+  if (path === '/schedule') return <Schedule navigate={navigate} />
   if (path === '/devices') return <Devices />
   if (path === '/services') return <Services />
   if (path === '/events') return <SeriesList />
   if (path === '/runs') return <Runs navigate={navigate} />
   if (path === '/alerts') return <Alerts />
-  return <Schedule navigate={navigate} />
+  return <Dashboard navigate={navigate} />
 }
 
 function NavLink({

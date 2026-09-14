@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import type { ReactNode } from 'react'
-import { api, useResource, type RunStep } from '../api.ts'
+import { api, useLiveRefresh, useResource, type RunStep } from '../api.ts'
 import { Card, CopyButton, ErrorBanner, StatusPill } from '../components.tsx'
 import { relative } from '../format.ts'
 
@@ -16,6 +16,12 @@ export function RunDetail({ runId, navigate }: { runId: string; navigate: (path:
   const { data: run, error, reload } = useResource(() => api.run(runId), [runId])
   const [busy, setBusy] = useState(false)
   const [actionError, setActionError] = useState<string>()
+
+  // Steps land one at a time while a run is going, and this is the screen
+  // somebody watches when they are worried. A finished run never changes
+  // again, so it stops asking.
+  const finished = run !== undefined && ['completed', 'failed', 'cancelled'].includes(run.state)
+  useLiveRefresh(reload, !finished)
 
   const cancel = async (): Promise<void> => {
     setBusy(true)
@@ -132,7 +138,8 @@ function Step({ step }: { step: RunStep }): ReactNode {
 }
 
 export function Runs({ navigate }: { navigate: (path: string) => void }): ReactNode {
-  const { data, error } = useResource(() => api.runs(), [])
+  const { data, error, reload } = useResource(() => api.runs(), [])
+  useLiveRefresh(reload)
 
   return (
     <>

@@ -398,6 +398,7 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(body),
     }),
+  dashboard: () => request<Dashboard>('/api/dashboard'),
   runs: () => request<Run[]>('/api/runs'),
   run: (id: string) => request<Run>(`/api/runs/${id}`),
   cancelRun: (id: string, reason: string) =>
@@ -534,9 +535,61 @@ export function useResource<T>(load: () => Promise<T>, deps: unknown[] = []): {
   return { data, error, loading, reload: useCallback(() => setNonce((n) => n + 1), []) }
 }
 
+export interface DashboardOutput {
+  id: string
+  label: string
+  kind: 'stream' | 'recording'
+  state: 'waiting' | 'live' | 'done' | 'failed'
+  startsAt: number
+  endsAt: number
+  deviceLabel: string | null
+  watchUrl?: string
+  telemetry?: { at: number; bitrateBps?: number; remainingMs?: number; inputPresent?: boolean }
+}
+
+export interface Dashboard {
+  /** The server's clock: a countdown must not inherit a wrong one from the
+   *  browser. */
+  now: number
+  onAir: {
+    runId: string
+    occurrenceId: string
+    seriesLabel: string
+    state: string
+    windowStart: number
+    windowEnd: number
+    timezone: string
+    outputs: DashboardOutput[]
+  }[]
+  next: {
+    occurrenceId: string
+    seriesLabel: string
+    timezone: string
+    scheduledStart: number
+    scheduledEnd: number
+    status: string
+    runId: string | null
+    runState: string | null
+    outputs: number
+  }[]
+  devices: { id: string; label: string; health: string; lastError: string | null; detail: string | null }[]
+  attention: { kind: string; message: string; href: string }[]
+}
+
 export interface LiveState {
   runs: { id: string; state: string }[]
   devices: { id: string; health: string }[]
+  /**
+   * Counts the server's ticks.
+   *
+   * A number rather than the arrays above, because those are rebuilt on
+   * every message and a screen that depended on their identity would
+   * re-render whether or not anything changed.
+   */
+  tick: number
+  /** The last state each node pushed, keyed `deviceId/nodeId`. Devices send
+   *  these as they change, so a panel can follow one without polling it. */
+  nodeStates: Record<string, NodeState>
   connected: boolean
 }
 
@@ -547,41 +600,83 @@ export interface LiveState {
  * loads from the API, so a dropped connection degrades to stale-but-correct
  * rather than blank.
  */
+/**
+ * One socket for the whole app, shared by every screen that wants it.
+ *
+ * Each `useLive` used to open its own, so a page that both read the tick
+ * and refreshed on it held two connections and did its work twice. The
+ * socket is a single subscription now: components come and go, and the
+ * last one to leave closes it.
+ */
+let socket: WebSocket | undefined
+let retry: ReturnType<typeof setTimeout> | undefined
+let shared: LiveState = { runs: [], devices: [], tick: 0, nodeStates: {}, connected: false }
+const subscribers = new Set<(state: LiveState) => void>()
+
+function publish(next: (current: LiveState) => LiveState): void {
+  shared = next(shared)
+  for (const subscriber of subscribers) subscriber(shared)
+}
+
+function openSocket(): void {
+  const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws'
+  socket = new WebSocket(`${protocol}://${window.location.host}/ws`)
+  socket.onopen = () => publish((s) => ({ ...s, connected: true }))
+  socket.onclose = () => {
+    publish((s) => ({ ...s, connected: false }))
+    // Only while somebody is still listening: a closed tab must not keep
+    // reconnecting in the background.
+    if (subscribers.size > 0) retry = setTimeout(openSocket, 2000)
+  }
+  socket.onmessage = (event) => {
+    const payload = JSON.parse(String(event.data)) as Record<string, unknown>
+    if (payload.channel === 'runs') {
+      publish((s) => ({
+        ...s,
+        runs: (payload.runs as LiveState['runs']) ?? s.runs,
+        devices: (payload.devices as LiveState['devices']) ?? s.devices,
+        tick: s.tick + 1,
+      }))
+    }
+    if (payload.channel === 'device' && payload.type === 'state') {
+      const key = `${String(payload.deviceId)}/${String(payload.nodeId)}`
+      publish((s) => ({ ...s, nodeStates: { ...s.nodeStates, [key]: payload.state as NodeState } }))
+    }
+  }
+}
+
+function subscribe(listener: (state: LiveState) => void): () => void {
+  subscribers.add(listener)
+  if (subscribers.size === 1) openSocket()
+  return () => {
+    subscribers.delete(listener)
+    if (subscribers.size > 0) return
+    if (retry) clearTimeout(retry)
+    retry = undefined
+    socket?.close()
+    socket = undefined
+  }
+}
+
 export function useLive(): LiveState {
-  const [state, setState] = useState<LiveState>({ runs: [], devices: [], connected: false })
-
-  useEffect(() => {
-    let socket: WebSocket | undefined
-    let retry: ReturnType<typeof setTimeout> | undefined
-    let closed = false
-
-    const connect = (): void => {
-      const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws'
-      socket = new WebSocket(`${protocol}://${window.location.host}/ws`)
-      socket.onopen = () => setState((s) => ({ ...s, connected: true }))
-      socket.onclose = () => {
-        setState((s) => ({ ...s, connected: false }))
-        if (!closed) retry = setTimeout(connect, 2000)
-      }
-      socket.onmessage = (event) => {
-        const payload = JSON.parse(String(event.data)) as Record<string, unknown>
-        if (payload.channel === 'runs') {
-          setState((s) => ({
-            ...s,
-            runs: (payload.runs as LiveState['runs']) ?? s.runs,
-            devices: (payload.devices as LiveState['devices']) ?? s.devices,
-          }))
-        }
-      }
-    }
-
-    connect()
-    return () => {
-      closed = true
-      if (retry) clearTimeout(retry)
-      socket?.close()
-    }
-  }, [])
-
+  const [state, setState] = useState<LiveState>(shared)
+  useEffect(() => subscribe(setState), [])
   return state
+}
+
+/**
+ * Re-reads a screen whenever the server says something happened.
+ *
+ * The socket is the pulse, not the data: every screen still loads from the
+ * API, so a dropped connection leaves it stale-but-correct rather than
+ * blank, and reconnecting catches it up on the next tick.
+ */
+export function useLiveRefresh(reload: () => void, when = true): void {
+  const { tick } = useLive()
+  useEffect(() => {
+    if (when) reload()
+    // Keyed on the tick alone: `reload` is rebuilt by its own hook and
+    // depending on it would fire this on every render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tick, when])
 }
