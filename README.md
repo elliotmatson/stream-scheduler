@@ -81,6 +81,24 @@ On a desktop the Electron build uses the OS keychain instead, so no
 
 ### Docker
 
+A prebuilt image is published to GitHub Container Registry for `linux/amd64`
+and `linux/arm64`:
+
+```bash
+docker run -d --name scheduler \
+  -e SCHEDULER_SECRET="a long random string" \
+  -e SCHEDULER_UI_PASSWORD="something only you know" \
+  -p 8500:8500 -v scheduler-config:/config \
+  ghcr.io/elliotmatson/stream-scheduler:latest
+```
+
+`latest` is the newest tagged release. `main` tracks the tip of the default
+branch, and every build is also tagged by commit sha if you want to pin one.
+Only the amd64 image is started and exercised in CI; arm64 is built but not
+run-tested.
+
+Or build it yourself:
+
 ```bash
 SCHEDULER_SECRET="a long random string" \
 SCHEDULER_UI_PASSWORD="something only you know" \
