@@ -79,6 +79,22 @@ importers:
         specifier: ^5.7.2
         version: 5.9.3
 
+  packages/host:
+    dependencies:
+      '@scheduler/core':
+        specifier: workspace:*
+        version: link:../core
+      '@scheduler/plugin-mock':
+        specifier: workspace:*
+        version: link:../plugin-mock
+      '@scheduler/plugin-sdk':
+        specifier: workspace:*
+        version: link:../plugin-sdk
+    devDependencies:
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
+
   packages/plugin-mock:
     dependencies:
       '@scheduler/plugin-sdk':
