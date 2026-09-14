@@ -91,12 +91,11 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      - name: Container starts and serves the UI
+      - name: Container starts
         run: |
           docker run -d --name scheduler \
             -e SCHEDULER_SECRET=ci-master-secret-value \
-            -e SCHEDULER_UI_PASSWORD=ci-ui-password \
-            -p 8500:8500 stream-scheduler:ci
+            -p 127.0.0.1:8500:8500 stream-scheduler:ci
           for i in $(seq 1 60); do
             if curl -fsS http://127.0.0.1:8500/healthz > /dev/null; then
               echo "healthy"; exit 0
@@ -107,14 +106,18 @@ jobs:
           docker logs scheduler
           exit 1
 
-      - name: Refuses to expose the UI without a password
-        # A regression here would put an unauthenticated page that can start
-        # broadcasts and reveal stream keys on someone's LAN.
+      - name: Serves the UI and the API, not just healthz
+        # The previous version of this job only ever curled /healthz, which
+        # was the one route exempt from the old auth hook. That made a
+        # container whose every other route answered 401 look healthy, and
+        # the UI shipped unreachable for anyone who set a password. Fetch
+        # what a browser actually fetches.
         run: |
-          if docker run --rm -e SCHEDULER_SECRET=ci-master-secret-value stream-scheduler:ci; then
-            echo "expected the container to refuse to start"
-            exit 1
-          fi
+          curl -fsS http://127.0.0.1:8500/ | grep -q '<div id="root">' \
+            || { echo "the UI did not render"; docker logs scheduler; exit 1; }
+          curl -fsS http://127.0.0.1:8500/api/devices > /dev/null \
+            || { echo "the API did not answer"; docker logs scheduler; exit 1; }
+          echo "UI and API both served"
 
       - name: Container logs
         if: always()

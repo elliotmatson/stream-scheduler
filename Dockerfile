@@ -78,7 +78,11 @@ EXPOSE 8500
 
 # SCHEDULER_SECRET is required: without a key source the app refuses to start
 # rather than writing stream keys and OAuth tokens to disk in the clear.
-# SCHEDULER_UI_PASSWORD is required too, because SCHEDULER_HOST is 0.0.0.0 here.
+#
+# SCHEDULER_HOST is 0.0.0.0 because a container has to listen on all of its
+# own interfaces for -p to reach it. That is not the same as being on the
+# LAN: what decides who can reach it is the address you publish to. There is
+# no authentication yet, so publish to 127.0.0.1 unless you mean to share it.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
   CMD curl -fsS http://127.0.0.1:8500/healthz || exit 1
 
