@@ -267,8 +267,16 @@ async function main() {
   const instructions = await api('GET', '/api/oauth/youtube/instructions')
   check(
     'setup instructions warn about the 7-day Testing expiry',
-    instructions.warning.includes('Testing') && instructions.steps.length >= 5,
-    instructions.warning,
+    instructions.warnings.some((warning) => warning.includes('Testing')) && instructions.steps.length >= 5,
+    instructions.warnings.join(' / '),
+  )
+  check(
+    // Bites at connect time: a Brand Account channel is not a member of the
+    // Workspace, so an Internal client refuses it and only the setter-up's
+    // own channel works.
+    'setup instructions warn that an Internal client cannot connect a Brand Account',
+    instructions.warnings.some((warning) => warning.includes('org_internal')),
+    instructions.warnings.join(' / '),
   )
   check(
     'the redirect URI is a loopback address',

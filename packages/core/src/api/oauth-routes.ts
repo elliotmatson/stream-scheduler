@@ -289,25 +289,37 @@ function redirectUriFor(host: string | undefined): string {
   return `http://${host ?? '127.0.0.1:8500'}/oauth/callback`
 }
 
-function instructionsFor(provider: string, redirectUri: string): { steps: string[]; redirectUri: string; warning: string } {
+function instructionsFor(
+  provider: string,
+  redirectUri: string,
+): { steps: string[]; redirectUri: string; warning: string; warnings: string[] } {
   if (provider !== 'youtube') {
-    return { steps: [], redirectUri, warning: '' }
+    return { steps: [], redirectUri, warning: '', warnings: [] }
   }
+  const warnings = [
+    // The single most likely support burden in the whole project, and it is
+    // invisible for a week after setup.
+    'Do not leave the consent screen on "Testing". Google expires refresh tokens after 7 days in that ' +
+      'state, so every scheduled stream will work for a week and then start failing.',
+    // The second one, which bites at connect time rather than a week later.
+    'Set the user type to "External", even for one organisation. A YouTube channel that lives in a Brand ' +
+      'Account is not a member of your Google Workspace, so an "Internal" client refuses it with ' +
+      '"Error 403: org_internal" — your own channel connects, the church\'s brand channel cannot.',
+  ]
   return {
     redirectUri,
     steps: [
       'Open console.cloud.google.com and create a project (or pick an existing one).',
       'Under APIs & Services > Library, enable the "YouTube Data API v3".',
-      'Under APIs & Services > OAuth consent screen, set the publishing status to "In production".',
+      'Under APIs & Services > OAuth consent screen, set the user type to "External".',
+      'On the same screen, set the publishing status to "In production".',
       'Under APIs & Services > Credentials, create an OAuth client ID of type "Web application".',
       `Add exactly this authorized redirect URI: ${redirectUri}`,
       'Copy the client ID and client secret back into this app.',
     ],
-    // The single most likely support burden in the whole project, and it is
-    // invisible for a week after setup.
-    warning:
-      'Do not leave the consent screen on "Testing". Google expires refresh tokens after 7 days in that ' +
-      'state, so every scheduled stream will work for a week and then start failing.',
+    // Kept for older clients; `warnings` is the one to render.
+    warning: warnings[0]!,
+    warnings,
   }
 }
 

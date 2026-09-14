@@ -179,6 +179,7 @@ export interface OAuthInstructions {
   steps: string[]
   redirectUri: string
   warning: string
+  warnings: string[]
 }
 
 export interface OAuthClient {
