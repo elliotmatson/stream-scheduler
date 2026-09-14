@@ -5,13 +5,13 @@ import { Card, ConfigFields, ConfirmButton, Empty, ErrorBanner, Field, StatusPil
 import { relative } from '../format.ts'
 
 /**
- * Where alerts go.
+ * Where the scheduler tells somebody.
  *
- * The screen leads with "send a test", because a notification channel nobody
- * has proved works is worse than none — it reads as coverage while being
+ * The screen leads with "send a test", because a notification nobody has
+ * proved works is worse than none — it reads as coverage while being
  * silence.
  */
-export function Alerts(): ReactNode {
+export function Notifications(): ReactNode {
   const { data, error, reload } = useResource(() => api.notificationChannels(), [])
   const { data: kinds } = useResource(() => api.notificationKinds(), [])
   const [adding, setAdding] = useState(false)
@@ -40,13 +40,14 @@ export function Alerts(): ReactNode {
     <>
       <div className="page-head">
         <div>
-          <h1>Alerts</h1>
+          <h1>Notifications</h1>
           <p className="muted" style={{ margin: '4px 0 0' }}>
-            Where to tell you when a run fails, or when something will stop next Sunday working.
+            Where to be told when a run fails — or, the evening before, when something would stop Sunday
+            working.
           </p>
         </div>
         <button className="primary" onClick={() => setAdding((open) => !open)}>
-          {adding ? 'Cancel' : 'Add a channel'}
+          {adding ? 'Cancel' : 'Add a notification'}
         </button>
       </div>
 
@@ -54,7 +55,7 @@ export function Alerts(): ReactNode {
 
       <div className="stack">
         {adding && kinds ? (
-          <AddChannel
+          <AddNotification
             kinds={kinds}
             onAdded={() => {
               setAdding(false)
@@ -66,8 +67,8 @@ export function Alerts(): ReactNode {
         {channels.length === 0 && !adding ? (
           <Card>
             <Empty>
-              Nothing is set up, so a failed run will be silent. Google Chat takes about a minute: add a webhook to
-              your space and paste the URL.
+              Nothing is set up, so a failed run passes in silence. Google Chat takes about a minute: add a webhook
+              to your space and paste the URL here.
             </Empty>
           </Card>
         ) : null}
@@ -77,14 +78,18 @@ export function Alerts(): ReactNode {
             <div className="page-head" style={{ marginBottom: 8 }}>
               <div>
                 <h2 style={{ marginBottom: 2 }}>{channel.label}</h2>
-                <span className="muted">
-                  {channel.kind} ·{' '}
-                  {channel.events.length === 0 ? 'everything' : channel.events.join(', ')}
+                <span className="muted" title="What it is, and which events it is sent for.">
+                  {kinds?.find((kind) => kind.kind === channel.kind)?.displayName ?? channel.kind} ·{' '}
+                  {channel.events.length === 0 ? 'every event' : channel.events.join(', ')}
                 </span>
               </div>
               <div className="row">
-                <StatusPill status={channel.lastError ? 'failed' : channel.enabled ? 'ok' : 'skipped'} />
-                <button disabled={busy === channel.id} onClick={() => void act(channel.id, () => api.testChannel(channel.id), true)}>
+                <StatusPill status={channel.lastError ? 'failed' : channel.enabled ? 'ok' : 'off'} />
+                <button
+                  disabled={busy === channel.id}
+                  title="Sends a message now, so you can see it arrive."
+                  onClick={() => void act(channel.id, () => api.testChannel(channel.id), true)}
+                >
                   {busy === channel.id ? 'Sending…' : 'Send a test'}
                 </button>
                 <ConfirmButton
@@ -100,14 +105,14 @@ export function Alerts(): ReactNode {
             ) : null}
             {channel.lastError ? <div className="banner error">{channel.lastError}</div> : null}
             <p className="muted" style={{ margin: '8px 0 0' }}>
-              Last delivered {channel.lastSentAt ? relative(channel.lastSentAt) : 'never'}
+              Last delivered {channel.lastSentAt ? relative(channel.lastSentAt) : 'never'}.
             </p>
           </Card>
         ))}
 
         {data && data.pending > 0 ? (
           <div className="banner info">
-            {data.pending} {data.pending === 1 ? 'alert is' : 'alerts are'} waiting to be delivered.
+            {data.pending} {data.pending === 1 ? 'message is' : 'messages are'} waiting to be delivered.
           </div>
         ) : null}
       </div>
@@ -115,7 +120,7 @@ export function Alerts(): ReactNode {
   )
 }
 
-function AddChannel({ kinds, onAdded }: { kinds: ChannelKind[]; onAdded: () => void }): ReactNode {
+function AddNotification({ kinds, onAdded }: { kinds: ChannelKind[]; onAdded: () => void }): ReactNode {
   const [kind, setKind] = useState(kinds[0]?.kind ?? 'google-chat')
   const [label, setLabel] = useState('')
   const [config, setConfig] = useState<Record<string, unknown>>({})
@@ -138,10 +143,10 @@ function AddChannel({ kinds, onAdded }: { kinds: ChannelKind[]; onAdded: () => v
   }
 
   return (
-    <Card title="Add a channel">
+    <Card title="Add a notification">
       <ErrorBanner error={error} />
       <div className="stack" style={{ maxWidth: 560 }}>
-        <Field label="Type">
+        <Field label="Type" hint="How it reaches you.">
           <select
             value={kind}
             onChange={(event) => {
@@ -157,7 +162,7 @@ function AddChannel({ kinds, onAdded }: { kinds: ChannelKind[]; onAdded: () => v
           </select>
         </Field>
 
-        <Field label="Name">
+        <Field label="Name" hint="What you will call it here, e.g. “Tech team chat”.">
           <input
             value={label}
             placeholder={selected?.displayName ?? ''}
@@ -165,8 +170,8 @@ function AddChannel({ kinds, onAdded }: { kinds: ChannelKind[]; onAdded: () => v
           />
         </Field>
 
-        {/* Rendered straight from the channel's declared fields, the same way
-            device settings are, so a new channel needs no UI work. */}
+        {/* Rendered straight from its declared fields, the same way device
+            settings are, so a new kind of notification needs no UI work. */}
         <ConfigFields fields={selected?.configSchema ?? []} values={config} onChange={setConfig} />
 
         <div className="row">

@@ -5,6 +5,13 @@ import { Card, ConfirmButton, Empty, ErrorBanner } from '../components.tsx'
 import { duration, timeIn } from '../format.ts'
 import { EventForm } from './EventForm.tsx'
 
+/** The stored template keys, in the words the form uses for them. */
+const TEMPLATE_LABELS: Record<string, string> = {
+  title: 'Broadcast title',
+  description: 'Description',
+  filename: 'Filename',
+}
+
 export function SeriesList(): ReactNode {
   const { data, error, reload } = useResource(() => api.series(), [])
   const [adding, setAdding] = useState(false)
@@ -27,11 +34,11 @@ export function SeriesList(): ReactNode {
         <div>
           <h1>Events</h1>
           <p className="muted" style={{ margin: '4px 0 0' }}>
-            What runs, when, and under what name.
+            What runs, when it runs, and what it is called.
           </p>
         </div>
         <button className="primary" onClick={() => setAdding((open) => !open)}>
-          {adding ? 'Cancel' : 'New event'}
+          {adding ? 'Cancel' : 'Add an event'}
         </button>
       </div>
       <ErrorBanner error={error ?? actionError} />
@@ -48,7 +55,7 @@ export function SeriesList(): ReactNode {
 
         {(data ?? []).length === 0 && !adding ? (
           <Card>
-            <Empty>No recurring events yet.</Empty>
+            <Empty>No events yet. An event is one service or programme, with the dates it falls on.</Empty>
           </Card>
         ) : null}
 
@@ -92,12 +99,14 @@ function SeriesCard({
       <div className="page-head" style={{ marginBottom: 8 }}>
         <div>
           <h2 style={{ marginBottom: 2 }}>{series.label}</h2>
-          <span className="muted">
-            {series.rrule ?? 'Once'} · {series.timezone} · {duration(series.durationMs)}
+          <span className="muted" title="How often it repeats, the zone its times are read in, and how long its window is.">
+            {series.describes} · {series.timezone} · {duration(series.durationMs)}
           </span>
         </div>
         <div className="row">
-          <span className="muted">prepares {duration(series.prepareLeadMs)} early</span>
+          <span className="muted" title="How far ahead the broadcast is created and the encoders are pointed at it.">
+            prepares {duration(series.prepareLeadMs)} early
+          </span>
           <button onClick={onEdit}>Edit</button>
           <ConfirmButton label="Remove" onConfirm={onRemove} />
         </div>
@@ -108,14 +117,14 @@ function SeriesCard({
           <table>
             <thead>
               <tr>
-                <th>Template</th>
-                <th>Pattern</th>
+                <th>Name</th>
+                <th title="Tokens are filled in against each date when the event runs.">Pattern</th>
               </tr>
             </thead>
             <tbody>
               {Object.entries(series.templates).map(([key, pattern]) => (
                 <tr key={key}>
-                  <td>{key}</td>
+                  <td>{TEMPLATE_LABELS[key] ?? key}</td>
                   <td className="step-kind">{pattern}</td>
                 </tr>
               ))}
@@ -131,14 +140,14 @@ function SeriesCard({
       */}
       {preview && preview.length > 0 ? (
         <div style={{ marginTop: 12 }}>
-          <h2>Next {preview.length} rendered</h2>
+          <h2>The next {preview.length}, as they will be named</h2>
           <ul style={{ margin: 0, paddingLeft: 18 }}>
             {preview.map((item) => (
               <li key={item.occurrenceId} style={item.error ? { color: 'var(--bad)' } : undefined}>
                 {item.error ?? (
                   <>
                     {(item.outputs ?? []).length === 0 ? (
-                      <span className="muted">nothing attached to this event</span>
+                      <span className="muted">nothing streams or records on this one</span>
                     ) : null}
                     {(item.outputs ?? []).map((output) => (
                       <div key={output.outputId}>

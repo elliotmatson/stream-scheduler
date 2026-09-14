@@ -145,7 +145,7 @@ function wallOf(naive: Date): WallTime {
 
 /** A plain-language summary of a rule, for the series list. */
 export function describeSchedule(schedule: SeriesSchedule): string {
-  if (schedule.rrule === null) return 'Once'
+  if (schedule.rrule === null) return 'Does not repeat'
   try {
     return buildRule(schedule).toText()
   } catch {

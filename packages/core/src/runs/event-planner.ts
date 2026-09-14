@@ -148,7 +148,7 @@ export class EventPlanner implements RunPlanner {
       kind: `${output.id}.startStreaming`,
       phase: 'start',
       outputId: output.id,
-      label: `${output.label}: go live`,
+      label: `${output.label}: start streaming`,
       execute: async () => {
         await this.deps.connections.applyAndVerify(device.deviceId, device.nodeId, 'startStreaming', {}, {
           what: 'Streaming',
@@ -167,7 +167,7 @@ export class EventPlanner implements RunPlanner {
       kind: `${output.id}.stopStreaming`,
       phase: 'stop',
       outputId: output.id,
-      label: `${output.label}: stop`,
+      label: `${output.label}: stop streaming`,
       execute: async () => {
         await this.deps.connections.applyAndVerify(device.deviceId, device.nodeId, 'stopStreaming', {}, {
           what: 'Streaming',

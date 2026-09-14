@@ -338,8 +338,8 @@ describe('runs', () => {
     const run = await get(`/api/runs/${started.json.runId}`)
     expect(run.json.steps.map((s: { label: string; state: string }) => `${s.label}:${s.state}`)).toEqual([
       'Main: point the encoder at it:done',
-      'Main: go live:done',
-      'Main: stop:pending',
+      'Main: start streaming:done',
+      'Main: stop streaming:pending',
     ])
     // The timeline is safe to screenshot and attach to a bug report.
     expect(JSON.stringify(run.json)).not.toContain('live_super-secret-key')
@@ -365,8 +365,8 @@ describe('runs', () => {
     // service and then the 11:00 one.
     expect(states).toEqual([
       'Main: point the encoder at it:pending',
-      'Main: go live:pending',
-      'Main: stop:pending',
+      'Main: start streaming:pending',
+      'Main: stop streaming:pending',
     ])
 
     const state = await get(`/api/devices/${deviceId}/nodes/stream/state`)
@@ -441,7 +441,9 @@ describe('runs', () => {
     expect(cancelled.json.state).toBe('cancelled')
 
     const run = await get(`/api/runs/${started.json.runId}`)
-    expect(run.json.steps.find((s: { label: string }) => s.label === 'Main: stop').state).toBe('done')
+    expect(run.json.steps.find((s: { label: string }) => s.label === 'Main: stop streaming').state).toBe(
+      'done',
+    )
   })
 
   it('404s for an unknown run', async () => {

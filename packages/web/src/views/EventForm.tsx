@@ -113,11 +113,11 @@ export function EventForm({
   }
 
   return (
-    <Card title={series ? `Edit ${series.label}` : 'New event'}>
+    <Card title={series ? `Edit ${series.label}` : 'Add an event'}>
       <ErrorBanner error={error} />
       <div className="split">
         <div className="stack">
-          <Field label="Name">
+          <Field label="Name" hint="What you will call it here, e.g. “Sunday Service”.">
             <input
               value={draft.label}
               placeholder="Sunday Service"
@@ -145,7 +145,7 @@ export function EventForm({
             <Field label="Start time">
               <input type="time" value={draft.time} onChange={(event) => set('time', event.target.value)} />
             </Field>
-            <Field label="Window (min)" hint="Doors open to doors shut. The outputs sit inside it.">
+            <Field label="Length (min)" hint="Doors open to doors shut. Streams and recordings sit inside it.">
               <input
                 type="number"
                 min={1}
@@ -189,14 +189,14 @@ export function EventForm({
           ) : null}
 
           {draft.repeat === 'custom' ? (
-            <Field label="RRULE" hint="RFC 5545, without the DTSTART line. e.g. FREQ=WEEKLY;BYDAY=SU,WE">
+            <Field label="Custom rule" hint="An RFC 5545 RRULE, without the DTSTART line. e.g. FREQ=WEEKLY;BYDAY=SU,WE">
               <input value={draft.customRrule} onChange={(event) => set('customRrule', event.target.value)} />
             </Field>
           ) : null}
 
           <Field
-            label="Prepare this many minutes early"
-            hint="When the broadcast is created and the encoders are pointed at it. Not when it goes live."
+            label="Prepare early (min)"
+            hint="How far ahead the broadcast is created and the encoders are pointed at it. Not when it goes on air."
           >
             <input
               type="number"
@@ -208,7 +208,7 @@ export function EventForm({
 
           <h3>Default names</h3>
           <p className="muted" style={{ margin: 0 }}>
-            What every output is called unless it says otherwise. Tokens:{' '}
+            What every stream and recording is called unless it says otherwise. Tokens:{' '}
             <code>{'{{date "MMMM d, yyyy"}}'}</code>, <code>{'{{event.name}}'}</code>, <code>{'{{time}}'}</code>,{' '}
             <code>{'{{occurrence.index}}'}</code>. Dates resolve against the occurrence, in the zone above.
           </p>
@@ -222,7 +222,7 @@ export function EventForm({
           <Field label="Description">
             <textarea rows={3} value={draft.description} onChange={(event) => set('description', event.target.value)} />
           </Field>
-          <Field label="Recording filename">
+          <Field label="Filename" hint="For recordings. The device adds its own extension.">
             <input
               value={draft.filename}
               placeholder={'{{date "yyyy-MM-dd"}} {{event.name}}'}
@@ -247,7 +247,7 @@ export function EventForm({
         </div>
       ) : (
         <p className="muted" style={{ marginBottom: 0 }}>
-          Create the event and its outputs — what it streams and records, and when — appear here.
+          Create the event first. Its outputs — what it streams and records, and when — appear here.
         </p>
       )}
     </Card>
@@ -289,6 +289,7 @@ function PreviewPanel({
   return (
     <aside className="preview">
       <h3 style={{ marginTop: 0 }}>What this does</h3>
+      {/* The rule and the names, as the server would actually resolve them. */}
       {problem ? <div className="banner error">{problem}</div> : null}
       {preview ? (
         <>

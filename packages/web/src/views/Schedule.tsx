@@ -54,7 +54,12 @@ export function Schedule({ navigate }: { navigate: (path: string) => void }): Re
   return (
     <>
       <div className="page-head">
-        <h1>Schedule</h1>
+        <div>
+          <h1>Schedule</h1>
+          <p className="muted" style={{ margin: '4px 0 0' }}>
+            Every date each event falls on, and what became of it.
+          </p>
+        </div>
         <div className="row">
           <div className="toggle">
             <button aria-pressed={view === 'month'} onClick={() => setView('month')}>
@@ -81,6 +86,9 @@ export function Schedule({ navigate }: { navigate: (path: string) => void }): Re
               <button onClick={() => setAnchor(new Date())}>Today</button>
             </div>
           )}
+          <button onClick={reload} title="This screen updates itself; this asks again now.">
+            Refresh
+          </button>
         </div>
       </div>
 
@@ -398,7 +406,7 @@ function ScheduleList({
             <tr>
               <th>When</th>
               <th>Event</th>
-              <th>Length</th>
+              <th title="How long the event's window is. Its streams and recordings sit inside it.">Length</th>
               <th>Status</th>
               <th />
             </tr>
@@ -417,7 +425,11 @@ function ScheduleList({
                 </td>
                 <td>
                   {occurrence.seriesLabel}
-                  {occurrence.detached ? <div className="muted">edited — series changes skip this one</div> : null}
+                  {occurrence.detached ? (
+                    <div className="muted" title="This date was edited on its own, so later changes to the event leave it alone.">
+                      edited on its own
+                    </div>
+                  ) : null}
                 </td>
                 <td>{duration(occurrence.scheduledEnd - occurrence.scheduledStart)}</td>
                 <td>
@@ -426,7 +438,12 @@ function ScheduleList({
                 <td>
                   <div className="row">
                     {occurrence.runId ? (
-                      <button onClick={() => navigate(`/runs/${occurrence.runId}`)}>Timeline</button>
+                      <button
+                        onClick={() => navigate(`/runs/${occurrence.runId}`)}
+                        title="Every step this run has taken, and what the device said back."
+                      >
+                        Timeline
+                      </button>
                     ) : null}
                     {occurrence.status === 'pending' ? (
                       <>
@@ -435,20 +452,33 @@ function ScheduleList({
                             at their own times. */}
                         <button
                           disabled={busy === occurrence.id}
+                          title="Creates the broadcast now, so the link can go out ahead of the day. Nothing goes on air."
                           onClick={() => void act(occurrence.id, () => api.prepareNow(occurrence.id))}
                         >
                           Prepare now
                         </button>
-                        <button disabled={busy === occurrence.id} onClick={() => void act(occurrence.id, () => api.startNow(occurrence.id))}>
+                        <button
+                          disabled={busy === occurrence.id}
+                          title="Runs it now, without waiting for its time."
+                          onClick={() => void act(occurrence.id, () => api.startNow(occurrence.id))}
+                        >
                           Start now
                         </button>
-                        <button disabled={busy === occurrence.id} onClick={() => void act(occurrence.id, () => api.skip(occurrence.id))}>
+                        <button
+                          disabled={busy === occurrence.id}
+                          title="Leaves this date alone. The rest of the event carries on."
+                          onClick={() => void act(occurrence.id, () => api.skip(occurrence.id))}
+                        >
                           Skip
                         </button>
                       </>
                     ) : null}
                     {occurrence.status === 'skipped' ? (
-                      <button disabled={busy === occurrence.id} onClick={() => void act(occurrence.id, () => api.unskip(occurrence.id))}>
+                      <button
+                        disabled={busy === occurrence.id}
+                        title="Puts this date back on."
+                        onClick={() => void act(occurrence.id, () => api.unskip(occurrence.id))}
+                      >
                         Unskip
                       </button>
                     ) : null}

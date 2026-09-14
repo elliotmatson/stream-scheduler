@@ -160,6 +160,6 @@ describe('validateSchedule', () => {
 describe('describeSchedule', () => {
   it('summarises a rule in plain language', () => {
     expect(describeSchedule(sundayService)).toMatch(/week/i)
-    expect(describeSchedule({ ...sundayService, rrule: null })).toBe('Once')
+    expect(describeSchedule({ ...sundayService, rrule: null })).toBe('Does not repeat')
   })
 })

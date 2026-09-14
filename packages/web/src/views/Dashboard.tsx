@@ -37,8 +37,14 @@ export function Dashboard({ navigate }: { navigate: (path: string) => void }): R
           </p>
         </div>
         <div className="row">
-          {!live.connected ? <span className="pill warn">reconnecting</span> : null}
-          <button onClick={reload}>Refresh</button>
+          {!live.connected ? (
+            <span className="pill warn" title="Not following the server, so these figures may be out of date.">
+              reconnecting
+            </span>
+          ) : null}
+          <button onClick={reload} title="This screen updates itself; this asks again now.">
+            Refresh
+          </button>
         </div>
       </div>
 
@@ -46,7 +52,7 @@ export function Dashboard({ navigate }: { navigate: (path: string) => void }): R
 
       <div className="stack">
         {data.attention.length > 0 ? (
-          <Card title="Needs somebody">
+          <Card title="Needs attention">
             <div className="stack" style={{ gap: 6 }}>
               {data.attention.map((item) => (
                 <button
@@ -69,7 +75,9 @@ export function Dashboard({ navigate }: { navigate: (path: string) => void }): R
                 {timeIn(run.windowStart, run.timezone)}–{timeIn(run.windowEnd, run.timezone)}
                 {isForeignZone(run.timezone) ? ` ${shortZone(run.windowStart, run.timezone)}` : ''}
               </span>
-              <button onClick={() => navigate(`/runs/${run.runId}`)}>Timeline</button>
+              <button onClick={() => navigate(`/runs/${run.runId}`)} title="Every step this run has taken, and what the device said back.">
+                Timeline
+              </button>
             </div>
 
             <div className="stack" style={{ gap: 8 }}>
@@ -90,8 +98,7 @@ export function Dashboard({ navigate }: { navigate: (path: string) => void }): R
                   <tr>
                     <th>Event</th>
                     <th>Starts</th>
-                    <th>In</th>
-                    <th>Outputs</th>
+                    <th title="Streams and recordings attached to this event.">Outputs</th>
                     <th />
                   </tr>
                 </thead>
@@ -104,13 +111,17 @@ export function Dashboard({ navigate }: { navigate: (path: string) => void }): R
                         {isForeignZone(entry.timezone)
                           ? ` ${shortZone(entry.scheduledStart, entry.timezone)}`
                           : ''}
+                        {/* Counted from the server's clock, not the browser's.
+                            Under the time rather than beside it, which is how
+                            the schedule reads too. */}
+                        <div>{relative(entry.scheduledStart, data.now)}</div>
                       </td>
-                      {/* Counted from the server's clock, not the browser's. */}
-                      <td className="muted">{relative(entry.scheduledStart, data.now)}</td>
                       <td className="muted">{entry.outputs}</td>
                       <td>
                         {entry.runId ? (
-                          <button onClick={() => navigate(`/runs/${entry.runId}`)}>Timeline</button>
+                          <button onClick={() => navigate(`/runs/${entry.runId}`)} title="Every step this run has taken.">
+                            Timeline
+                          </button>
                         ) : null}
                       </td>
                     </tr>
@@ -123,7 +134,7 @@ export function Dashboard({ navigate }: { navigate: (path: string) => void }): R
 
         <Card title="Devices">
           {data.devices.length === 0 ? (
-            <Empty>No devices are connected.</Empty>
+            <Empty>No devices are set up yet.</Empty>
           ) : (
             <div className="stack" style={{ gap: 6 }}>
               {data.devices.map((device) => (
@@ -167,19 +178,32 @@ function Output({ output, now }: { output: DashboardOutput; now: number }): Reac
       ) : null}
 
       {output.telemetry?.bitrateBps ? (
-        <span className="muted">{Math.round(output.telemetry.bitrateBps / 1000)} kbps</span>
+        <span className="muted" title="What the encoder says it is sending.">
+          {Math.round(output.telemetry.bitrateBps / 1000)} kbps
+        </span>
       ) : null}
       {output.telemetry?.remainingMs !== undefined ? (
-        <span className={output.telemetry.remainingMs < 3_600_000 ? 'bad' : 'muted'}>
+        <span
+          className={output.telemetry.remainingMs < 3_600_000 ? 'bad' : 'muted'}
+          title="Recording time left on the slot being written to."
+        >
           {duration(output.telemetry.remainingMs)} of media
         </span>
       ) : null}
-      {output.telemetry?.inputPresent === false ? <span className="bad">no signal</span> : null}
-      {stale ? <span className="muted">· last heard {relative(output.telemetry!.at, now)}</span> : null}
+      {output.telemetry?.inputPresent === false ? (
+        <span className="bad" title="Nothing is arriving at the device's input.">
+          no signal
+        </span>
+      ) : null}
+      {stale ? (
+        <span className="muted" title="The device has not reported since then, so these figures are not fresh.">
+          · last heard {relative(output.telemetry!.at, now)}
+        </span>
+      ) : null}
 
       {output.watchUrl ? (
         <span className="row" style={{ gap: 6 }}>
-          <a href={output.watchUrl} target="_blank" rel="noreferrer">
+          <a href={output.watchUrl} target="_blank" rel="noreferrer" title={output.watchUrl}>
             Watch
           </a>
           <CopyButton value={output.watchUrl} label="Copy link" />

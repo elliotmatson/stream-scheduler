@@ -188,7 +188,7 @@ export class Notifier {
         event: 'test',
         severity: 'info',
         title: 'Stream Scheduler is connected',
-        summary: 'If you can read this, alerts about failed runs will reach you here.',
+        summary: 'If you can read this, notifications about failed runs will reach you here.',
         facts: [{ label: 'Channel', value: channel.label }],
         dedupeKey: `test:${this.deps.clock.now()}`,
         threadKey: `test-${channelId}`,

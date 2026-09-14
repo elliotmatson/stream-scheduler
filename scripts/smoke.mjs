@@ -200,7 +200,7 @@ async function main() {
   check('an operator can stop a live run', cancelled.state === 'cancelled')
 
   const afterCancel = await api('GET', `/api/runs/${started.runId}`)
-  const stopStep = afterCancel.steps.find((s) => s.label === 'Main: stop')
+  const stopStep = afterCancel.steps.find((s) => s.label === 'Main: stop streaming')
   check('cancelling really told the encoder to stop', stopStep?.state === 'done', JSON.stringify(stopStep))
 
   // -- driving a device by hand ---------------------------------------------

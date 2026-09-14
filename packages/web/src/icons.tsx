@@ -84,7 +84,7 @@ export function IconRuns(): ReactNode {
   )
 }
 
-export function IconAlerts(): ReactNode {
+export function IconNotifications(): ReactNode {
   return (
     <Glyph>
       <path d="M4 6.5a4 4 0 0 1 8 0c0 2.6.8 3.8 1.3 4.4.2.3 0 .6-.3.6H3c-.3 0-.5-.3-.3-.6.5-.6 1.3-1.8 1.3-4.4Z" />

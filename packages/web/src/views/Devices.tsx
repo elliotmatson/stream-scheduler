@@ -12,7 +12,18 @@ import {
   type NodeState,
   type Plugin,
 } from '../api.ts'
-import { Card, ConfigFields, ConfirmButton, CopyButton, Empty, ErrorBanner, Field, StatusPill } from '../components.tsx'
+import {
+  Card,
+  ConfigFields,
+  ConfirmButton,
+  CopyButton,
+  Empty,
+  ErrorBanner,
+  Fact,
+  Field,
+  StatusPill,
+} from '../components.tsx'
+import { bitrateHint, CUSTOM_VALUE, freeformHint, LEAVE_AS_IS, nowOn } from '../copy.ts'
 import { duration, relative } from '../format.ts'
 
 export function Devices(): ReactNode {
@@ -72,8 +83,8 @@ export function Devices(): ReactNode {
         {devices.length === 0 && !adding ? (
           <Card>
             <Empty>
-              No devices yet. Add the bundled mock encoder to try a whole scheduled run without touching hardware,
-              or point this at a real one.
+              No devices yet. Add a real encoder, switcher or deck — or the bundled mock, which runs a whole
+              scheduled event without touching hardware.
             </Empty>
           </Card>
         ) : null}
@@ -93,6 +104,7 @@ export function Devices(): ReactNode {
             <DeviceCard
               key={device.id}
               device={device}
+              kind={plugins?.find((plugin) => plugin.id === device.pluginId)?.displayName}
               busy={busy === device.id}
               onConnect={() => void act(device.id, () => api.connectDevice(device.id))}
               onEdit={() => setEditing(device.id)}
@@ -107,12 +119,15 @@ export function Devices(): ReactNode {
 
 function DeviceCard({
   device,
+  kind,
   busy,
   onConnect,
   onEdit,
   onRemove,
 }: {
   device: Device
+  /** The plugin's own name for this kind of box, e.g. "Blackmagic HyperDeck". */
+  kind: string | undefined
   busy: boolean
   onConnect: () => void
   onEdit: () => void
@@ -123,15 +138,15 @@ function DeviceCard({
       <div className="page-head" style={{ marginBottom: 10 }}>
         <div>
           <h2 style={{ marginBottom: 2 }}>{device.label}</h2>
-          <span className="muted">
-            {device.pluginId}
+          <span className="muted" title="What it is, and — once connected — the model it says it is.">
+            {kind ?? device.pluginId}
             {/* The probed model, not what someone picked in a dropdown. */}
             {device.probedModel ? ` · ${device.probedModel}` : ''}
           </span>
         </div>
         <div className="row">
           <StatusPill status={device.health} />
-          <button disabled={busy} onClick={onConnect}>
+          <button disabled={busy} title="Opens the connection again and re-reads what this device can do." onClick={onConnect}>
             {busy ? 'Connecting…' : 'Connect'}
           </button>
           <button onClick={onEdit}>Edit</button>
@@ -142,9 +157,21 @@ function DeviceCard({
       {device.lastError ? <div className="banner error">{device.lastError}</div> : null}
 
       <div className="row" style={{ gap: 18, marginTop: 8 }}>
-        <Fact label="Last seen" value={device.lastSeenAt ? relative(device.lastSeenAt) : 'never'} />
-        <Fact label="Firmware" value={device.capabilities?.firmware ?? '—'} />
-        <Fact label="Capabilities" value={device.capabilities?.features.join(', ') || '—'} />
+        <Fact
+          label="Last seen"
+          value={device.lastSeenAt ? relative(device.lastSeenAt) : 'never'}
+          tip="When this device last answered."
+        />
+        <Fact
+          label="Firmware"
+          value={device.capabilities?.firmware ?? '—'}
+          tip="The version the device reported when it connected."
+        />
+        <Fact
+          label="Can do"
+          value={device.capabilities?.features.join(', ') || '—'}
+          tip="What this model told us it supports. An event can only ask for these."
+        />
       </div>
 
       {/* Where to go for the things this app does not do: the media on a
@@ -163,12 +190,18 @@ function DeviceCard({
                 {link.url}
               </a>
               <CopyButton value={link.url} />
-              <span className="muted" style={{ fontSize: 12 }}>
-                {link.note ? `${link.note} ` : ''}Most browsers no longer open ftp:// — if nothing happens,
-                paste it into Finder (Go &gt; Connect to Server) or Explorer.
-              </span>
+              {link.note ? (
+                <span className="muted" style={{ fontSize: 12 }}>
+                  {link.note}
+                </span>
+              ) : null}
             </div>
           ))}
+          {/* Said once under the list rather than beside every line. */}
+          <p className="muted" style={{ margin: 0, fontSize: 12 }}>
+            Most browsers no longer open ftp:// — if nothing happens, copy the address and paste it into Finder
+            (Go &gt; Connect to Server) or Windows Explorer.
+          </p>
         </div>
       ) : null}
 
@@ -180,7 +213,7 @@ function DeviceCard({
         </div>
       ) : (
         <p className="muted" style={{ marginBottom: 0 }}>
-          Connect to probe what this device can actually do.
+          Connect, and this fills in with what the device can actually do.
         </p>
       )}
     </Card>
@@ -312,7 +345,6 @@ function NodeControls({ device, node }: { device: Device; node: DeviceNode }): R
   const freeform = state?.options?.quality?.freeform
   const current = state?.options?.quality?.current
   const qualityListId = `quality-${device.id}-${node.id}`
-  const CUSTOM_QUALITY = '__custom__'
 
   return (
     <details
@@ -323,7 +355,7 @@ function NodeControls({ device, node }: { device: Device; node: DeviceNode }): R
         if (nowOpen && state === undefined && connected) read()
       }}
     >
-      <summary>
+      <summary title="Open to see what this part of the device is doing, and to drive it by hand.">
         {node.label} <span className="muted">· {node.roles.join(', ')}</span>
       </summary>
 
@@ -386,6 +418,7 @@ function NodeControls({ device, node }: { device: Device; node: DeviceNode }): R
               {canStream ? (
                 <Fact
                   label="Streaming"
+                  tip="What the device says it is sending right now."
                   value={
                     streaming === undefined
                       ? '—'
@@ -398,12 +431,19 @@ function NodeControls({ device, node }: { device: Device; node: DeviceNode }): R
               {canRecord ? (
                 <Fact
                   label="Recording"
+                  tip="What it is writing right now, and under what name."
                   value={
                     recording === undefined ? '—' : recording.active ? (recording.filename ?? 'on') : 'off'
                   }
                 />
               ) : null}
-              {streaming?.targetUrl ? <Fact label="Pointed at" value={streaming.targetUrl} /> : null}
+              {streaming?.targetUrl ? (
+                <Fact
+                  label="Pointed at"
+                  value={streaming.targetUrl}
+                  tip="The ingest address this encoder is set to. The key itself is never shown."
+                />
+              ) : null}
             </div>
 
             {state?.recording?.slots && state.recording.slots.length > 0 ? (
@@ -412,8 +452,8 @@ function NodeControls({ device, node }: { device: Device; node: DeviceNode }): R
                   <thead>
                     <tr>
                       <th>Slot</th>
-                      <th>Media</th>
-                      <th>Free</th>
+                      <th title="The card or drive in this slot.">Media</th>
+                      <th title="Recording time left, at what the device is set to now.">Free</th>
                       <th />
                     </tr>
                   </thead>
@@ -436,6 +476,7 @@ function NodeControls({ device, node }: { device: Device; node: DeviceNode }): R
                             {node.supports.includes('selectSlot') ? (
                               <button
                                 disabled={busy !== undefined || slot.active === true}
+                                title="Records to this slot from now on."
                                 onClick={() => select(slot.id)}
                               >
                                 {busy === `select-${slot.id}`
@@ -467,8 +508,8 @@ function NodeControls({ device, node }: { device: Device; node: DeviceNode }): R
                 {state.recording.rollover !== undefined ? (
                   <p className="muted" style={{ margin: '6px 0 0' }}>
                     {state.recording.rollover
-                      ? 'Rolls onto the other slot when this one fills.'
-                      : 'Nowhere to roll onto: recording stops when this slot fills.'}
+                      ? 'When the slot in use fills, the deck rolls onto the other one by itself.'
+                      : 'Nowhere to roll onto: recording stops when the slot in use fills.'}
                   </p>
                 ) : null}
               </div>
@@ -478,11 +519,11 @@ function NodeControls({ device, node }: { device: Device; node: DeviceNode }): R
               <div className="stack" style={{ gap: 8 }}>
                 <div className="row" style={{ gap: 10, alignItems: 'flex-end' }}>
                   <Field
-                    label="Stream target"
-                    hint="A saved key, chosen by name. The key itself stays on the server."
+                    label="Stream key"
+                    hint="One of the saved keys, chosen by name. The key itself never reaches this screen."
                   >
                     <select value={credentialId} onChange={(event) => setCredentialId(event.target.value)}>
-                      <option value="">Leave as it is</option>
+                      <option value="">{LEAVE_AS_IS}</option>
                       {(credentials ?? [])
                         .filter((credential) => credential.ingestUrl)
                         .map((credential) => (
@@ -496,29 +537,26 @@ function NodeControls({ device, node }: { device: Device; node: DeviceNode }): R
                       every device that has it, so it is offered here and
                       nowhere else. */}
                   {qualityChoices.length > 0 ? (
-                    <Field label="Quality" hint={current ? `Now on ${current}.` : undefined}>
+                    <Field label="Quality" hint={`The presets this device offers.${nowOn(current)}`}>
                       <select
-                        value={typingQuality ? CUSTOM_QUALITY : quality}
+                        value={typingQuality ? CUSTOM_VALUE : quality}
                         onChange={(event) => {
-                          setTypingQuality(event.target.value === CUSTOM_QUALITY)
-                          setQuality(event.target.value === CUSTOM_QUALITY ? '' : event.target.value)
+                          setTypingQuality(event.target.value === CUSTOM_VALUE)
+                          setQuality(event.target.value === CUSTOM_VALUE ? '' : event.target.value)
                         }}
                       >
-                        <option value="">Leave as it is</option>
+                        <option value="">{LEAVE_AS_IS}</option>
                         {qualityChoices.map((choice) => (
                           <option key={choice} value={choice}>
                             {choice}
                           </option>
                         ))}
-                        {bitrate ? <option value={CUSTOM_QUALITY}>Custom…</option> : null}
+                        {bitrate ? <option value={CUSTOM_VALUE}>Custom…</option> : null}
                       </select>
                     </Field>
                   ) : null}
                   {bitrate && (qualityChoices.length === 0 || typingQuality) ? (
-                    <Field
-                      label="Bitrate (Mb/s)"
-                      hint={`${bitrate.minMbps}–${bitrate.maxMbps}, or a low-high range such as 6-9.${current ? ` Now on ${current}.` : ''}`}
-                    >
+                    <Field label="Bitrate (Mb/s)" hint={bitrateHint(bitrate, current)}>
                       <input
                         value={quality}
                         placeholder={current ?? `${bitrate.minMbps}-${bitrate.maxMbps}`}
@@ -547,7 +585,7 @@ function NodeControls({ device, node }: { device: Device; node: DeviceNode }): R
 
             {canRecord ? (
               <div className="row" style={{ gap: 10, alignItems: 'flex-end' }}>
-                <Field label="Recording name" hint="Needed before a recording can start. Named by you, not by us.">
+                <Field label="Filename" hint="Needed before a recording can start. A scheduled event names its own.">
                   <input
                     value={filename}
                     placeholder="2026-09-06 rehearsal"
@@ -558,10 +596,7 @@ function NodeControls({ device, node }: { device: Device; node: DeviceNode }): R
                     quality is set here because there is no stream target to
                     hang it on. */}
                 {!canStream && bitrate ? (
-                  <Field
-                    label="Bitrate (Mb/s)"
-                    hint={`${bitrate.note ? `${bitrate.note} ` : ''}Now on ${current ?? 'whatever it was set to'}.`}
-                  >
+                  <Field label="Bitrate (Mb/s)" hint={bitrateHint(bitrate, current)}>
                     <input
                       value={quality}
                       placeholder={current ?? `${bitrate.minMbps}-${bitrate.maxMbps}`}
@@ -569,10 +604,7 @@ function NodeControls({ device, node }: { device: Device; node: DeviceNode }): R
                     />
                   </Field>
                 ) : !canStream && freeform ? (
-                  <Field
-                    label="Quality"
-                    hint={`${freeform.note ? `${freeform.note} ` : ''}Now on ${current ?? 'whatever it was set to'}. The list is a suggestion; the deck refuses a codec it does not have.`}
-                  >
+                  <Field label="Quality" hint={freeformHint(freeform, current)}>
                     <input
                       list={qualityListId}
                       value={quality}
@@ -590,7 +622,11 @@ function NodeControls({ device, node }: { device: Device; node: DeviceNode }): R
             ) : null}
 
             <div className="row">
-              <button disabled={busy !== undefined} onClick={read}>
+              <button
+                disabled={busy !== undefined}
+                title="Asks the device what it is doing now. It also reports changes by itself while this panel is open."
+                onClick={read}
+              >
                 {busy === 'read' ? 'Reading…' : 'Read state'}
               </button>
               {(
@@ -692,7 +728,7 @@ function DeviceForm({
       <ErrorBanner error={error} />
       <div className="stack" style={{ maxWidth: 560 }}>
         {device ? null : (
-          <Field label="Type">
+          <Field label="Type" hint="What kind of box it is. This decides the settings below.">
             <select
               value={pluginId}
               onChange={(event) => {
@@ -712,7 +748,11 @@ function DeviceForm({
 
         {!device && plugin?.canDiscover ? (
           <div>
-            <button disabled={scanning} onClick={() => void scan()}>
+            <button
+              disabled={scanning}
+              title="Looks for this kind of device on the local network and fills in what it finds."
+              onClick={() => void scan()}
+            >
               {scanning ? 'Scanning…' : 'Scan the network'}
             </button>
             {found ? (
@@ -748,7 +788,7 @@ function DeviceForm({
 
         {device ? (
           <p className="muted" style={{ margin: 0 }}>
-            Passwords show as dots. Leave them alone to keep the stored one.
+            Passwords show as dots. Leave one alone to keep the stored password.
           </p>
         ) : null}
 
@@ -768,13 +808,3 @@ function lowOn(slot: { remainingMs?: number }): boolean {
   return slot.remainingMs !== undefined && slot.remainingMs < 3_600_000
 }
 
-function Fact({ label, value }: { label: string; value: string }): ReactNode {
-  return (
-    <div>
-      <div className="muted" style={{ fontSize: 12 }}>
-        {label}
-      </div>
-      <div>{value}</div>
-    </div>
-  )
-}

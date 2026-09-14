@@ -1163,6 +1163,15 @@ function toSeriesDto(row: SeriesRowShape) {
     label: row.label,
     timezone: row.timezone,
     rrule: row.rrule,
+    // The rule in plain language, said once here rather than by every
+    // screen that shows a series growing its own half-translation of
+    // FREQ=WEEKLY;BYDAY=SU.
+    describes: describeSchedule({
+      timezone: row.timezone,
+      rrule: row.rrule,
+      dtstart: row.dtstart,
+      durationMs: row.duration_ms,
+    }),
     dtstart: row.dtstart,
     durationMs: row.duration_ms,
     exdates: JSON.parse(row.exdates) as number[],

@@ -1,9 +1,33 @@
 import { useEffect, useState } from 'react'
 import type { ReactNode } from 'react'
 import type { ConfigField } from './api.ts'
+import { describeStatus } from './copy.ts'
 
+/**
+ * A state, in one word, with what it means on hover.
+ *
+ * The word alone is short enough to be ambiguous — "completing" and
+ * "completed" sit one letter apart — and there is nowhere in a table row to
+ * put a sentence.
+ */
 export function StatusPill({ status }: { status: string }): ReactNode {
-  return <span className={`pill ${toneFor(status)}`}>{label(status)}</span>
+  return (
+    <span className={`pill ${toneFor(status)}`} title={describeStatus(status)}>
+      {label(status)}
+    </span>
+  )
+}
+
+/** A label and a value, with the explanation on hover when it needs one. */
+export function Fact({ label, value, tip }: { label: string; value: string; tip?: string }): ReactNode {
+  return (
+    <div title={tip}>
+      <div className="muted" style={{ fontSize: 12 }}>
+        {label}
+      </div>
+      <div>{value}</div>
+    </div>
+  )
 }
 
 /** Maps every run, occurrence and device state onto one of four tones. */
@@ -26,6 +50,7 @@ export function toneFor(status: string): string {
     case 'preparing':
     case 'completing':
     case 'degraded':
+    case 'off':
       return 'warn'
     default:
       return ''
@@ -79,7 +104,7 @@ export function Field({
 /**
  * Renders a plugin's declared config fields.
  *
- * Every device, streaming service and alert channel describes its settings as
+ * Every device, streaming service and notification describes its settings as
  * data, and this is the only place that turns those into inputs — so adding a
  * plugin needs no UI work, and a plugin cannot invent a widget that behaves
  * differently from every other one.

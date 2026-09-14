@@ -153,8 +153,8 @@ describe('EventPlanner', () => {
       // Retargeting is part of starting, not of preparing: one encoder can
       // only hold one target, so it is applied when this output goes on.
       'start:Main: point the encoder at it',
-      'start:Main: go live',
-      'stop:Main: stop',
+      'start:Main: start streaming',
+      'stop:Main: stop streaming',
       'start:Archive: start recording',
       'stop:Archive: stop recording',
     ])

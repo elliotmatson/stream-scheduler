@@ -19,6 +19,8 @@ export interface Series {
   label: string
   timezone: string
   rrule: string | null
+  /** The rule in plain language, as the server describes it. */
+  describes: string
   dtstart: number
   durationMs: number
   prepareLeadMs: number

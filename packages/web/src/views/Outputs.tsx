@@ -14,6 +14,7 @@ import {
   type Series,
 } from '../api.ts'
 import { ConfirmButton, Empty, ErrorBanner, Field } from '../components.tsx'
+import { bitrateHint, CUSTOM_VALUE, freeformHint, LEAVE_AS_IS, PICK_ONE } from '../copy.ts'
 
 /**
  * What an event streams and records, and when inside its window.
@@ -90,7 +91,9 @@ export function Outputs({ series }: { series: Series }): ReactNode {
       ) : null}
 
       {(current?.outputs ?? []).length === 0 && !adding ? (
-        <Empty>Nothing yet. This event would do nothing at all when its time comes.</Empty>
+        <Empty>
+          Nothing yet, so this event would do nothing when its time comes. Add a stream or a recording.
+        </Empty>
       ) : null}
 
       <div className="stack">
@@ -200,7 +203,16 @@ function OutputRow(props: RowProps): ReactNode {
       ) : null}
 
       {kind === 'stream' ? (
-        <Field label="Streams to" hint="A connected service issues its own key. A stream key is one you pasted in.">
+        <Field
+          label="Streams to"
+          // Once one is picked the hint has done its job, and a page with
+          // four outputs on it would otherwise say this four times.
+          hint={
+            targetValue === ''
+              ? 'A connected service issues its own key. A stream key is one you pasted in.'
+              : undefined
+          }
+        >
           <select
             value={targetValue}
             onChange={(event) => {
@@ -212,7 +224,7 @@ function OutputRow(props: RowProps): ReactNode {
               }))
             }}
           >
-            <option value="">— pick one —</option>
+            <option value="">{PICK_ONE}</option>
             {props.destinations.map((destination) => (
               <option key={destination.id} value={`destination:${destination.id}`}>
                 {destination.label}
@@ -235,9 +247,11 @@ function OutputRow(props: RowProps): ReactNode {
         hint={
           capable.length === 0
             ? `No connected device offers ${kind === 'recording' ? 'recording' : 'streaming'}. Add or connect one first.`
-            : kind === 'recording'
-              ? 'The recorder this goes onto.'
-              : 'The encoder this comes off.'
+            : chosen
+              ? undefined
+              : kind === 'recording'
+                ? 'The recorder this goes onto.'
+                : 'The encoder this comes off.'
         }
       >
         <select
@@ -254,7 +268,7 @@ function OutputRow(props: RowProps): ReactNode {
             }))
           }}
         >
-          <option value="">— pick one —</option>
+          <option value="">{PICK_ONE}</option>
           {capable.map(({ device, node }) => (
             <option key={`${device.id}/${node.id}`} value={`${device.id}/${node.id}`}>
               {device.label} — {node.label}
@@ -269,7 +283,7 @@ function OutputRow(props: RowProps): ReactNode {
         <summary>Its own name{kind === 'stream' ? ' and description' : ''}</summary>
         <div className="stack" style={{ marginTop: 8 }}>
           <p className="muted" style={{ margin: 0 }}>
-            Left blank, this uses the event's. Two services from one morning usually want different titles.
+            Left blank, this uses the event's default. Two services on one morning usually want different titles.
           </p>
           {kind === 'stream' ? (
             <>
@@ -289,7 +303,7 @@ function OutputRow(props: RowProps): ReactNode {
               </Field>
             </>
           ) : (
-            <Field label="Filename">
+            <Field label="Filename" hint="The device adds its own extension.">
               <input
                 value={draft.filename}
                 placeholder={series.templates.filename ?? '{{date "yyyy-MM-dd"}} {{event.name}}'}
@@ -304,7 +318,7 @@ function OutputRow(props: RowProps): ReactNode {
         <button className="primary" disabled={!draft.label || !draft.deviceId} onClick={save}>
           {output ? 'Save' : 'Add'}
         </button>
-        <label className="row" style={{ gap: 8 }}>
+        <label className="row" style={{ gap: 8 }} title="Off keeps it here but skips it when the event runs.">
           <input type="checkbox" checked={draft.enabled} onChange={(event) => set('enabled', event.target.checked)} />
           <span>On</span>
         </label>
@@ -380,9 +394,6 @@ function DeviceSettings({
   // otherwise reopening an output would show "leave as it is" over a
   // setting it is going to apply.
   const showCustom = custom || (draft.quality !== '' && qualities.length > 0 && !qualities.includes(draft.quality))
-  /** A mode, not a value: picking it shows the box rather than storing a
-   *  word the device would be asked to understand. */
-  const CUSTOM = '__custom__'
 
   return (
     <details>
@@ -393,25 +404,28 @@ function DeviceSettings({
             label="Quality"
             hint={
               bitrate
-                ? `${bitrate.note ? `${bitrate.note} ` : ''}Blank leaves it${current ? ` on ${current}` : ''}.`
+                ? 'The presets this device offers. Anything else goes in as a bitrate.'
                 : 'The profiles this encoder reports for the service it is on.'
             }
           >
             <select
-              value={showCustom ? CUSTOM : qualities.includes(draft.quality) ? draft.quality : ''}
+              value={showCustom ? CUSTOM_VALUE : qualities.includes(draft.quality) ? draft.quality : ''}
               onChange={(event) => {
-                setCustom(event.target.value === CUSTOM)
-                set('quality', event.target.value === CUSTOM ? '' : event.target.value)
+                setCustom(event.target.value === CUSTOM_VALUE)
+                set('quality', event.target.value === CUSTOM_VALUE ? '' : event.target.value)
               }}
             >
-              <option value="">Leave as it is{current ? ` (${current})` : ''}</option>
+              <option value="">
+                {LEAVE_AS_IS}
+                {current ? ` (${current})` : ''}
+              </option>
               {qualities.map((choice) => (
                 <option key={choice} value={choice}>
                   {choice}
                 </option>
               ))}
               {/* Only where the device takes a figure as well as a name. */}
-              {bitrate ? <option value={CUSTOM}>Custom…</option> : null}
+              {bitrate ? <option value={CUSTOM_VALUE}>Custom…</option> : null}
             </select>
           </Field>
         ) : null}
@@ -419,10 +433,7 @@ function DeviceSettings({
         {/* The figure, when the operator asked for one the list does not
             have, or the device only takes numbers. */}
         {bitrate && (qualities.length === 0 || showCustom) ? (
-          <Field
-            label="Bitrate (Mb/s)"
-            hint={`Between ${bitrate.minMbps} and ${bitrate.maxMbps}, or a low-high range such as 6-9.`}
-          >
+          <Field label="Bitrate (Mb/s)" hint={bitrateHint(bitrate, current)}>
             <input
               value={draft.quality}
               placeholder={current ?? `${bitrate.minMbps}-${bitrate.maxMbps}`}
@@ -432,10 +443,7 @@ function DeviceSettings({
         ) : null}
 
         {freeform && qualities.length === 0 && !bitrate ? (
-          <Field
-            label="Quality"
-            hint={`${freeform.note ? `${freeform.note} ` : ''}The list is a suggestion — the device has its own set and refuses one it does not have. Blank leaves it${current ? ` on ${current}` : ''}.`}
-          >
+          <Field label="Quality" hint={freeformHint(freeform, current)}>
             <input
               list={listId}
               value={draft.quality}
@@ -452,9 +460,9 @@ function DeviceSettings({
 
         {kind === 'recording' && slots.length > 0 ? (
           <>
-            <Field label="Record to" hint="Which card this output writes to.">
+            <Field label="Record to" hint="The slot this recording is written to.">
               <select value={draft.slot} onChange={(event) => set('slot', event.target.value)}>
-                <option value="">Leave as it is</option>
+                <option value="">{LEAVE_AS_IS}</option>
                 {slots.map((slot) => (
                   <option key={slot.id} value={String(slot.id)}>
                     Slot {slot.id}
@@ -467,8 +475,8 @@ function DeviceSettings({
                 do anything: the protocol has no rollover setting to write. */}
             <p className="muted" style={{ margin: 0 }}>
               {state?.recording?.rollover
-                ? 'The deck rolls onto its other card by itself when this one fills. That is the deck\'s own behaviour and cannot be turned off from here.'
-                : 'There is no second mounted card, so recording stops when this one fills.'}
+                ? 'When this slot fills, the deck rolls onto the other one by itself. That is the deck\'s own behaviour and cannot be turned off from here.'
+                : 'There is no second slot mounted, so recording stops when this one fills.'}
             </p>
           </>
         ) : null}
