@@ -176,6 +176,22 @@ URI to paste. One of them matters more than the rest:
 > for a week and then starts failing. The app names this specific cause when a
 > refresh is rejected, but it is much easier to avoid.
 
+> **Set the user type to "External", even for one organisation.** A YouTube
+> channel in a Brand Account is not a member of any Google Workspace, so an
+> "Internal" client refuses it with `Error 403: org_internal` — the person
+> setting it up connects their own channel fine and only finds out when they
+> add the one that matters.
+
+> **The redirect URI has to match character for character**, or the consent
+> screen answers `Error 400: redirect_uri_mismatch` without saying what it
+> expected. The instructions show the URI derived from how you reached the
+> page — following `X-Forwarded-Proto` and `X-Forwarded-Host`, so an app
+> behind Tailscale Serve or a reverse proxy advertises the `https://` address
+> a browser really uses. Google will not register a plain `http://` callback
+> for anything but localhost, so a LAN or tailnet address has to be reached
+> over HTTPS. Register every address you will connect from: the URI is
+> whatever you browsed to at the time, and Google accepts a list.
+
 ## Layout
 
 ```

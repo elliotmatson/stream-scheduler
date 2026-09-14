@@ -491,6 +491,75 @@ async function connectRecorder(): Promise<string> {
   return device.json.id as string
 }
 
+describe('the OAuth callback address', () => {
+  // The route asks the registry for the provider before it answers, so the
+  // test needs one registered. Nothing here touches Google.
+  beforeEach(() => {
+    app.destinations.register({
+      id: 'youtube',
+      displayName: 'YouTube',
+      apiVersion: '1',
+      configSchema: [],
+      providesIngest: true,
+      oauth: {
+        begin: () => ({ url: 'https://accounts.google.invalid/o/oauth2/v2/auth', state: 'state', verifier: 'v' }),
+        complete: async () => {
+          throw new Error('not exercised here')
+        },
+      },
+      createDestination: async () => {
+        throw new Error('not exercised here')
+      },
+    })
+  })
+
+  // Google matches this character for character and says only
+  // "redirect_uri_mismatch" when it does not, so what the app advertises has
+  // to be what a browser actually reaches.
+  const instructions = async (headers: Record<string, string>) =>
+    JSON.parse(
+      (await server.inject({ method: 'GET', url: '/api/oauth/youtube/instructions', headers })).body,
+    )
+
+  it('uses the host the browser asked for', async () => {
+    const body = await instructions({ host: 'scheduler.local:8500' })
+    expect(body.redirectUri).toBe('http://scheduler.local:8500/oauth/callback')
+  })
+
+  it('follows a proxy that terminated TLS, rather than advertising http', async () => {
+    // Tailscale Serve and every reverse proxy hand this process a plain
+    // HTTP request. Advertising `http://` for a name like this is not just
+    // wrong, it is a URI Google refuses to register at all.
+    const body = await instructions({
+      host: 'stream.tail48658.ts.net',
+      'x-forwarded-proto': 'https',
+    })
+    expect(body.redirectUri).toBe('https://stream.tail48658.ts.net/oauth/callback')
+    expect(body.warnings.some((warning: string) => warning.includes('localhost'))).toBe(false)
+  })
+
+  it('takes the first hop when a chain of proxies appends to the header', async () => {
+    const body = await instructions({
+      host: 'inner:8500',
+      'x-forwarded-proto': 'https, http',
+      'x-forwarded-host': 'stream.example.org, inner:8500',
+    })
+    expect(body.redirectUri).toBe('https://stream.example.org/oauth/callback')
+  })
+
+  it('says so when the address it would advertise is one Google will not take', async () => {
+    const body = await instructions({ host: 'stream.tail48658.ts.net' })
+    expect(body.redirectUri).toBe('http://stream.tail48658.ts.net/oauth/callback')
+    expect(body.warnings.some((warning: string) => warning.includes('localhost'))).toBe(true)
+  })
+
+  it('does not warn about http on loopback, where it is the correct flow', async () => {
+    const body = await instructions({ host: '127.0.0.1:8500' })
+    expect(body.warnings.some((warning: string) => warning.includes('localhost'))).toBe(false)
+  })
+
+})
+
 describe('credentials', () => {
   it('never exposes a stored stream key', async () => {
     await post('/api/credentials', {

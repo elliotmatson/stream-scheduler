@@ -30,6 +30,23 @@ every scheduled stream will work fine for a week and then start failing with a
 generic `invalid_grant`. This is the single most likely support burden in the
 whole project, and it is entirely preventable at setup time.
 
+**The redirect URI is derived from how the browser reached the app**, not
+hardcoded: `X-Forwarded-Proto` and `X-Forwarded-Host` before the request's own
+`Host`, so an install behind Tailscale Serve or any TLS-terminating proxy
+advertises the `https://` address a browser actually uses rather than the
+`http://` one this process sees — which matters because Google will not
+register a plain-HTTP callback for anything but localhost. The same derivation
+feeds the URI the instructions tell the operator to paste, so what is shown and
+what is sent cannot drift apart. A mismatch is `Error 400:
+redirect_uri_mismatch`, which says nothing about what Google expected, so the
+instructions say to paste it exactly and warn when the address in hand is one
+Google will refuse.
+
+There is deliberately no setting for this. A proxy that sets neither forwarded
+header could want one, but an address configured once and then stale fails the
+same opaque way, and connecting from more than one address is already answered
+by Google taking a list of redirect URIs.
+
 **The user type must be "External", even for a single church.** A YouTube
 channel that lives in a Brand Account — which most organisation channels do — is
 not a member of any Google Workspace, so an "Internal" client refuses it at the
@@ -141,6 +158,7 @@ comfortable; a badly written health poll is not. Three rules:
 
 | Symptom | Cause | Handling |
 |---|---|---|
+| `redirect_uri_mismatch` at the consent screen | what the app advertised is not registered on the client, often `http://` where a proxy terminated TLS | Derive it from `X-Forwarded-Proto`/`X-Forwarded-Host`/`Host`, show that exact URI in the instructions, and warn when it is one Google will not register |
 | `org_internal` at the consent screen | OAuth client's user type is "Internal"; a Brand Account channel is not in the Workspace | Cannot be caught by this app — the setup instructions require "External" and say why |
 | `invalid_grant` on refresh | consent screen left on Testing (7-day expiry), or the user revoked access | Named error + reconnect CTA; mark `account.status = 'reauth_required'` and alert *before* the next prepare window |
 | `quotaExceeded` | day's budget gone | Ledger should have prevented it; if it happens, fail the run at prepare with a clear cause rather than half-creating things |

@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import type { FastifyInstance } from 'fastify'
+import type { FastifyInstance, FastifyRequest } from 'fastify'
 import { z } from 'zod'
 import type { PendingAuthorization } from '@scheduler/plugin-sdk'
 import type { Application } from '../app.js'
@@ -45,7 +45,7 @@ export function registerOAuthRoutes(fastify: FastifyInstance, app: Application):
   fastify.get('/api/oauth/:provider/instructions', async (request) => {
     const { provider } = z.object({ provider: z.string() }).parse(request.params)
     app.destinations.get(provider)
-    return instructionsFor(provider, redirectUriFor(request.headers.host))
+    return instructionsFor(provider, redirectUriFor(request))
   })
 
   fastify.get('/api/oauth/clients', async () =>
@@ -92,7 +92,7 @@ export function registerOAuthRoutes(fastify: FastifyInstance, app: Application):
     if (!client) throw new Error(`No OAuth client with id "${clientRef}".`)
 
     sweep()
-    const redirectUri = redirectUriFor(request.headers.host)
+    const redirectUri = redirectUriFor(request)
     const authorization = provider.oauth.begin({ clientId: client.client_id }, redirectUri)
     pending.set(authorization.state, {
       ...authorization,
@@ -283,10 +283,44 @@ export function registerOAuthRoutes(fastify: FastifyInstance, app: Application):
   })
 }
 
-function redirectUriFor(host: string | undefined): string {
-  // A loopback redirect is the correct flow for an installed app; the
-  // out-of-band copy-paste flow is deprecated and must not be used.
-  return `http://${host ?? '127.0.0.1:8500'}/oauth/callback`
+/**
+ * Where Google should send the browser back to.
+ *
+ * It has to be *exactly* what is registered on the OAuth client, character
+ * for character, or the consent screen refuses with `redirect_uri_mismatch`
+ * — so this is worth getting right rather than assuming.
+ *
+ * It comes off the request, so it is whatever a browser actually used:
+ * `X-Forwarded-Proto` and `X-Forwarded-Host` first, because an app reached
+ * over HTTPS through Tailscale Serve or any reverse proxy sees a plain HTTP
+ * request to an internal name, and would otherwise advertise an `http://`
+ * callback that Google will not even let you register. Failing those, the
+ * request's own `Host`, which is right for reaching it directly on the LAN
+ * or on loopback.
+ *
+ * The out-of-band copy-paste flow is deprecated and is not used.
+ */
+function redirectUriFor(request: FastifyRequest): string {
+  // A proxy may send a list; the first entry is the original client's.
+  const forwardedProto = header(request, 'x-forwarded-proto')?.split(',')[0]?.trim()
+  const scheme = forwardedProto === 'https' || forwardedProto === 'http' ? forwardedProto : 'http'
+  const host = header(request, 'x-forwarded-host')?.split(',')[0]?.trim() || request.headers.host
+  return `${scheme}://${host ?? '127.0.0.1:8500'}/oauth/callback`
+}
+
+function header(request: FastifyRequest, name: string): string | undefined {
+  const value = request.headers[name]
+  return Array.isArray(value) ? value[0] : value
+}
+
+/** Google allows a plain-HTTP callback only on loopback. */
+function isLoopbackUri(uri: string): boolean {
+  try {
+    const { hostname } = new URL(uri)
+    return hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1' || hostname === '[::1]'
+  } catch {
+    return false
+  }
 }
 
 function instructionsFor(
@@ -296,7 +330,23 @@ function instructionsFor(
   if (provider !== 'youtube') {
     return { steps: [], redirectUri, warning: '', warnings: [] }
   }
+  // http:// is registerable only for localhost, so an app reached at a LAN
+  // or Tailscale address has to be on HTTPS before Google will take its
+  // callback at all.
+  const unregisterable = redirectUri.startsWith('http://') && !isLoopbackUri(redirectUri)
+
   const warnings = [
+    // The one that stops the flow before it starts. Google's own message
+    // says nothing about which URI it expected.
+    'Paste the redirect URI exactly as shown — scheme, host, port and path. Anything else and Google ' +
+      'refuses with "Error 400: redirect_uri_mismatch".',
+    ...(unregisterable
+      ? [
+          `You are reaching this app at ${new URL(redirectUri).origin}, and Google will not accept a plain ` +
+            'http:// redirect for anything but localhost. Reach the app over HTTPS — Tailscale Serve or any ' +
+            'reverse proxy in front of it — or set the client up while reaching this page on 127.0.0.1.',
+        ]
+      : []),
     // The single most likely support burden in the whole project, and it is
     // invisible for a week after setup.
     'Do not leave the consent screen on "Testing". Google expires refresh tokens after 7 days in that ' +
