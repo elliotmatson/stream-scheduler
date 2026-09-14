@@ -6,16 +6,22 @@ WORKDIR /app
 
 RUN corepack enable
 
-# Dependencies come from the lockfile alone, so this layer still caches on
-# the lockfile rather than on source.
+# Three files, none of which change when a package is added, so this layer
+# caches on the dependency graph rather than on source.
 #
 # It used to copy each workspace manifest by hand, which is what broke this
 # image: five were listed, ten existed, and the five packages added later
 # installed nothing — `tsc` then could not resolve @scheduler/plugin-sdk.
 # A hand-written list goes stale the moment a package is added, and the
-# failure only ever surfaces inside Docker. `pnpm fetch` cannot go stale.
-COPY pnpm-lock.yaml ./
-RUN pnpm fetch
+# failure only ever surfaces inside Docker. `pnpm fetch` reads the lockfile,
+# so it cannot go stale.
+#
+# package.json is not optional here: corepack reads `packageManager` from it
+# to decide which pnpm to run. Without it corepack silently fetches the
+# latest pnpm instead of the pinned one, and a major version with different
+# defaults fails on a lockfile the pinned version accepts.
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+RUN pnpm --version && pnpm fetch
 
 COPY . .
 RUN pnpm install --frozen-lockfile --prefer-offline
