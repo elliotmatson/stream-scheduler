@@ -115,7 +115,9 @@ export class EventPlanner implements RunPlanner {
           device.deviceId,
           device.nodeId,
           'applyStreamTarget',
-          { url: target.url, key: target.key },
+          // The quality is the event's if it named one, and otherwise
+          // absent, which leaves the device on whatever it is set to.
+          { url: target.url, key: target.key, ...(output.settings.quality ? { quality: output.settings.quality } : {}) },
           {
             what: 'Stream target',
             expected: `${target.url} with key ${fingerprint(target.key)}`,
@@ -274,7 +276,7 @@ export class EventPlanner implements RunPlanner {
             device.deviceId,
             device.nodeId,
             'startRecording',
-            { filename },
+            { filename, ...(output.settings.slot === undefined ? {} : { slot: output.settings.slot }) },
             {
               what: 'Recording',
               expected: `active as ${filename}`,
@@ -420,12 +422,9 @@ export class EventPlanner implements RunPlanner {
   }
 
   private deviceOrThrow(timeline: EventTimeline, output: EventOutput): { deviceId: string; nodeId: string } {
-    const device = deviceFor(output, timeline.source)
+    const device = deviceFor(output)
     if (device) return device
-    throw new Error(
-      `"${output.label}" has no device: it does not name one of its own, and "${timeline.label}" has no ` +
-        'source encoder set.',
-    )
+    throw new Error(`"${output.label}" in "${timeline.label}" has no device to run on.`)
   }
 
   private registryOrThrow(output: EventOutput): DestinationRegistry {

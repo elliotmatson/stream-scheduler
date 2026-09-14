@@ -17,9 +17,6 @@ export interface Occurrence {
 export interface Series {
   id: string
   label: string
-  /** The one encoder this event's outputs run on, unless one names its own. */
-  sourceDeviceId: string | null
-  sourceNodeId: string | null
   timezone: string
   rrule: string | null
   dtstart: number
@@ -72,6 +69,8 @@ export interface NodeState {
   }
   input?: { present: boolean; format?: string; source?: string }
   routing?: Record<string, string>
+  /** Settings the device says it will accept, and what it is on now. */
+  options?: { quality?: { current?: string; choices: string[] } }
 }
 
 export interface StorageSlot {
@@ -230,11 +229,19 @@ export interface EventOutput {
   durationMs: number
   destinationId: string | null
   credentialId: string | null
-  /** Null means the event's source encoder. */
+  /** Where it runs. Required in practice; null only on rows written before
+   *  outputs owned their device. */
   deviceId: string | null
   nodeId: string | null
   templates: Record<string, string>
+  /** Absent keys mean "leave the device as it is". */
+  settings: OutputSettings
   enabled: boolean
+}
+
+export interface OutputSettings {
+  quality?: string
+  slot?: number
 }
 
 /** Two outputs that would need the same hardware at the same time. */
@@ -253,7 +260,7 @@ export interface OutputsResponse {
 }
 
 export type OutputInput = Partial<Omit<EventOutput, 'id' | 'seriesId' | 'position'>> &
-  Pick<EventOutput, 'kind' | 'label' | 'durationMs'>
+  Pick<EventOutput, 'kind' | 'label' | 'durationMs'> & { deviceId: string; nodeId: string }
 
 export interface PreviewOccurrence {
   start: number
@@ -273,8 +280,6 @@ export interface SchedulePreview {
 
 export interface SeriesInput {
   label: string
-  sourceDeviceId: string | null
-  sourceNodeId: string | null
   timezone: string
   rrule: string | null
   /** The wall time as typed. The server resolves it in `timezone`. */

@@ -39,6 +39,9 @@ export type NodeAction =
 export interface StreamTarget {
   url: string
   key: string
+  /** A quality profile the device named in `NodeState.options`. Absent
+   *  leaves the device on whatever it is set to. */
+  quality?: string
 }
 
 /** One card, disk or slot a recorder can write to. */
@@ -89,6 +92,17 @@ export interface NodeState {
     source?: string
   }
   routing?: Record<string, string>
+  /**
+   * Settings this node will accept, and what it is on now.
+   *
+   * Reported by the device rather than guessed, so an event offers the
+   * profiles this encoder actually has rather than a free-text box whose
+   * mistakes surface as an HTTP 400 at 09:00. Absent means the device
+   * offers no choice, which is the common case.
+   */
+  options?: {
+    quality?: { current?: string; choices: string[] }
+  }
   raw?: JsonObject
 }
 
@@ -133,7 +147,9 @@ export interface NodeActions {
   applyStreamTarget?(target: StreamTarget): Promise<void>
   startStreaming?(): Promise<void>
   stopStreaming?(): Promise<void>
-  startRecording?(options: { filename: string }): Promise<void>
+  /** `slot` is which card or disk to write to, where the device has more
+   *  than one. Absent means whichever it is already on. */
+  startRecording?(options: { filename: string; slot?: number }): Promise<void>
   stopRecording?(): Promise<void>
   route?(options: { input: string; output: string }): Promise<void>
   /** The host calls this after every write and compares. Blackmagic devices

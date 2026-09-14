@@ -71,8 +71,6 @@ async function seedEverything(templates: Record<string, string> = {}) {
 
   const series = await post('/api/series', {
     label: 'Sunday Service',
-    sourceDeviceId: device.json.id,
-    sourceNodeId: 'stream',
     timezone: 'America/Chicago',
     rrule: 'FREQ=WEEKLY;BYDAY=SU',
     dtstart: START,
@@ -84,6 +82,8 @@ async function seedEverything(templates: Record<string, string> = {}) {
     label: 'Main',
     durationMs: 90 * MINUTE,
     credentialId: credential.json.id,
+    deviceId: device.json.id,
+    nodeId: 'stream',
   })
   return {
     deviceId: device.json.id,
@@ -485,7 +485,7 @@ describe('unpicking a setup', () => {
     expect((await del(`/api/credentials/${credentialId}`)).status).toBe(200)
   })
 
-  it('refuses to delete the device an event uses as its source', async () => {
+  it('refuses to delete a device an output still runs on', async () => {
     const { deviceId } = await seedEverything()
     const refused = await del(`/api/devices/${deviceId}`)
     expect(refused.status).toBe(409)
@@ -495,7 +495,7 @@ describe('unpicking a setup', () => {
 
 describe('outputs', () => {
   it('reports two outputs that would fight over the same encoder', async () => {
-    const { seriesId, credentialId } = await seedEverything()
+    const { seriesId, credentialId, deviceId } = await seedEverything()
     // A second stream on the same source, overlapping the first.
     const added = await post(`/api/series/${seriesId}/outputs`, {
       kind: 'stream',
@@ -503,6 +503,8 @@ describe('outputs', () => {
       offsetMs: 30 * MINUTE,
       durationMs: 60 * MINUTE,
       credentialId,
+      deviceId,
+      nodeId: 'stream',
     })
 
     expect(added.status).toBe(201)
@@ -515,20 +517,26 @@ describe('outputs', () => {
 
   it('does not call a recording and a stream on one device a clash', async () => {
     const { seriesId } = await seedEverything()
+    const deck = await post('/api/devices', { pluginId: 'mock', label: 'Deck', config: { kind: 'recorder' } })
+    await post(`/api/devices/${deck.json.id}/connect`, {})
     const added = await post(`/api/series/${seriesId}/outputs`, {
       kind: 'recording',
       label: 'Archive',
       durationMs: 90 * MINUTE,
+      deviceId: deck.json.id,
+      nodeId: 'record',
     })
     expect(added.json.conflicts).toEqual([])
   })
 
   it('refuses a stream with nowhere to go, and one told twice', async () => {
-    const { seriesId, credentialId } = await seedEverything()
+    const { seriesId, credentialId, deviceId } = await seedEverything()
     const nowhere = await post(`/api/series/${seriesId}/outputs`, {
       kind: 'stream',
       label: 'Lost',
       durationMs: 90 * MINUTE,
+      deviceId,
+      nodeId: 'stream',
     })
     expect(nowhere.status).toBe(409)
     expect(nowhere.json.error).toContain('nowhere to stream to')
@@ -545,6 +553,8 @@ describe('outputs', () => {
         durationMs: 90 * MINUTE,
         credentialId,
         destinationId: destination.json.id,
+        deviceId,
+        nodeId: 'stream',
       })
       expect(both.status).toBe(409)
     }
@@ -552,10 +562,14 @@ describe('outputs', () => {
 
   it('reorders in one call rather than one patch per row', async () => {
     const { seriesId, outputId } = await seedEverything()
+    const deck = await post('/api/devices', { pluginId: 'mock', label: 'Deck', config: { kind: 'recorder' } })
+    await post(`/api/devices/${deck.json.id}/connect`, {})
     const second = await post(`/api/series/${seriesId}/outputs`, {
       kind: 'recording',
       label: 'Archive',
       durationMs: 90 * MINUTE,
+      deviceId: deck.json.id,
+      nodeId: 'record',
     })
 
     const reordered = await post(`/api/series/${seriesId}/outputs/order`, {

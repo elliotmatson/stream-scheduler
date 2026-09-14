@@ -150,11 +150,11 @@ export class PreflightChecker {
     const problems: PreflightProblem[] = []
     for (const entry of timeline.outputs) {
       const output = entry.output
-      if (!deviceFor(output, timeline.source)) {
+      if (!deviceFor(output)) {
         problems.push({
           what: output.label,
-          detail: 'No device: it does not name one of its own, and the event has no source encoder.',
-          remediation: 'Set the event\'s source encoder, or give this output its own device.',
+          detail: 'No device chosen: this output has nothing to run on.',
+          remediation: 'Pick an encoder or a recorder for it on the event.',
         })
       }
       if (output.kind === 'stream' && !output.destinationId && !output.credentialId) {
@@ -186,7 +186,7 @@ export class PreflightChecker {
     const seen = new Set<string>()
 
     for (const entry of timeline.outputs) {
-      const device = deviceFor(entry.output, timeline.source)
+      const device = deviceFor(entry.output)
       if (!device) continue // already reported by checkOutputs
       const key = `${device.deviceId}/${device.nodeId}`
       if (seen.has(key)) continue

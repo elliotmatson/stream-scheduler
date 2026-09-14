@@ -54,6 +54,18 @@ class HyperdeckDevice {
   private model = 'HyperDeck'
   private slots = 1
   private disposed = false
+  /**
+   * Guards against a state read feeding itself.
+   *
+   * The deck pushes `notify.slot`, and reading every slot is itself slot
+   * traffic, so an unguarded emit triggers the notification that triggers
+   * the next emit. That is not a slow loop: each pass issues a round trip
+   * per slot, and the pending work grows faster than it drains.
+   */
+  private emitting = false
+  /** The deck's own configuration, which changes about never. Read once
+   *  rather than on every state read. */
+  private config: Commands.ConfigurationCommandResponse | undefined
 
   constructor(
     private readonly ctx: DeviceContext,
@@ -169,10 +181,13 @@ class HyperdeckDevice {
   actionsFor(nodeId: string): NodeActions | undefined {
     if (nodeId !== 'record') return undefined
     return {
-      startRecording: async ({ filename }) => {
-        if (this.slot !== undefined) {
+      startRecording: async ({ filename, slot }) => {
+        // An event that names a slot beats the device's own default: the
+        // device setting is the house rule, the event is the exception.
+        const wanted = slot ?? this.slot
+        if (wanted !== undefined) {
           const select = new Commands.SlotSelectCommand()
-          select.slotId = this.slot
+          select.slotId = wanted
           await this.send(select)
         }
         try {
@@ -324,8 +339,10 @@ class HyperdeckDevice {
 
   /** What the deck is set to record *from*. Older firmware may not answer. */
   private async configuration(): Promise<Commands.ConfigurationCommandResponse | undefined> {
+    if (this.config) return this.config
     try {
-      return await this.send(new Commands.ConfigurationGetCommand())
+      this.config = await this.send(new Commands.ConfigurationGetCommand())
+      return this.config
     } catch {
       return undefined
     }
@@ -341,11 +358,14 @@ class HyperdeckDevice {
   }
 
   private async emit(): Promise<void> {
-    if (this.disposed) return
+    if (this.disposed || this.emitting) return
+    this.emitting = true
     try {
       this.ctx.emitState('record', await this.readState())
     } catch (error) {
       this.ctx.log('debug', 'could not read deck state after a notification', { error: describe(error) })
+    } finally {
+      this.emitting = false
     }
   }
 }

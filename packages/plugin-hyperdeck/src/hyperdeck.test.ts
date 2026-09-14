@@ -31,6 +31,7 @@ interface FakeDeck {
     /** What the deck sees on the wire, as opposed to the clip it is on. */
     inputVideoFormat?: string
     videoInput: string
+    configurationReads: number
   }
 }
 
@@ -48,6 +49,7 @@ function makeDeck(): FakeDeck {
     slotStatus: 'mounted',
     inputVideoFormat: '1080p50',
     videoInput: 'SDI',
+    configurationReads: 0,
   }
   const server = new HyperdeckServer('127.0.0.1', PORT)
 
@@ -84,6 +86,7 @@ function makeDeck(): FakeDeck {
     ...(state.inputVideoFormat === undefined ? {} : { 'input video format': state.inputVideoFormat }),
   })
   server.onConfiguration = async () => ({
+    ...((state.configurationReads += 1), {}),
     'video input': state.videoInput,
     'audio input': 'embedded',
     'file format': 'QuickTimeProResHQ',
@@ -208,6 +211,17 @@ describe('protocol errors', () => {
     await expect(hyperdeck.invoke('record', 'startRecording', { filename: 'service' })).rejects.toMatchObject({
       code: 'no-disk',
     })
+  })
+
+  it('reads the deck configuration once, not on every state read', async () => {
+    // Reading state is on the notification path, and the deck pushes
+    // notifications while recording. Every avoidable round trip there is
+    // one the deck does during a service.
+    const hyperdeck = await connect()
+    await hyperdeck.invoke('record', 'readState')
+    await hyperdeck.invoke('record', 'readState')
+    await hyperdeck.invoke('record', 'readState')
+    expect(deck.state.configurationReads).toBe(1)
   })
 
   it('explains a "no input" refusal with what the deck says it is looking at', async () => {

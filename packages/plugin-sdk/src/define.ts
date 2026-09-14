@@ -51,7 +51,10 @@ export function defineDevice(spec: DeviceSpec): DeviceInstance {
           await actions.applyStreamTarget!(readStreamTarget(args))
           break
         case 'startRecording':
-          await actions.startRecording!({ filename: readString(args, 'filename') })
+          await actions.startRecording!({
+            filename: readString(args, 'filename'),
+            ...(typeof args.slot === 'number' ? { slot: args.slot } : {}),
+          })
           break
         case 'route':
           await actions.route!({ input: readString(args, 'input'), output: readString(args, 'output') })
@@ -76,5 +79,9 @@ function readString(args: JsonObject, key: string): string {
 }
 
 function readStreamTarget(args: JsonObject): StreamTarget {
-  return { url: readString(args, 'url'), key: readString(args, 'key') }
+  return {
+    url: readString(args, 'url'),
+    key: readString(args, 'key'),
+    ...(typeof args.quality === 'string' && args.quality ? { quality: args.quality } : {}),
+  }
 }

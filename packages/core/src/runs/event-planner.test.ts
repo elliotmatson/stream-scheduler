@@ -88,13 +88,11 @@ function seed(options: SeedOptions = {}): { occurrenceId: string; seriesId: stri
 
   db.prepare(
     `INSERT INTO event_series
-       (id, label, source_device_id, source_node_id, timezone, rrule, dtstart, duration_ms, prepare_lead_ms,
+       (id, label, timezone, rrule, dtstart, duration_ms, prepare_lead_ms,
         preroll_ms, postroll_ms, late_start_grace_ms, templates, created_at, updated_at)
-     VALUES (?, 'Sunday Service', ?, ?, 'America/Chicago', NULL, ?, ?, ?, 0, 0, ?, ?, 0, 0)`,
+     VALUES (?, 'Sunday Service', 'America/Chicago', NULL, ?, ?, ?, 0, 0, ?, ?, 0, 0)`,
   ).run(
     seriesId,
-    options.source?.deviceId ?? null,
-    options.source?.nodeId ?? null,
     START,
     duration,
     30 * MINUTE,
@@ -118,8 +116,8 @@ function seed(options: SeedOptions = {}): { occurrenceId: string; seriesId: stri
       spec.offsetMs ?? 0,
       spec.durationMs ?? duration,
       spec.credentialId ?? null,
-      spec.deviceId ?? null,
-      spec.nodeId ?? null,
+      spec.deviceId ?? options.source?.deviceId ?? null,
+      spec.nodeId ?? options.source?.nodeId ?? null,
       JSON.stringify(spec.templates ?? {}),
     )
   })
@@ -183,11 +181,11 @@ describe('EventPlanner', () => {
     ])
   })
 
-  it('refuses to plan an output with no device anywhere to run it', () => {
+  it('refuses to plan an output with no device to run on', () => {
     const { occurrenceId } = seed({
       outputs: [{ label: 'Main', credentialId: addCredential('rtmps://x/live2', 'live_key') }],
     })
-    expect(() => plannerFor().plan(occurrenceId)).toThrow(/no source encoder/)
+    expect(() => plannerFor().plan(occurrenceId)).toThrow(/has no device to run on/)
   })
 
   it('drives a scheduled event end to end through the engine', async () => {

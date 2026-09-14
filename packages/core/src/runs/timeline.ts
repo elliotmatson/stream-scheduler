@@ -25,7 +25,6 @@ export interface EventTimeline {
   timezone: string
   windowStart: number
   windowEnd: number
-  source: { deviceId: string | null; nodeId: string | null }
   templates: OutputTemplates
   prepareLeadMs: number
   prerollMs: number
@@ -43,8 +42,6 @@ interface TimelineRow {
   label: string
   timezone: string
   templates: string
-  source_device_id: string | null
-  source_node_id: string | null
   prepare_lead_ms: number
   preroll_ms: number
   postroll_ms: number
@@ -55,8 +52,7 @@ export function timelineFor(db: Db, occurrenceId: string, options: { forcedAt?: 
   const row = db
     .prepare(
       `SELECT o.scheduled_start, o.scheduled_end, o.series_id, s.label, s.timezone, s.templates,
-              s.source_device_id, s.source_node_id, s.prepare_lead_ms, s.preroll_ms, s.postroll_ms,
-              s.late_start_grace_ms
+              s.prepare_lead_ms, s.preroll_ms, s.postroll_ms, s.late_start_grace_ms
          FROM occurrence o JOIN event_series s ON s.id = o.series_id
         WHERE o.id = ?`,
     )
@@ -84,7 +80,6 @@ export function timelineFor(db: Db, occurrenceId: string, options: { forcedAt?: 
     timezone: row.timezone,
     windowStart,
     windowEnd: row.scheduled_end + shift,
-    source: { deviceId: row.source_device_id, nodeId: row.source_node_id },
     templates: parseTemplates(row.templates),
     prepareLeadMs: row.prepare_lead_ms,
     prerollMs: row.preroll_ms,

@@ -335,6 +335,33 @@ UPDATE occurrence SET status = 'failed' WHERE status = 'running';
 ALTER TABLE event_series DROP COLUMN pipeline_id;
 `,
   },
+  {
+    id: 7,
+    name: 'outputs-own-their-device',
+    sql: `
+-- Every output already had a device of its own; the event-level source was
+-- the default it fell back to. Two of them saying where a thing runs is one
+-- too many, and the event-level one could not express the ordinary case of
+-- a morning split across two encoders.
+--
+-- Backfill first, so an output that was relying on the fallback keeps the
+-- hardware it has been running on.
+UPDATE event_output
+   SET device_id = (SELECT s.source_device_id FROM event_series s WHERE s.id = event_output.series_id),
+       node_id   = (SELECT s.source_node_id   FROM event_series s WHERE s.id = event_output.series_id)
+ WHERE device_id IS NULL
+   AND (SELECT s.source_device_id FROM event_series s WHERE s.id = event_output.series_id) IS NOT NULL;
+
+ALTER TABLE event_series DROP COLUMN source_device_id;
+ALTER TABLE event_series DROP COLUMN source_node_id;
+
+-- What an output wants its device set to before it runs. Every key is
+-- optional and absent means "leave the device as it is", which is the
+-- setting most events want and the only safe default for hardware somebody
+-- else may have configured by hand.
+ALTER TABLE event_output ADD COLUMN settings TEXT NOT NULL DEFAULT '{}';
+`,
+  },
 ]
 
 interface GraphNode {

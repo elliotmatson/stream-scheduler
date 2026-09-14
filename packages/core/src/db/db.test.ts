@@ -59,9 +59,6 @@ describe('the event-output migration', () => {
 
     migrate(db)
 
-    const series = db.prepare('SELECT source_device_id, source_node_id FROM event_series WHERE id = ?').get('s1')
-    expect(series).toEqual({ source_device_id: 'enc', source_node_id: 'stream' })
-
     const outputs = db
       .prepare('SELECT kind, label, position, offset_ms, duration_ms, destination_id, device_id, node_id, templates FROM event_output ORDER BY position')
       .all()
@@ -73,9 +70,10 @@ describe('the event-output migration', () => {
         offset_ms: 0,
         duration_ms: 3_600_000,
         destination_id: 'yt',
-        // Null because this output runs on the event's own source encoder.
-        device_id: null,
-        node_id: null,
+        // Migration 5 left this on the event's source; migration 7 pushed
+        // the source down onto the output that was relying on it.
+        device_id: 'enc',
+        node_id: 'stream',
         templates: '{}',
       },
       {
@@ -99,11 +97,10 @@ describe('the event-output migration', () => {
 
     migrate(db)
 
-    expect(db.prepare('SELECT source_device_id FROM event_series WHERE id = ?').get('s1')).toEqual({
-      source_device_id: 'deck',
-    })
-    expect(db.prepare('SELECT kind, device_id FROM event_output').all()).toEqual([
-      { kind: 'recording', device_id: null },
+    // The only node became the source in migration 5, then came back down
+    // onto the output in migration 7.
+    expect(db.prepare('SELECT kind, device_id, node_id FROM event_output').all()).toEqual([
+      { kind: 'recording', device_id: 'deck', node_id: 'rec' },
     ])
   })
 
