@@ -1,5 +1,8 @@
 services:
   scheduler:
+    # Builds from this checkout. To run the published image instead, drop the
+    # build line and set image to
+    # ghcr.io/elliotmatson/stream-scheduler:latest
     build: .
     image: stream-scheduler:local
     restart: unless-stopped
