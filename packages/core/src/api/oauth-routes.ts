@@ -4,6 +4,7 @@ import { z } from 'zod'
 import type { PendingAuthorization } from '@scheduler/plugin-sdk'
 import type { Application } from '../app.js'
 import { assertUnreferenced, ConflictError, NotFoundError } from './errors.js'
+import { originOf } from './origin.js'
 
 /**
  * Bring-your-own OAuth: each install supplies its own Google Cloud client.
@@ -341,31 +342,13 @@ export function registerOAuthRoutes(fastify: FastifyInstance, app: Application):
  * Where Google should send the browser back to.
  *
  * It has to be *exactly* what is registered on the OAuth client, character
- * for character, or the consent screen refuses with `redirect_uri_mismatch`
- * — so this is worth getting right rather than assuming.
- *
- * It comes off the request, so it is whatever a browser actually used:
- * `X-Forwarded-Proto` and `X-Forwarded-Host` first, because an app reached
- * over HTTPS through Tailscale Serve or any reverse proxy sees a plain HTTP
- * request to an internal name, and would otherwise advertise an `http://`
- * callback that Google will not even let you register. Failing those, the
- * request's own `Host`, which is right for reaching it directly on the LAN
- * or on loopback.
- *
+ * for character, or the consent screen refuses with `redirect_uri_mismatch`.
  * The out-of-band copy-paste flow is deprecated and is not used.
  */
 function redirectUriFor(request: FastifyRequest): string {
-  // A proxy may send a list; the first entry is the original client's.
-  const forwardedProto = header(request, 'x-forwarded-proto')?.split(',')[0]?.trim()
-  const scheme = forwardedProto === 'https' || forwardedProto === 'http' ? forwardedProto : 'http'
-  const host = header(request, 'x-forwarded-host')?.split(',')[0]?.trim() || request.headers.host
-  return `${scheme}://${host ?? '127.0.0.1:8500'}/oauth/callback`
+  return `${originOf(request)}/oauth/callback`
 }
 
-function header(request: FastifyRequest, name: string): string | undefined {
-  const value = request.headers[name]
-  return Array.isArray(value) ? value[0] : value
-}
 
 /** Google allows a plain-HTTP callback only on loopback. */
 function isLoopbackUri(uri: string): boolean {

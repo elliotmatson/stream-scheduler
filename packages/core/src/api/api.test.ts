@@ -257,6 +257,92 @@ describe('runs', () => {
     expect(JSON.stringify(run.json)).not.toContain('live_super-secret-key')
   })
 
+  it('prepares early without putting anything on air', async () => {
+    // What this is for: an unlisted broadcast has to exist before its link
+    // can be sent round, and that is days before the service.
+    const { deviceId } = await seedEverything()
+    const [first] = (await get(`/api/occurrences?from=${START - MINUTE}&to=${START + MINUTE}`)).json
+
+    // Well before the event, and before its prepare lead would have fired.
+    clock.set(START - 3 * 60 * MINUTE)
+    const prepared = await post(`/api/occurrences/${first.id}/prepare-now`, {})
+    expect(prepared.status).toBe(200)
+
+    const run = await get(`/api/runs/${prepared.json.runId}`)
+    expect(run.json.state).toBe('ready')
+    const states = run.json.steps.map((step: { label: string; state: string }) => `${step.label}:${step.state}`)
+    // Everything that puts it on air is still to come at its own time:
+    // preparing is not starting. Pointing the encoder is part of going on
+    // air rather than of preparing, so that one encoder can carry the 9:00
+    // service and then the 11:00 one.
+    expect(states).toEqual([
+      'Main: point the encoder at it:pending',
+      'Main: go live:pending',
+      'Main: stop:pending',
+    ])
+
+    const state = await get(`/api/devices/${deviceId}/nodes/stream/state`)
+    expect(state.json.state.streaming.active).toBe(false)
+  })
+
+  it('hands back where to watch, once something has prepared', async () => {
+    // A stub service rather than YouTube: what is under test is that the
+    // link a provider reports in prepare comes back out of the run, not
+    // anybody's API.
+    app.destinations.register({
+      id: 'stub',
+      displayName: 'Stub service',
+      apiVersion: '1',
+      configSchema: [],
+      providesIngest: true,
+      createDestination: async () => ({
+        prepare: async () => ({
+          externalId: 'bc-1',
+          ingest: { url: 'rtmps://stub.invalid/live', key: 'stub_key-value' },
+          watchUrl: 'https://watch.invalid/bc-1',
+        }),
+        reconcile: async () => undefined,
+        finalize: async () => {},
+        compensate: async () => {},
+        health: () => ({ state: 'connected' as const, since: 0 }),
+        dispose: async () => {},
+      }),
+    })
+    app.db
+      .prepare(
+        `INSERT INTO account (id, provider, external_id, display_name, secret_ref, scopes, created_at)
+         VALUES ('acct-stub', 'stub', 'x', 'Stub channel', 'ref', '', 0)`,
+      )
+      .run()
+    const destination = await post('/api/destinations', {
+      providerId: 'stub',
+      label: 'Stub channel',
+      accountId: 'acct-stub',
+      config: {},
+    })
+
+    const { seriesId, deviceId, outputId } = await seedEverything()
+    await del(`/api/series/${seriesId}/outputs/${outputId}`)
+    await post(`/api/series/${seriesId}/outputs`, {
+      kind: 'stream',
+      label: 'Main',
+      durationMs: 90 * MINUTE,
+      destinationId: destination.json.id,
+      deviceId,
+      nodeId: 'stream',
+    })
+
+    const [first] = (await get(`/api/occurrences?from=${START - MINUTE}&to=${START + MINUTE}`)).json
+    clock.set(START - 3 * 60 * MINUTE)
+    const prepared = await post(`/api/occurrences/${first.id}/prepare-now`, {})
+
+    expect(prepared.json.links).toEqual([{ label: 'Main', url: 'https://watch.invalid/bc-1' }])
+    const run = await get(`/api/runs/${prepared.json.runId}`)
+    expect(run.json.links).toEqual([{ label: 'Main', url: 'https://watch.invalid/bc-1' }])
+    // And no key came back with it.
+    expect(JSON.stringify(run.json)).not.toContain('stub_key-value')
+  })
+
   it('cancels a live run through the API', async () => {
     await seedEverything()
     const [first] = (await get(`/api/occurrences?from=${START - MINUTE}&to=${START + MINUTE}`)).json
@@ -539,6 +625,23 @@ describe('the OAuth callback address', () => {
     JSON.parse(
       (await server.inject({ method: 'GET', url: '/api/oauth/youtube/instructions', headers })).body,
     )
+
+  it('points alert links at the address a browser actually used', async () => {
+    // A link in an alert has no request to work from, and the loopback
+    // default sends everyone to their own machine. Opening the UI is what
+    // teaches it where it really is.
+    await server.inject({
+      method: 'GET',
+      url: '/api/devices',
+      headers: { host: 'stream.example.org', 'x-forwarded-proto': 'https', accept: 'text/html' },
+    })
+    expect(app.publicOrigin).toBe('https://stream.example.org')
+
+    // A health check curling loopback must not undo that: it is not a page
+    // load, and it happens every thirty seconds forever.
+    await server.inject({ method: 'GET', url: '/healthz', headers: { host: '127.0.0.1:8500' } })
+    expect(app.publicOrigin).toBe('https://stream.example.org')
+  })
 
   it('offers the channel\u2019s own playlists, before any destination exists', async () => {
     // The form that needs the list is the one creating the destination, so

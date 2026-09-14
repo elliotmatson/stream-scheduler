@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import type { ReactNode } from 'react'
 import { api, useResource, type RunStep } from '../api.ts'
-import { Card, ErrorBanner, StatusPill } from '../components.tsx'
+import { Card, CopyButton, ErrorBanner, StatusPill } from '../components.tsx'
 import { relative } from '../format.ts'
 
 /**
@@ -66,6 +66,24 @@ export function RunDetail({ runId, navigate }: { runId: string; navigate: (path:
             <div>{run.failure.message}</div>
             {run.failure.remediation ? <div style={{ marginTop: 6 }}>{run.failure.remediation}</div> : null}
           </div>
+        ) : null}
+
+        {/* The reason somebody opens this page before the day: an unlisted
+            broadcast's link, ready to send round, as soon as it exists. */}
+        {(run.links ?? []).length > 0 ? (
+          <Card title="Where to watch">
+            <div className="stack" style={{ gap: 8 }}>
+              {(run.links ?? []).map((link) => (
+                <div key={link.url} className="row" style={{ gap: 10, alignItems: 'baseline' }}>
+                  <span style={{ minWidth: 130 }}>{link.label}</span>
+                  <a href={link.url} target="_blank" rel="noreferrer">
+                    {link.url}
+                  </a>
+                  <CopyButton value={link.url} />
+                </div>
+              ))}
+            </div>
+          </Card>
         ) : null}
 
         <Card title="Steps">

@@ -126,6 +126,29 @@ describe('preparing a broadcast', () => {
   })
 })
 
+describe('the broadcast list', () => {
+  it('asks with one filter, because two is a rejected request', async () => {
+    // What this cost: `mine` alongside `broadcastStatus` is refused before
+    // YouTube looks at anything else, so every prepare that reached the
+    // reconcile step failed with "Incompatible parameters" after three
+    // attempts. The fake enforces the rule now, so the adapter cannot
+    // quietly go back to sending both.
+    const both = await youtube.fetch(
+      'https://www.googleapis.com/youtube/v3/liveBroadcasts?mine=true&broadcastStatus=upcoming',
+      { method: 'GET' },
+    )
+    expect(both.ok).toBe(false)
+    expect(both.status).toBe(400)
+    expect(await both.text()).toContain('Incompatible parameters')
+
+    // And the adapter's own call is accepted: nothing to adopt is a clean
+    // `undefined`, not a rejected request.
+    const dest = await destination({})
+    await expect(dest.reconcile({ idempotencyKey: 'k', metadata: metadata() })).resolves.toBeUndefined()
+    expect(youtube.calls).toContain('GET /liveBroadcasts')
+  })
+})
+
 describe('playlists', () => {
   it('lists what the channel has, so nobody pastes an id out of a URL', async () => {
     const dest = await destination({})

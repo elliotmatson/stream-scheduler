@@ -26,6 +26,7 @@ import { describeConflict, overlapsForSeries } from '../events/overlap.js'
 import { assertUnreferenced, ConflictError, NotFoundError } from './errors.js'
 import { registerNotifyRoutes } from './notify-routes.js'
 import { registerOAuthRoutes } from './oauth-routes.js'
+import { originOf } from './origin.js'
 
 export interface ServerOptions {
   app: Application
@@ -62,6 +63,14 @@ export async function createServer(options: ServerOptions): Promise<FastifyInsta
   }
 
   const fastify = Fastify({ logger: false, bodyLimit: 2 * 1024 * 1024 })
+
+  // Learn where people actually reach this app, for the links in alerts.
+  // Only page loads count: a container health check curling loopback every
+  // thirty seconds would otherwise keep resetting it to an address that
+  // works on one machine and nowhere else.
+  fastify.addHook('onRequest', async (request) => {
+    if (request.headers.accept?.includes('text/html')) app.setPublicOrigin(originOf(request))
+  })
   await fastify.register(websocket)
 
   fastify.setErrorHandler(async (raw, _request, reply) => {
@@ -895,6 +904,21 @@ function registerRoutes(fastify: FastifyInstance, app: Application): void {
     return { ok: true }
   })
 
+  /**
+   * Prepare an event early, so the broadcast exists and can be linked to.
+   *
+   * An unlisted stream has to be sent round before the day, and the link
+   * does not exist until the broadcast does. This runs the prepare phase
+   * and stops: every output still goes on air at its own time.
+   */
+  fastify.post('/api/occurrences/:id/prepare-now', async (request) => {
+    const { id } = z.object({ id: z.string() }).parse(request.params)
+    const runId = await app.engine.prepareNow(id)
+    // Deliberately not advanced: advancing an event whose window has already
+    // opened would put it on air, and this button does not do that.
+    return { runId, state: app.store.getRun(runId).state, links: watchLinks(app, runId) }
+  })
+
   fastify.post('/api/occurrences/:id/start-now', async (request) => {
     const { id } = z.object({ id: z.string() }).parse(request.params)
     const runId = await app.engine.startNow(id)
@@ -933,6 +957,10 @@ function registerRoutes(fastify: FastifyInstance, app: Application): void {
     // before they were ever written.
     return {
       ...toRunDto(run),
+      // Where each prepared stream can be watched. Pulled out of the step
+      // responses because that is where it lands, and buried in a timeline
+      // is no use to somebody who needs to send the link round.
+      links: watchLinks(app, id),
       steps: app.store.steps(id).map((step) => ({
         seq: step.seq,
         kind: step.kind,
@@ -1015,6 +1043,25 @@ function renderNames(
 
 function isLoopback(host: string): boolean {
   return host === '127.0.0.1' || host === 'localhost' || host === '::1'
+}
+
+/**
+ * The watch links a run has produced so far.
+ *
+ * A prepare step records where the broadcast can be seen, so a stream that
+ * has finished preparing has a link whether or not it has gone live yet.
+ */
+function watchLinks(app: Application, runId: string): { label: string; url: string }[] {
+  const links: { label: string; url: string }[] = []
+  for (const step of app.store.steps(runId)) {
+    if (!step.response) continue
+    const response = JSON.parse(step.response) as { watchUrl?: unknown }
+    if (typeof response.watchUrl !== 'string') continue
+    // The step label reads "Main: create the broadcast"; the half before
+    // the colon is the output an operator named.
+    links.push({ label: (step.label ?? '').split(':')[0]?.trim() || 'Stream', url: response.watchUrl })
+  }
+  return links
 }
 
 function statusFor(error: Error): number {

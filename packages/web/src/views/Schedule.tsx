@@ -427,6 +427,15 @@ function ScheduleList({
                     ) : null}
                     {occurrence.status === 'pending' ? (
                       <>
+                        {/* Makes the broadcast now, so an unlisted link can
+                            go out ahead of the day. The outputs still start
+                            at their own times. */}
+                        <button
+                          disabled={busy === occurrence.id}
+                          onClick={() => void act(occurrence.id, () => api.prepareNow(occurrence.id))}
+                        >
+                          Prepare now
+                        </button>
                         <button disabled={busy === occurrence.id} onClick={() => void act(occurrence.id, () => api.startNow(occurrence.id))}>
                           Start now
                         </button>

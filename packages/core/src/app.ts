@@ -59,6 +59,16 @@ export class Application {
   readonly logger: Logger
   readonly clock: Clock
 
+  /**
+   * Where a browser last reached this app.
+   *
+   * A link in an alert has no request to work from — a run fails at 09:00
+   * with nobody typing anything — and the loopback default sends everyone
+   * to their own machine. So the address a person actually used is recorded
+   * when they open the UI, kept across restarts, and used for those links.
+   */
+  private readonly links: { origin: string; configured: boolean }
+
   private readonly tickListeners = new Set<() => void>()
   private timer: NodeJS.Timeout | undefined
   private ticking = false
@@ -83,6 +93,7 @@ export class Application {
     clock: Clock
     tickIntervalMs: number
     horizonMs: number
+    links: { origin: string; configured: boolean }
   }) {
     this.paths = init.paths
     this.db = init.db
@@ -99,6 +110,27 @@ export class Application {
     this.clock = init.clock
     this.tickIntervalMs = init.tickIntervalMs
     this.horizonMs = init.horizonMs
+    this.links = init.links
+  }
+
+  get publicOrigin(): string {
+    return this.links.origin
+  }
+
+  /**
+   * Remember where the UI was opened, so alerts can link back to it.
+   *
+   * Written through to the database: an install that has not been touched
+   * since a restart still has to produce a link somebody can follow.
+   */
+  setPublicOrigin(origin: string): void {
+    // An address the operator stated outright is not second-guessed.
+    if (this.links.configured || origin === this.links.origin) return
+    this.links.origin = origin
+    this.db
+      .prepare("INSERT INTO setting (key, value) VALUES ('public_origin', ?) ON CONFLICT(key) DO UPDATE SET value = ?")
+      .run(origin, origin)
+    this.logger.info('links in alerts will point here', { origin })
   }
 
   static create(options: AppOptions = {}): Application {
@@ -139,7 +171,19 @@ export class Application {
     const store = new RunStore(db, clock, scrubber)
     const planner = new EventPlanner({ db, connections, vault, clock, destinations })
     const notifier = new Notifier({ db, clock, vault, logger })
-    const baseUrl = options.baseUrl ?? 'http://127.0.0.1:8500'
+    // What a link should say, in order: what the operator configured, what
+    // a browser last used, and failing both the address this process
+    // listens on — which is right for a single machine and wrong for
+    // everyone else, so it is the last resort rather than the default.
+    const remembered = (
+      db.prepare("SELECT value FROM setting WHERE key = 'public_origin'").get() as
+        | { value: string }
+        | undefined
+    )?.value
+    const links = {
+      origin: options.baseUrl ?? remembered ?? 'http://127.0.0.1:8500',
+      configured: options.baseUrl !== undefined,
+    }
 
     const engine = new RunEngine({
       db,
@@ -150,7 +194,9 @@ export class Application {
       // Queued rather than sent here: the run engine's job is to end the run
       // cleanly, and a mail server that hangs must not be on that path.
       onFailure: (event) => {
-        notifier.enqueue(runFailedNotification(db, event, baseUrl))
+        // Read at send time, not at startup: by the time a run fails, the
+        // app may have learnt where it is really being reached.
+        notifier.enqueue(runFailedNotification(db, event, links.origin))
       },
     })
 
@@ -181,6 +227,7 @@ export class Application {
       clock,
       tickIntervalMs: options.tickIntervalMs ?? 5_000,
       horizonMs: options.horizonMs ?? DEFAULT_HORIZON_MS,
+      links,
     })
   }
 

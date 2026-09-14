@@ -126,7 +126,11 @@ export class YouTubeApi {
       'liveBroadcasts.list',
       'GET',
       '/liveBroadcasts',
-      { part: 'snippet,status,contentDetails', broadcastStatus: 'upcoming', maxResults: '50', mine: 'true' },
+      // Exactly one filter: `id`, `mine` or `broadcastStatus`. Sending
+      // `mine` alongside `broadcastStatus` is rejected outright with
+      // "Incompatible parameters", and `broadcastStatus` already scopes the
+      // answer to the authenticated channel.
+      { part: 'snippet,status,contentDetails', broadcastStatus: 'upcoming', maxResults: '50' },
     )
     return response.items ?? []
   }

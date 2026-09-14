@@ -152,6 +152,19 @@ export class FakeYouTube {
   }
 
   private listBroadcasts(query: URLSearchParams): ReturnType<Fetch> {
+    // The API takes exactly one filter, and rejects a request carrying two
+    // before it looks at anything else. Enforced here because a fake that
+    // is more forgiving than the service is a fake that passes while the
+    // real call fails at 09:00 — which is exactly what happened.
+    const filters = ['id', 'mine', 'broadcastStatus'].filter((name) => query.get(name))
+    if (filters.length > 1) {
+      return this.error(
+        400,
+        'incompatibleParameters',
+        `Incompatible parameters specified in the request: ${filters.join(', ')}`,
+      )
+    }
+
     const id = query.get('id')
     const all = [...this.broadcasts.values()].filter((b) => !b.deleted)
     const items = id ? all.filter((b) => b.id === id) : all.filter((b) => b.lifeCycleStatus !== 'complete')

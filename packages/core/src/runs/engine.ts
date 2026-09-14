@@ -503,6 +503,41 @@ export class RunEngine {
     return 'cancelled'
   }
 
+  /**
+   * Does an occurrence's prepare phase now, ahead of its lead time.
+   *
+   * For the thing that has to happen before the day: an unlisted broadcast
+   * exists as soon as it is prepared, so its link can be sent out to the
+   * people who need it. Unlike `startNow`, the outputs keep their real
+   * start times — this brings the preparation forward, not the service.
+   */
+  async prepareNow(occurrenceId: string): Promise<string> {
+    const existing = this.deps.store.findRunForOccurrence(occurrenceId)
+    if (existing && !isTerminal(existing.state)) {
+      // Already has a run: prepare it if it has not been, and otherwise
+      // leave it be. Pressing the button twice must not cost a broadcast.
+      if (existing.state === 'scheduled' || existing.state === 'preparing') {
+        await this.prepare(existing, await this.planFor(existing), this.timelineFor(existing))
+      }
+      return existing.id
+    }
+
+    // Planned with its real times: this brings the preparation forward, not
+    // the service. The outputs still go on air when they were going to.
+    const run = this.deps.store.createRun(occurrenceId, await this.deps.planner.plan(occurrenceId), {
+      attempt: (existing?.attempt ?? 0) + 1,
+    })
+    this.deps.db.prepare("UPDATE occurrence SET status = 'running' WHERE id = ?").run(occurrenceId)
+
+    // Run the prepare phase here rather than waiting for the clock: the
+    // whole point is that it happens now. Everything after it stays on the
+    // timeline, driven by the tick like any other run.
+    const record = this.deps.store.getRun(run.id)
+    await this.prepare(record, await this.planFor(record), this.timelineFor(record))
+    this.logger.info('prepared a run ahead of its lead time', { runId: run.id, occurrenceId })
+    return run.id
+  }
+
   /** Creates a run for an occurrence right now, ignoring its prepare lead. */
   async startNow(occurrenceId: string): Promise<string> {
     const existing = this.deps.store.findRunForOccurrence(occurrenceId)

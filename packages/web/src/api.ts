@@ -134,6 +134,9 @@ export interface Run {
   startedAt: number | null
   endedAt: number | null
   failure: { code: string; message: string; step?: string; remediation?: string } | null
+  /** Where each prepared stream can be watched. Present once it has
+   *  prepared, whether or not it has gone live. */
+  links?: { label: string; url: string }[]
   steps?: RunStep[]
 }
 
@@ -399,6 +402,13 @@ export const api = {
     request<{ state: string }>(`/api/runs/${id}/cancel`, { method: 'POST', body: JSON.stringify({ reason }) }),
   startNow: (occurrenceId: string) =>
     request<{ runId: string; state: string }>(`/api/occurrences/${occurrenceId}/start-now`, { method: 'POST' }),
+  /** Runs the prepare phase early, so an unlisted stream's link exists in
+   *  time to be sent round. Every output still starts at its own time. */
+  prepareNow: (occurrenceId: string) =>
+    request<{ runId: string; state: string; links: { label: string; url: string }[] }>(
+      `/api/occurrences/${occurrenceId}/prepare-now`,
+      { method: 'POST' },
+    ),
   skip: (occurrenceId: string) => request<unknown>(`/api/occurrences/${occurrenceId}/skip`, { method: 'POST' }),
   notificationKinds: () => request<ChannelKind[]>('/api/notifications/kinds'),
   notificationChannels: () =>
