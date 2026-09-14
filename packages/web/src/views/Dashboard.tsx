@@ -60,7 +60,7 @@ export function Dashboard({ navigate }: { navigate: (path: string) => void }): R
               {data.attention.map((item) => (
                 <button
                   key={`${item.kind}-${item.message}`}
-                  className={`banner ${item.kind === 'media' ? 'warn' : 'error'} banner-action`}
+                  className={`banner ${item.kind === 'media' || item.kind === 'security' ? 'warn' : 'error'} banner-action`}
                   onClick={() => navigate(item.href)}
                 >
                   {item.message}

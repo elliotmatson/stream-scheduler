@@ -129,6 +129,40 @@ jobs:
             || { echo "static assets are missing"; docker logs scheduler; exit 1; }
           echo "UI, API and static assets all served"
 
+      - name: A password locks the container without locking it shut
+        # The exact failure this guards against: a lock that 401s the page
+        # itself. A second container, with a password, checking that the
+        # health check still answers, the API refuses, the page is still
+        # served — and that logging in opens the API.
+        run: |
+          docker run -d --name scheduler-locked \
+            -e SCHEDULER_SECRET=ci-master-secret-value \
+            -e SCHEDULER_UI_PASSWORD=ci-ui-password-value \
+            -p 127.0.0.1:8501:8500 stream-scheduler:ci
+          for i in $(seq 1 60); do
+            curl -fsS http://127.0.0.1:8501/healthz > /dev/null && break
+            sleep 1
+          done
+
+          curl -fsS http://127.0.0.1:8501/healthz > /dev/null \
+            || { echo "a locked container is not healthy"; docker logs scheduler-locked; exit 1; }
+
+          curl -fsS http://127.0.0.1:8501/ | grep -q '<div id="root">' \
+            || { echo "the login page is not served"; docker logs scheduler-locked; exit 1; }
+
+          code=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8501/api/devices)
+          [ "$code" = "401" ] \
+            || { echo "the API answered $code, expected 401"; docker logs scheduler-locked; exit 1; }
+
+          token=$(curl -fsS -X POST http://127.0.0.1:8501/api/login \
+            -H 'content-type: application/json' \
+            -d '{"password":"ci-ui-password-value"}' | sed -n 's/.*"token":"\([^"]*\)".*/\1/p')
+          [ -n "$token" ] || { echo "no session came back"; docker logs scheduler-locked; exit 1; }
+
+          curl -fsS -H "authorization: Bearer $token" http://127.0.0.1:8501/api/devices > /dev/null \
+            || { echo "the session did not open the API"; docker logs scheduler-locked; exit 1; }
+          echo "locked, and openable"
+
       - name: The runtime image does not ship the build toolchain
         # The image used to carry TypeScript, Turbo, Vitest and ESLint,
         # because `pnpm prune --prod` silently does nothing in a workspace.
@@ -147,7 +181,9 @@ jobs:
 
       - name: Container logs
         if: always()
-        run: docker logs scheduler || true
+        run: |
+          docker logs scheduler || true
+          docker logs scheduler-locked || true
 
       # Everything below runs only once the image has been proved to start.
       # A pull request builds and tests but never publishes: `pull_request`

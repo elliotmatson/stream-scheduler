@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import type { ReactNode } from 'react'
-import { useLive } from './api.ts'
+import { api, useLive, useResource, whenSignedOut } from './api.ts'
 import { useTheme, type ThemePreference } from './theme.ts'
 import {
   IconBrand,
@@ -12,6 +12,7 @@ import {
   IconNow,
   IconSchedule,
   IconServices,
+  IconSettings,
   IconSun,
   IconSystem,
 } from './icons.tsx'
@@ -22,6 +23,8 @@ import { SeriesList } from './views/SeriesList.tsx'
 import { RunDetail, Runs } from './views/RunDetail.tsx'
 import { Notifications } from './views/Notifications.tsx'
 import { Services } from './views/Services.tsx'
+import { Settings } from './views/Settings.tsx'
+import { Login } from './views/Login.tsx'
 
 /**
  * A hash router in twenty lines. This app has a handful of screens; a routing
@@ -53,12 +56,54 @@ const NAV = [
   { to: '/services', label: 'Services', icon: <IconServices /> },
   { to: '/runs', label: 'Runs', icon: <IconRuns /> },
   { to: '/notifications', label: 'Notifications', icon: <IconNotifications /> },
+  { to: '/settings', label: 'Settings', icon: <IconSettings /> },
 ]
 
 export function App(): ReactNode {
   const [path, navigate] = useHashRoute()
-  const live = useLive()
   const theme = useTheme()
+  const session = useResource(() => api.session(), [])
+
+  // Any request coming back 401 — an expired session, or a password set
+  // from another browser — re-reads the session, which puts the login form
+  // up rather than leaving a screen of numbers that stopped being true.
+  useEffect(() => whenSignedOut(session.reload), [session.reload])
+
+  // Nothing is rendered until the answer is in: guessing wrong flashes the
+  // whole app up and then snatches it away, or the reverse.
+  if (!session.data) return null
+  if (session.data.required && !session.data.signedIn) {
+    return <Login onSignedIn={session.reload} />
+  }
+
+  return (
+    <SignedIn
+      path={path}
+      navigate={navigate}
+      theme={theme}
+      locked={session.data.required}
+      onSessionChanged={session.reload}
+    />
+  )
+}
+
+function SignedIn({
+  path,
+  navigate,
+  theme,
+  locked,
+  onSessionChanged,
+}: {
+  path: string
+  navigate: (path: string) => void
+  theme: ReturnType<typeof useTheme>
+  /** Whether there is a password to sign out of. */
+  locked: boolean
+  onSessionChanged: () => void
+}): ReactNode {
+  // Below the gate, so the socket is only opened by a browser that is
+  // allowed to have one.
+  const live = useLive()
   const liveRuns = live.runs.filter((run) => run.state === 'running').length
 
   return (
@@ -107,12 +152,23 @@ export function App(): ReactNode {
               </span>
             )}
             <ThemeToggle preference={theme.preference} onChange={theme.setPreference} />
+            {locked ? (
+              <button
+                className="link"
+                title="Ends this session on this browser."
+                onClick={() => {
+                  void api.logout().then(onSessionChanged, onSessionChanged)
+                }}
+              >
+                Sign out
+              </button>
+            ) : null}
           </div>
         </div>
       </nav>
 
       <main className="content">
-        <Route path={path} navigate={navigate} />
+        <Route path={path} navigate={navigate} onSessionChanged={onSessionChanged} />
       </main>
     </div>
   )
@@ -149,9 +205,18 @@ function ThemeToggle({
   )
 }
 
-function Route({ path, navigate }: { path: string; navigate: (path: string) => void }): ReactNode {
+function Route({
+  path,
+  navigate,
+  onSessionChanged,
+}: {
+  path: string
+  navigate: (path: string) => void
+  onSessionChanged: () => void
+}): ReactNode {
   const run = /^\/runs\/(.+)$/.exec(path)
   if (run) return <RunDetail runId={run[1]!} navigate={navigate} />
+  if (path === '/settings') return <Settings onSessionChanged={onSessionChanged} />
   if (path === '/schedule') return <Schedule navigate={navigate} />
   if (path === '/devices') return <Devices />
   if (path === '/services') return <Services />

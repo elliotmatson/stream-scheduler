@@ -357,6 +357,16 @@ export class ApiError extends Error {
   }
 }
 
+/**
+ * Told when the server stops recognising us — a session that expired, or a
+ * password set from another browser. The app re-reads the session and shows
+ * the login form rather than leaving a screen of stale numbers up.
+ */
+let onUnauthorized: (() => void) | undefined
+export function whenSignedOut(handler: () => void): void {
+  onUnauthorized = handler
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const method = init?.method ?? 'GET'
   const response = await fetch(path, {
@@ -368,6 +378,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   })
   const text = await response.text()
   const body = text ? (JSON.parse(text) as Record<string, unknown>) : {}
+  if (response.status === 401 && path !== '/api/login') onUnauthorized?.()
   if (!response.ok) {
     throw new ApiError(
       response.status,
@@ -378,7 +389,33 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return body as T
 }
 
+export interface SessionState {
+  /** False means no password is set: anyone who can reach the port is in. */
+  required: boolean
+  signedIn: boolean
+  /** Set by SCHEDULER_UI_PASSWORD, so this app cannot change it. */
+  managedByEnvironment: boolean
+  minPasswordLength: number
+}
+
 export const api = {
+  session: () => request<SessionState>('/api/session'),
+
+  login: (password: string) =>
+    request<{ token: string; expiresAt: number }>('/api/login', {
+      method: 'POST',
+      body: JSON.stringify({ password }),
+    }),
+
+  logout: () => request<{ ok: true }>('/api/logout', { method: 'POST' }),
+
+  /** `null` takes the password off again. */
+  setPassword: (password: string | null) =>
+    request<{ required: boolean }>('/api/password', {
+      method: 'POST',
+      body: JSON.stringify({ password }),
+    }),
+
   occurrences: (from: number, to: number) =>
     request<Occurrence[]>(`/api/occurrences?from=${from}&to=${to}`),
   series: () => request<Series[]>('/api/series'),

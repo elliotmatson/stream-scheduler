@@ -69,7 +69,7 @@ export interface DashboardDevice {
 }
 
 export interface DashboardAttention {
-  kind: 'run-failed' | 'device' | 'account' | 'media'
+  kind: 'run-failed' | 'device' | 'account' | 'media' | 'security'
   message: string
   /** Where to go to do something about it. */
   href: string
@@ -306,6 +306,18 @@ function attention(app: Application, now: number): DashboardAttention[] {
         })
       }
     }
+  }
+
+  // Only where it is actually a problem: a booth machine on loopback with
+  // no password is a reasonable way to run this, and nagging about it there
+  // would teach people to ignore this list.
+  if (app.exposed && !app.auth.required) {
+    items.push({
+      kind: 'security',
+      message:
+        'No password is set, and this is reachable from the network. Anyone who can open this page can start a broadcast.',
+      href: '/settings',
+    })
   }
 
   const accounts = app.db

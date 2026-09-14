@@ -29,6 +29,9 @@ async function boot(): Promise<void> {
   scheduler = Application.create({
     configDir,
     plugins: [mockPlugin()],
+    // Honoured here too, though a desktop install listening on loopback
+    // rarely wants one.
+    uiPassword: process.env.SCHEDULER_UI_PASSWORD,
     // The OS keychain first, so a desktop user never has to think about a
     // master secret; the file and env sources in core remain the fallback.
     keySources: [safeStorageKeySource(configDir)],

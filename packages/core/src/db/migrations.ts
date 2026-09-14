@@ -362,6 +362,30 @@ ALTER TABLE event_series DROP COLUMN source_node_id;
 ALTER TABLE event_output ADD COLUMN settings TEXT NOT NULL DEFAULT '{}';
 `,
   },
+  {
+    id: 8,
+    name: 'sessions',
+    sql: `
+-- Signed-in sessions. Stored rather than signed so they can be taken away:
+-- a signed cookie needs no table and cannot be revoked, which would make
+-- "sign out everywhere" mean "change the password on everyone".
+--
+-- token_hash is a SHA-256 of a 32-byte random token. The token itself is
+-- never written down, so a copy of this database is not a set of working
+-- logins.
+CREATE TABLE session (
+  id           TEXT PRIMARY KEY,
+  token_hash   TEXT NOT NULL UNIQUE,
+  created_at   INTEGER NOT NULL,
+  expires_at   INTEGER NOT NULL,
+  last_seen_at INTEGER NOT NULL,
+  user_agent   TEXT,
+  revoked_at   INTEGER
+);
+
+CREATE INDEX session_live ON session (token_hash) WHERE revoked_at IS NULL;
+`,
+  },
 ]
 
 interface GraphNode {

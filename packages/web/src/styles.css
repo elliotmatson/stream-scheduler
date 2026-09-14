@@ -1150,3 +1150,45 @@ ol.preview-list li::marker {
     transition-duration: 0.001ms !important;
   }
 }
+
+/* signing in -------------------------------------------------------------- */
+
+/* The whole viewport, because when the app is locked this is the app. */
+.signin {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: var(--bg);
+}
+
+.signin-card {
+  width: 100%;
+  max-width: 360px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.signin-card .brand {
+  margin-bottom: 0;
+}
+
+/* A button that reads as a quiet link: for a secondary action sitting among
+   status text rather than among other buttons. */
+button.link {
+  align-self: flex-start;
+  padding: 0;
+  border: none;
+  background: none;
+  box-shadow: none;
+  color: var(--muted);
+  font-size: 12px;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+button.link:hover {
+  color: var(--text);
+  background: none;
+}

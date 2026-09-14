@@ -15,6 +15,11 @@ export async function startHost(): Promise<{ stop: () => Promise<void>; url: str
 
   const app = Application.create({
     plugins: bundledPlugins(),
+    // Docker's way of setting the password: there is no first-run screen in
+    // a container somebody started with `docker run`. Unset leaves the app
+    // open, which is right for a loopback install and shouted about at
+    // startup for anything wider.
+    uiPassword: process.env.SCHEDULER_UI_PASSWORD,
     ...(process.env.SCHEDULER_LOG_LEVEL
       ? { logLevel: process.env.SCHEDULER_LOG_LEVEL as LogLevel }
       : {}),

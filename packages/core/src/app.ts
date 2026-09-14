@@ -13,6 +13,7 @@ import {
   type MasterKeySource,
 } from './secrets/master-key.js'
 import { scrubber } from './secrets/scrubber.js'
+import { Auth } from './auth/index.js'
 import { SecretVault } from './secrets/vault.js'
 import { DEFAULT_HORIZON_MS, materializeAll } from './schedule/materialize.js'
 import { EventPlanner } from './runs/event-planner.js'
@@ -41,6 +42,15 @@ export interface AppOptions {
   preflightLeadMs?: number
   /** Used in notification links back into the UI. */
   baseUrl?: string
+  /**
+   * Sets the UI password from the environment, which is how Docker does it
+   * — there is no first-run screen in a container somebody started with
+   * `docker run`. Passed in rather than read here so core stays testable
+   * without touching `process.env`, the same way the master key does it.
+   */
+  uiPassword?: string | undefined
+  /** How long a signed-in session lasts. */
+  sessionTtlMs?: number
 }
 
 /**
@@ -61,6 +71,7 @@ export class Application {
   readonly engine: RunEngine
   readonly notifier: Notifier
   readonly preflight: PreflightChecker
+  readonly auth: Auth
   readonly logger: Logger
   readonly clock: Clock
 
@@ -76,6 +87,7 @@ export class Application {
 
   private readonly tickListeners = new Set<() => void>()
   private timer: NodeJS.Timeout | undefined
+  private reachableFromNetwork = false
   private ticking = false
   private lastMaterializedAt = 0
   private lastPreflightAt = 0
@@ -94,6 +106,7 @@ export class Application {
     engine: RunEngine
     notifier: Notifier
     preflight: PreflightChecker
+    auth: Auth
     logger: Logger
     clock: Clock
     tickIntervalMs: number
@@ -111,6 +124,7 @@ export class Application {
     this.engine = init.engine
     this.notifier = init.notifier
     this.preflight = init.preflight
+    this.auth = init.auth
     this.logger = init.logger
     this.clock = init.clock
     this.tickIntervalMs = init.tickIntervalMs
@@ -120,6 +134,22 @@ export class Application {
 
   get publicOrigin(): string {
     return this.links.origin
+  }
+
+  /**
+   * Whether this app is listening anywhere but loopback.
+   *
+   * Set by the server as it binds, because the address is its business and
+   * not the application's. What reads it is the status screen: "no password"
+   * is worth saying on a machine other people can reach, and is noise on a
+   * booth machine that only answers itself.
+   */
+  get exposed(): boolean {
+    return this.reachableFromNetwork
+  }
+
+  setExposed(exposed: boolean): void {
+    this.reachableFromNetwork = exposed
   }
 
   /**
@@ -217,6 +247,13 @@ export class Application {
       leadMs: options.preflightLeadMs ?? DEFAULT_PREFLIGHT_LEAD_MS,
     })
 
+    const auth = new Auth({
+      db,
+      clock,
+      envPassword: options.uiPassword,
+      ...(options.sessionTtlMs === undefined ? {} : { ttlMs: options.sessionTtlMs }),
+    })
+
     return new Application({
       paths,
       db,
@@ -229,6 +266,7 @@ export class Application {
       engine,
       notifier,
       preflight,
+      auth,
       logger,
       clock,
       tickIntervalMs: options.tickIntervalMs ?? 5_000,
@@ -261,6 +299,10 @@ export class Application {
       if (now - this.lastMaterializedAt > 60 * 60_000) {
         this.materialize()
         this.lastMaterializedAt = now
+        // Expired and revoked sessions go with it. Nothing depends on this
+        // happening promptly — `verify` already refuses them — so it rides
+        // along with the other hourly work rather than owning a timer.
+        this.auth.sessions.sweep()
       }
       await this.connections.tick()
       await this.engine.tick()

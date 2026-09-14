@@ -4,6 +4,7 @@ import Fastify from 'fastify'
 import type { FastifyInstance } from 'fastify'
 import websocket from '@fastify/websocket'
 import fastifyStatic from '@fastify/static'
+import fastifyCookie from '@fastify/cookie'
 import { z } from 'zod'
 import { DeviceError, fingerprint, VerificationError } from '@scheduler/plugin-sdk'
 import type { ConfigValues, JsonObject, NodeDefinition, NodeState } from '@scheduler/plugin-sdk'
@@ -31,6 +32,7 @@ import {
 import { describeConflict, overlapsForSeries } from '../events/overlap.js'
 import { assertUnreferenced, ConflictError, NotFoundError } from './errors.js'
 import { buildDashboard } from './dashboard.js'
+import { registerAuthGate, registerAuthRoutes } from './auth-routes.js'
 import { registerNotifyRoutes } from './notify-routes.js'
 import { registerOAuthRoutes } from './oauth-routes.js'
 import { originOf } from './origin.js'
@@ -52,20 +54,17 @@ export async function createServer(options: ServerOptions): Promise<FastifyInsta
   const { app } = options
   const host = options.host ?? '127.0.0.1'
 
-  // There is no authentication. There was a bearer-token check here, but no
-  // browser can send that header — it 401'd the HTML page itself, so the UI
-  // was unreachable whenever it was switched on. A lock nobody can open is
-  // not security, and it made the container check look like it proved
-  // something. Removed until there is a login that works; tracked as an
-  // issue.
-  //
-  // What protects the app today is where it listens. Loopback is the
-  // default, and anything else is something the operator chose.
-  if (!isLoopback(host)) {
+  // A password is optional, and where it listens still matters. Loopback
+  // with no password is a fine single-booth install; anything wider without
+  // one is worth saying out loud, once, at startup — and on the status
+  // screen, which is what `setExposed` is for.
+  app.setExposed(!isLoopback(host))
+  if (!isLoopback(host) && !app.auth.required) {
     app.logger.warn(
-      `Listening on ${host} with no authentication. Anyone who can reach this ` +
-        `port can start broadcasts and read stream keys. In Docker, publish to ` +
-        `127.0.0.1 (-p 127.0.0.1:8500:8500) unless you mean to share it.`,
+      `Listening on ${host} with no password. Anyone who can reach this port ` +
+        `can start broadcasts and drive your devices. Set one in the app, or ` +
+        `with SCHEDULER_UI_PASSWORD, or publish to 127.0.0.1 ` +
+        `(-p 127.0.0.1:8500:8500) instead.`,
     )
   }
 
@@ -78,6 +77,12 @@ export async function createServer(options: ServerOptions): Promise<FastifyInsta
   fastify.addHook('onRequest', async (request) => {
     if (request.headers.accept?.includes('text/html')) app.setPublicOrigin(originOf(request))
   })
+
+  // Before every route, including the WebSocket upgrade and the static
+  // assets: a gate registered later would leave whatever came first open.
+  await fastify.register(fastifyCookie)
+  registerAuthGate(fastify, app)
+
   await fastify.register(websocket)
 
   fastify.setErrorHandler(async (raw, _request, reply) => {
@@ -89,6 +94,7 @@ export async function createServer(options: ServerOptions): Promise<FastifyInsta
     await reply.code(status).send({ error: error.message, ...detailsFor(error) })
   })
 
+  registerAuthRoutes(fastify, app)
   registerRoutes(fastify, app)
   registerOAuthRoutes(fastify, app)
   registerNotifyRoutes(fastify, app)
