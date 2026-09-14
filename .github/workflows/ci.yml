@@ -24,6 +24,11 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
+      - name: Formatting
+        # The repo is Prettier-formatted. Checked here because nothing else
+        # would notice it drifting back out.
+        run: pnpm run format:check
+
       - name: Lint
         run: pnpm run lint
 

@@ -14,6 +14,7 @@
     "typecheck": "turbo run typecheck",
     "lint": "eslint .",
     "format": "prettier --write .",
+    "format:check": "prettier --check .",
     "boundaries": "depcruise packages --config .dependency-cruiser.cjs",
     "smoke": "node scripts/smoke.mjs"
   },

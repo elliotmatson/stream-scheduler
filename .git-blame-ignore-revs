@@ -1,0 +1,9 @@
+# Revisions to skip when reading `git blame`: whole-repo reformats, which
+# would otherwise put one name against every line in the project.
+#
+#   git config blame.ignoreRevsFile .git-blame-ignore-revs
+#
+# GitHub reads this file by itself.
+
+# style: format the repo with Prettier
+b701202e5d5fc90e27fb3fe3a4080c69c01fd097
