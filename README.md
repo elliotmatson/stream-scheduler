@@ -13,8 +13,9 @@ same image for Docker.
 
 ## Status
 
-Early. The scheduling engine is built and tested; the real device adapters are
-not written yet, so today it drives a bundled **mock** encoder and recorder.
+Early, but it drives real hardware. The scheduling engine and the HyperDeck
+and ATEM adapters are built and tested; YouTube is not wired up yet, so stream
+keys are entered by hand.
 
 **Working now**
 
@@ -25,13 +26,16 @@ not written yet, so today it drives a bundled **mock** encoder and recorder.
 - Date-aware name templates with a live preview of the next occurrences
 - Encrypted stream keys and device passwords, write-only over the API
 - Device connection management with capability probing and verify-after-write
+- **HyperDeck** adapter (TCP 9993), tested against a protocol-level emulator
+- **ATEM** adapter, with capabilities read from what the switcher reports
+  rather than a model table that goes stale on the next firmware release
 - Calendar and list views, a run timeline, and a device health page
 - Runs headless, in Docker, or as an Electron tray app from one codebase
 
 **Not built yet**
 
-- The ATEM, Web Presenter and HyperDeck adapters (the mock stands in)
 - YouTube OAuth and automated broadcast creation
+- The Web Presenter adapter (TCP 9977)
 - The pipeline graph editor; pipelines are defined via the API for now
 - Signed and notarized installers
 

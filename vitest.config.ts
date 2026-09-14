@@ -13,6 +13,7 @@ export default defineConfig({
       '@scheduler/core': src('core'),
       '@scheduler/plugin-mock': src('plugin-mock'),
       '@scheduler/plugin-hyperdeck': src('plugin-hyperdeck'),
+      '@scheduler/plugin-atem': src('plugin-atem'),
     },
   },
   test: {

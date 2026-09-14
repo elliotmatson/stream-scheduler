@@ -12,7 +12,8 @@
     "@scheduler/core": "workspace:*",
     "@scheduler/plugin-mock": "workspace:*",
     "@scheduler/plugin-sdk": "workspace:*",
-    "@scheduler/plugin-hyperdeck": "workspace:*"
+    "@scheduler/plugin-hyperdeck": "workspace:*",
+    "@scheduler/plugin-atem": "workspace:*"
   },
   "devDependencies": {
     "typescript": "^5.7.2"

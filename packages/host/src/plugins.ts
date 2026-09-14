@@ -1,3 +1,4 @@
+import { atemPlugin } from '@scheduler/plugin-atem'
 import { hyperdeckPlugin } from '@scheduler/plugin-hyperdeck'
 import { mockPlugin } from '@scheduler/plugin-mock'
 import type { PluginDefinition } from '@scheduler/plugin-sdk'
@@ -14,5 +15,5 @@ import type { PluginDefinition } from '@scheduler/plugin-sdk'
  * contract does not change, which is the point of freezing it now.
  */
 export function bundledPlugins(): PluginDefinition[] {
-  return [hyperdeckPlugin(), mockPlugin()]
+  return [atemPlugin(), hyperdeckPlugin(), mockPlugin()]
 }
