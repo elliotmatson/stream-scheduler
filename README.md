@@ -11,20 +11,107 @@ encoders and destinations) on gear you already own, packaged the way
 service with a local web UI, an optional tray app for Mac and Windows, and the
 same image for Docker.
 
-**Status: planning.** No implementation yet.
+## Status
 
-## Planned features
+Early. The scheduling engine is built and tested; the real device adapters are
+not written yet, so today it drives a bundled **mock** encoder and recorder.
 
-- Calendar and list views of every scheduled stream and recording
-- Recurring series (RFC 5545 `RRULE`, timezone- and DST-correct) with
-  per-occurrence overrides and skips
-- OAuth login to YouTube; automated broadcast creation with title, description,
-  privacy and category; automatic playlist insertion
-- Stream key management, including pushing keys into encoders
-- Encoder inventory with discovery, health and capability probing
-- Date-aware name templates everywhere a name is entered
-- Extensible: encoders, streaming services and video routing intermediaries are
-  all plugins against one versioned SDK
+**Working now**
+
+- Recurring events via RFC 5545 `RRULE`, timezone- and DST-correct, with
+  per-occurrence skips and edits that survive changes to the series
+- A durable run engine: prepare/start/stop/complete phases, retries,
+  compensation, and crash recovery that cannot create duplicate work
+- Date-aware name templates with a live preview of the next occurrences
+- Encrypted stream keys and device passwords, write-only over the API
+- Device connection management with capability probing and verify-after-write
+- Calendar and list views, a run timeline, and a device health page
+- Runs headless, in Docker, or as an Electron tray app from one codebase
+
+**Not built yet**
+
+- The ATEM, Web Presenter and HyperDeck adapters (the mock stands in)
+- YouTube OAuth and automated broadcast creation
+- The pipeline graph editor; pipelines are defined via the API for now
+- Signed and notarized installers
+
+See [the roadmap](./docs/plan/08-roadmap-and-risks.md) for the plan.
+
+## Try it
+
+```bash
+pnpm install
+pnpm build
+pnpm smoke          # boots the built server and drives one event end to end
+```
+
+To run it for real:
+
+```bash
+export SCHEDULER_SECRET="a long random string"
+node packages/host/dist/main.js
+# then open http://127.0.0.1:8500
+```
+
+On a desktop the Electron build uses the OS keychain instead, so no
+`SCHEDULER_SECRET` is needed.
+
+### Docker
+
+```bash
+SCHEDULER_SECRET="a long random string" \
+SCHEDULER_UI_PASSWORD="something only you know" \
+docker compose up --build
+```
+
+The container binds `0.0.0.0`, so it refuses to start without
+`SCHEDULER_UI_PASSWORD`: an unauthenticated page that can start broadcasts and
+reveal stream keys is a worse hole than the unauthenticated device protocols
+themselves. It also refuses to start without a key source rather than writing
+secrets to disk in the clear.
+
+Everything lives in one config directory (`/config` in Docker). A single
+archive of it is the entire backup.
+
+## Configuration
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `SCHEDULER_CONFIG_DIR` | per-platform | Database, logs, master key |
+| `SCHEDULER_SECRET` | — | Derives the master key when no keychain or key file is available |
+| `SCHEDULER_UI_PASSWORD` | — | Required to bind anywhere but loopback |
+| `SCHEDULER_HOST` | `127.0.0.1` | Listen address |
+| `SCHEDULER_PORT` | `8500` | Listen port |
+| `SCHEDULER_LOG_LEVEL` | `info` | `debug`, `info`, `warn`, `error` |
+
+## Layout
+
+```
+packages/
+  plugin-sdk/    the versioned extension contract
+  core/          scheduling, runs, secrets, devices, API
+  plugin-mock/   a fake encoder and recorder, for tests and evaluation
+  host/          the composition root: the only place that names plugins
+  web/           the React UI
+  desktop/       the Electron tray shell
+```
+
+`core` never imports a plugin — it discovers them through a registry — and
+plugins depend only on `plugin-sdk`. A dependency-cruiser rule in CI enforces
+both, which is what keeps adding an encoder a matter of writing a package.
+
+## Development
+
+```bash
+pnpm test          # unit and integration, no hardware or network needed
+pnpm lint
+pnpm typecheck
+pnpm boundaries    # the plugin dependency rules
+pnpm smoke         # runs the built artifact, as Docker does
+```
+
+`pnpm smoke` exists because Vitest bundles, which hides problems that only
+appear in the shipped output under native ESM. Run it before trusting a build.
 
 ## Read the plan
 
@@ -40,6 +127,13 @@ Start with [`docs/plan/README.md`](./docs/plan/README.md).
 | [06 Templating & secrets](./docs/plan/06-templating-and-secrets.md) | Name templates, key management, encryption at rest |
 | [07 Packaging](./docs/plan/07-packaging.md) | Monorepo, Electron, Docker, signing, CI |
 | [08 Roadmap & risks](./docs/plan/08-roadmap-and-risks.md) | Phases with deliverables, open risks |
+
+## A note on network security
+
+The Blackmagic control protocols are all unauthenticated and unencrypted — the
+ATEM protocol, Web Presenter on TCP 9977, HyperDeck on TCP 9993. Anyone on the
+control network can take over the hardware regardless of what this app does.
+Put the gear and this app on a trusted control VLAN.
 
 ## License
 

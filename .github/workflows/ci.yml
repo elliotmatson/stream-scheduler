@@ -1,0 +1,94 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Lint
+        run: pnpm run lint
+
+      - name: Typecheck
+        run: pnpm run typecheck
+
+      - name: Module boundaries
+        # Plugins must not import core, and core must not name a plugin.
+        # Without this the extensibility claim decays silently.
+        run: pnpm run boundaries
+
+      - name: Unit and integration tests
+        # No hardware, no network, no Google project: the device fakes and
+        # the fake broadcast service cover the paths real gear cannot be made
+        # to exercise on demand.
+        run: pnpm run test
+
+      - name: Build
+        run: pnpm run build
+
+      - name: Smoke test the built artifact
+        # Vitest bundles, which hides problems that only appear in the
+        # shipped output under native ESM. This boots packages/host/dist
+        # exactly as Docker does and drives one event end to end.
+        run: pnpm run smoke
+
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Build image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          load: true
+          tags: stream-scheduler:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Container starts and serves the UI
+        run: |
+          docker run -d --name scheduler \
+            -e SCHEDULER_SECRET=ci-master-secret-value \
+            -e SCHEDULER_UI_PASSWORD=ci-ui-password \
+            -p 8500:8500 stream-scheduler:ci
+          for i in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:8500/healthz > /dev/null; then
+              echo "healthy"; exit 0
+            fi
+            sleep 1
+          done
+          echo "container never became healthy"
+          docker logs scheduler
+          exit 1
+
+      - name: Refuses to expose the UI without a password
+        # A regression here would put an unauthenticated page that can start
+        # broadcasts and reveal stream keys on someone's LAN.
+        run: |
+          if docker run --rm -e SCHEDULER_SECRET=ci-master-secret-value stream-scheduler:ci; then
+            echo "expected the container to refuse to start"
+            exit 1
+          fi
+
+      - name: Container logs
+        if: always()
+        run: docker logs scheduler || true
