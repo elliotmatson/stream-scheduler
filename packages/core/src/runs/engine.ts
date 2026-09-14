@@ -140,6 +140,12 @@ export class RunEngine {
       return true
     }
 
+    const drift = this.planDrift(run.id, plan)
+    if (drift) {
+      await this.fail(run, plan, drift)
+      return true
+    }
+
     const progress = this.progressOf(run.id, plan, timeline)
 
     if (this.hasMissedItsWindow(run, timeline, progress, now)) {
@@ -173,7 +179,7 @@ export class RunEngine {
       if (now < entry.startsAt - timeline.prerollMs) continue
 
       if (!run.forced_at && now > entry.startsAt + timeline.lateStartGraceMs) {
-        this.markMissed(run, plan, entry, now, timeline)
+        await this.markMissed(run, plan, entry, now, timeline)
         return true
       }
       if (this.deps.store.getRun(run.id).state === 'ready') this.deps.store.transition(run.id, 'running')
@@ -340,13 +346,13 @@ export class RunEngine {
    * timeline says what happened in the place someone is already looking,
    * and so the decision survives a restart without a second source of truth.
    */
-  private markMissed(
+  private async markMissed(
     run: RunRecord,
     plan: RunPlan,
     entry: OutputWindow,
     now: number,
     timeline: EventTimeline,
-  ): void {
+  ): Promise<void> {
     const late = Math.round((now - entry.startsAt) / 60_000)
     const message =
       `Should have started at ${new Date(entry.startsAt).toISOString()}, ${late} minutes ago, past the ` +
@@ -357,6 +363,11 @@ export class RunEngine {
       if (this.deps.store.step(run.id, seq).state !== 'pending') continue
       this.deps.store.markStepFailed(run.id, seq, message)
     }
+    // It never got on air, so the broadcast prepared for it is litter. Left
+    // in place it would be closed out at the end of the event as though it
+    // had carried a service, and the channel would collect an empty public
+    // entry every time the app was late.
+    await compensateOutput(run.id, plan, entry.output.id, this.executorDeps())
     this.logger.warn('skipped an output the clock had run past', {
       runId: run.id,
       output: entry.output.label,
@@ -385,6 +396,35 @@ export class RunEngine {
       plan,
       recorded ? { ...recorded, message: `${summary.message} The first was: ${recorded.message}` } : summary,
     )
+  }
+
+  /**
+   * Catches an event edited out from under a run that is already going.
+   *
+   * Steps are addressed by position: the plan is rebuilt from the database
+   * every tick, and step 3 of the plan is matched to step 3 of the committed
+   * rows. Add, remove or switch off an output mid-run and every position
+   * after it shifts, so "stop the 9:00 service" would be executed against
+   * the row recording the recorder. Refusing to act is the only safe answer;
+   * doing nothing quietly is not, because the operator would have no idea.
+   *
+   * Renaming or retiming an output is fine and does not land here: a step's
+   * kind carries the output's id, which does not change.
+   */
+  private planDrift(runId: string, plan: RunPlan): RunFailure | undefined {
+    const records = this.deps.store.steps(runId)
+    if (records.length === plan.length && records.every((record, seq) => record.kind === plan[seq]?.kind)) {
+      return undefined
+    }
+    return {
+      code: 'plan_changed',
+      message:
+        'The event was edited while this run was going: an output was added, removed or switched off, so the ' +
+        'steps no longer line up with what was committed when the run started.',
+      remediation:
+        'Anything already on air has been left alone — check the encoder. Start the event again if it is ' +
+        'still wanted, and make structural changes between events rather than during one.',
+    }
   }
 
   private recordedFailure(runId: string): RunFailure | undefined {

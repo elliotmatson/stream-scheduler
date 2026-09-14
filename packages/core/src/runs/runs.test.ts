@@ -615,6 +615,56 @@ describe('RunEngine', () => {
     expect(store.getRun(runId).state).toBe('completed')
   })
 
+  it('discards the broadcast of an output it had to skip', async () => {
+    seedOccurrence({
+      graceMs: 15 * MINUTE,
+      outputs: [
+        { label: 'Missed', offsetMs: 0, durationMs: HOUR, destination: true },
+        { label: 'Caught', offsetMs: 2 * HOUR, durationMs: HOUR, destination: true },
+      ],
+    })
+    const world = new FakeBroadcastService()
+    const engine = engineFor(plannerFor(world))
+
+    clock.set(START - 30 * MINUTE)
+    const runId = (await engine.tick()).created[0]!
+    expect(world.liveCount).toBe(2)
+
+    // Two hours later the first one is long past saving.
+    clock.set(START + 2 * HOUR)
+    await engine.tick()
+    // Its broadcast is gone rather than left to be closed out at the end as
+    // though it had carried a service.
+    expect(world.liveCount).toBe(1)
+
+    clock.set(START + 3 * HOUR)
+    await engine.tick()
+    clock.set(START + WINDOW) // the event's window runs on past its outputs
+    await engine.tick()
+    expect(store.getRun(runId).state).toBe('completed')
+    expect(world.log).toEqual(['start Caught', 'stop Caught'])
+  })
+
+  it('refuses to act on a run whose event was edited out from under it', async () => {
+    seedOccurrence({ graceMs: 8 * HOUR })
+    const world = new FakeBroadcastService()
+    const engine = engineFor(plannerFor(world))
+
+    clock.set(START)
+    const runId = (await engine.tick()).created[0]!
+    expect(store.getRun(runId).state).toBe('running')
+
+    // Switching an output off shifts every step position after it, so
+    // "stop the 9:00 service" would be executed against the row recording
+    // something else entirely.
+    db.prepare("UPDATE event_output SET enabled = 0 WHERE label = 'Main // 9:00'").run()
+
+    clock.set(START + 2 * HOUR)
+    await engine.tick()
+    expect(store.getRun(runId).state).toBe('failed')
+    expect(JSON.parse(store.getRun(runId).failure!).code).toBe('plan_changed')
+  })
+
   it('fails a run whose whole window was missed', async () => {
     const occurrenceId = seedOccurrence({ graceMs: 5 * MINUTE })
     const world = new FakeBroadcastService()
