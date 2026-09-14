@@ -192,6 +192,13 @@ td,
   color: var(--accent-contrast);
 }
 
+.nav-links {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
 .nav-link {
   display: flex;
   align-items: center;
@@ -1100,16 +1107,45 @@ ol.preview-list li::marker {
   .app {
     flex-direction: column;
   }
+  /* Stays put as the page scrolls, the way the sidebar does on a desktop:
+     on a phone this is the only way back to another screen. */
   .sidebar {
+    position: sticky;
+    top: 0;
+    z-index: 5;
     width: auto;
     flex: none;
-    flex-direction: row;
-    align-items: center;
-    overflow-x: auto;
     height: auto;
     border-right: 0;
     border-bottom: 1px solid var(--border);
+  }
+  /* The row is this, not `.sidebar`. It is the element with the height and
+     the direction on it, and leaving it a 100vh column is what pushed the
+     whole page below the fold on a phone. */
+  .sidebar-inner {
+    position: static;
+    height: auto;
+    flex-direction: row;
+    align-items: center;
+    gap: 8px;
     padding: 8px 10px;
+  }
+  .nav-links {
+    flex: 1;
+    flex-direction: row;
+    gap: 2px;
+    overflow-x: auto;
+    /* The bar is short; a scrollbar across it would be most of it. */
+    scrollbar-width: none;
+  }
+  .nav-links::-webkit-scrollbar {
+    display: none;
+  }
+  /* Icon-only, so square and big enough to hit with a thumb. */
+  .nav-link {
+    justify-content: center;
+    min-width: 40px;
+    min-height: 40px;
   }
   .brand,
   .nav-link span {
@@ -1117,11 +1153,21 @@ ol.preview-list li::marker {
   }
   .sidebar-foot {
     margin-top: 0;
-    margin-left: auto;
     padding-top: 0;
     border-top: 0;
+    flex: none;
     flex-direction: row;
     align-items: center;
+    gap: 8px;
+  }
+  .sidebar-foot .pill,
+  .sidebar-foot button.link {
+    align-self: center;
+  }
+  /* Room for the nav instead. What is worth the space on a narrow screen is
+     a problem — reconnecting, or a run on air — not the absence of one. */
+  .when-wide {
+    display: none;
   }
   .theme-toggle {
     width: auto;
@@ -1156,6 +1202,9 @@ ol.preview-list li::marker {
 /* The whole viewport, because when the app is locked this is the app. */
 .signin {
   min-height: 100vh;
+  /* Mobile browsers count their own chrome into 100vh, which leaves the
+     card scrollable on a phone for no reason. */
+  min-height: 100dvh;
   display: grid;
   place-items: center;
   padding: 24px;

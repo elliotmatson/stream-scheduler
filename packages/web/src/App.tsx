@@ -119,16 +119,20 @@ function SignedIn({
             Stream Scheduler
           </div>
 
-          {NAV.map((item) => (
-            <NavLink
-              key={item.to}
-              path={path}
-              to={item.to}
-              label={item.label}
-              icon={item.icon}
-              navigate={navigate}
-            />
-          ))}
+          {/* Grouped so the links can scroll sideways on a phone without
+              taking the status pill and the theme toggle with them. */}
+          <div className="nav-links">
+            {NAV.map((item) => (
+              <NavLink
+                key={item.to}
+                path={path}
+                to={item.to}
+                label={item.label}
+                icon={item.icon}
+                navigate={navigate}
+              />
+            ))}
+          </div>
 
           <div className="sidebar-foot">
             {liveRuns > 0 ? (
@@ -141,7 +145,9 @@ function SignedIn({
             ) : (
               // Says plainly whether what you are looking at is current.
               <span
-                className={`pill ${live.connected ? 'ok' : 'bad'}`}
+                // The happy one is hidden on a phone, where it would cost a
+                // third of the bar to say that nothing is wrong.
+                className={`pill ${live.connected ? 'ok when-wide' : 'bad'}`}
                 title={
                   live.connected
                     ? 'These screens are following the server. They update themselves.'
