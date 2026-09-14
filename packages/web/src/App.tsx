@@ -6,6 +6,8 @@ import { Devices } from './views/Devices.tsx'
 import { SeriesList } from './views/SeriesList.tsx'
 import { RunDetail, Runs } from './views/RunDetail.tsx'
 import { Alerts } from './views/Alerts.tsx'
+import { Pipelines } from './views/Pipelines.tsx'
+import { Services } from './views/Services.tsx'
 
 /**
  * A hash router in twenty lines. This app has a handful of screens; a routing
@@ -39,6 +41,8 @@ export function App(): ReactNode {
         <NavLink path={path} to="/" label="Schedule" navigate={navigate} />
         <NavLink path={path} to="/events" label="Events" navigate={navigate} />
         <NavLink path={path} to="/devices" label="Devices" navigate={navigate} />
+        <NavLink path={path} to="/pipelines" label="Pipelines" navigate={navigate} />
+        <NavLink path={path} to="/services" label="Services" navigate={navigate} />
         <NavLink path={path} to="/runs" label="Runs" navigate={navigate} />
         <NavLink path={path} to="/alerts" label="Alerts" navigate={navigate} />
         <div style={{ marginTop: 'auto', paddingTop: 12 }}>
@@ -66,6 +70,8 @@ function Route({ path, navigate }: { path: string; navigate: (path: string) => v
   const run = /^\/runs\/(.+)$/.exec(path)
   if (run) return <RunDetail runId={run[1]!} navigate={navigate} />
   if (path === '/devices') return <Devices />
+  if (path === '/pipelines') return <Pipelines />
+  if (path === '/services') return <Services />
   if (path === '/events') return <SeriesList />
   if (path === '/runs') return <Runs navigate={navigate} />
   if (path === '/alerts') return <Alerts />

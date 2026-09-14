@@ -3,6 +3,7 @@ import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
 import type { PendingAuthorization } from '@scheduler/plugin-sdk'
 import type { Application } from '../app.js'
+import { assertUnreferenced, ConflictError, NotFoundError } from './errors.js'
 
 /**
  * Bring-your-own OAuth: each install supplies its own Google Cloud client.
@@ -243,6 +244,32 @@ export function registerOAuthRoutes(fastify: FastifyInstance, app: Application):
       )
       .run(id, body.providerId, body.label, body.accountId, JSON.stringify(body.config), app.clock.now())
     return reply.code(201).send({ id })
+  })
+
+  fastify.delete('/api/destinations/:id', async (request) => {
+    const { id } = z.object({ id: z.string() }).parse(request.params)
+    assertUnreferenced(app.db, 'destinationId', id, 'streaming service')
+    app.db.prepare('DELETE FROM destination WHERE id = ?').run(id)
+    return { ok: true }
+  })
+
+  fastify.delete('/api/accounts/:id', async (request) => {
+    const { id } = z.object({ id: z.string() }).parse(request.params)
+    const users = app.db.prepare('SELECT label FROM destination WHERE account_id = ?').all(id) as { label: string }[]
+    if (users.length > 0) {
+      throw new ConflictError(
+        `This account still backs ${users.map((row) => `"${row.label}"`).join(', ')}. Remove those first.`,
+      )
+    }
+    // The refresh token goes with it: a disconnected account that leaves a
+    // live token in the vault is a credential nobody knows they still hold.
+    const row = app.db.prepare('SELECT secret_ref FROM account WHERE id = ?').get(id) as
+      | { secret_ref: string }
+      | undefined
+    if (!row) throw new NotFoundError(`No account with id "${id}".`)
+    app.vault.delete(row.secret_ref)
+    app.db.prepare('DELETE FROM account WHERE id = ?').run(id)
+    return { ok: true }
   })
 
   fastify.get('/api/destinations/:id/status', async (request) => {

@@ -39,6 +39,10 @@ async function post(url: string, body: unknown): Promise<{ status: number; json:
   const response = await server.inject({ method: 'POST', url, payload: body as object })
   return { status: response.statusCode, json: safeJson(response.body) }
 }
+async function del(url: string): Promise<{ status: number; json: any }> {
+  const response = await server.inject({ method: 'DELETE', url })
+  return { status: response.statusCode, json: safeJson(response.body) }
+}
 async function get(url: string): Promise<{ status: number; json: any }> {
   const response = await server.inject({ method: 'GET', url })
   return { status: response.statusCode, json: safeJson(response.body) }
@@ -266,5 +270,163 @@ describe('credentials', () => {
     const list = await get('/api/credentials')
     expect(list.json[0].key).toBe('••••••••')
     expect(JSON.stringify(list.json)).not.toContain('live_super-secret-key')
+  })
+})
+
+describe('schedule preview', () => {
+  const base = {
+    label: 'Sunday Service',
+    timezone: 'America/Chicago',
+    rrule: 'FREQ=WEEKLY;BYDAY=SU',
+    // 09:00 America/Chicago, the day the clocks go forward.
+    dtstart: START,
+    durationMs: 90 * MINUTE,
+  }
+
+  it('shows what a rule would do before anything is saved', async () => {
+    const preview = await post('/api/schedule/preview', { ...base, count: 3 })
+    expect(preview.status).toBe(200)
+    expect(preview.json.describes).toMatch(/week/i)
+    expect(preview.json.occurrences).toHaveLength(3)
+    expect(preview.json.occurrences.map((o: { localDate: string }) => o.localDate)).toEqual([
+      '2026-03-08',
+      '2026-03-15',
+      '2026-03-22',
+    ])
+  })
+
+  it('holds a 9am service at 9am local across the DST boundary', async () => {
+    // The whole reason the engine expands in wall time: the clocks go
+    // forward between these two Sundays, so the UTC instant has to move by
+    // an hour for the local time to stay put.
+    const preview = await post('/api/schedule/preview', {
+      ...base,
+      dtstart: Date.parse('2026-03-01T15:00:00Z'), // 09:00 CST
+      count: 2,
+    })
+    const [first, second] = preview.json.occurrences
+    expect(second.start - first.start).toBe(7 * 24 * 60 * MINUTE - 60 * MINUTE)
+    expect(second.start).toBe(Date.parse('2026-03-08T14:00:00Z')) // 09:00 CDT
+  })
+
+  it('renders the name templates against each occurrence, not today', async () => {
+    const preview = await post('/api/schedule/preview', {
+      ...base,
+      count: 2,
+      templates: { title: '{{event.name}} — {{date "MMMM d, yyyy"}}' },
+    })
+    expect(preview.json.occurrences[0].title).toBe('Sunday Service — March 8, 2026')
+    expect(preview.json.occurrences[1].title).toBe('Sunday Service — March 15, 2026')
+  })
+
+  it('reports a bad token inline rather than failing the whole preview', async () => {
+    const preview = await post('/api/schedule/preview', { ...base, count: 1, templates: { title: '{{nonsense}}' } })
+    expect(preview.status).toBe(200)
+    expect(preview.json.occurrences[0].error).toMatch(/nonsense/)
+    // Still shows when it would air, which is the other half of the answer.
+    expect(preview.json.occurrences[0].localDate).toBe('2026-03-08')
+  })
+
+  it('rejects a rule it cannot parse, with a reason', async () => {
+    const preview = await post('/api/schedule/preview', { ...base, rrule: 'FREQ=FORTNIGHTLY' })
+    expect(preview.status).toBe(400)
+  })
+
+  it('rejects a timezone that does not exist', async () => {
+    expect((await post('/api/schedule/preview', { ...base, timezone: 'America/Nowhere' })).status).toBe(400)
+  })
+})
+
+describe('unpicking a setup', () => {
+  it('refuses to delete a pipeline an event still runs, naming the event', async () => {
+    const { seriesId } = await seedEverything()
+    const pipelineId = (await get('/api/pipelines')).json[0].id
+
+    const refused = await del(`/api/pipelines/${pipelineId}`)
+    expect(refused.status).toBe(409)
+    expect(refused.json.error).toContain('Sunday Service')
+
+    // ...and allows it once nothing depends on it.
+    await del(`/api/series/${seriesId}`)
+    expect((await del(`/api/pipelines/${pipelineId}`)).status).toBe(200)
+  })
+
+  it('refuses to delete a stream key a pipeline still points at', async () => {
+    const { credentialId } = await seedEverything()
+    const refused = await del(`/api/credentials/${credentialId}`)
+    expect(refused.status).toBe(409)
+    // A dangling id in a graph would otherwise surface at T-30m on Sunday.
+    expect(refused.json.error).toContain('Main')
+  })
+
+  it('edits a pipeline in place', async () => {
+    await seedEverything()
+    const pipelineId = (await get('/api/pipelines')).json[0].id
+    const response = await server.inject({
+      method: 'PATCH',
+      url: `/api/pipelines/${pipelineId}`,
+      payload: { label: 'Sanctuary' },
+    })
+    expect(response.statusCode).toBe(200)
+    expect((await get('/api/pipelines')).json[0]).toMatchObject({ label: 'Sanctuary' })
+  })
+})
+
+describe('wall-clock start times', () => {
+  it('resolves the time an operator typed in the event\'s own zone', async () => {
+    const preview = await post('/api/schedule/preview', {
+      label: 'Sunday Service',
+      timezone: 'America/Chicago',
+      rrule: null,
+      dtstartLocal: { date: '2026-03-01', time: '09:00' },
+      durationMs: 90 * MINUTE,
+    })
+    expect(preview.status).toBe(200)
+    // 09:00 CST, not 09:00 in the browser's zone or the container's.
+    expect(preview.json.occurrences[0].start).toBe(Date.parse('2026-03-01T15:00:00Z'))
+  })
+
+  it('refuses a start time that the clocks skip over', async () => {
+    // 02:30 on 8 March 2026 never happens in Chicago. Silently shifting it
+    // to 01:30 or 03:30 is how an event airs an hour out.
+    const preview = await post('/api/schedule/preview', {
+      label: 'Sunday Service',
+      timezone: 'America/Chicago',
+      rrule: null,
+      dtstartLocal: { date: '2026-03-08', time: '02:30' },
+      durationMs: 90 * MINUTE,
+    })
+    expect(preview.status).toBe(400)
+    expect(preview.json.error).toMatch(/does not exist/)
+  })
+
+  it('creates a series from a wall time, and keeps it on edit', async () => {
+    const device = await post('/api/devices', {
+      pluginId: 'mock',
+      label: 'Encoder',
+      config: { kind: 'encoder', password: 'pw' },
+    })
+    await post(`/api/devices/${device.json.id}/connect`, {})
+    const pipeline = await post('/api/pipelines', { label: 'Main', graph: { nodes: [] } })
+
+    const series = await post('/api/series', {
+      label: 'Sunday Service',
+      pipelineId: pipeline.json.id,
+      timezone: 'America/Chicago',
+      rrule: 'FREQ=WEEKLY;BYDAY=SU',
+      dtstartLocal: { date: '2026-03-01', time: '09:00' },
+      durationMs: 90 * MINUTE,
+    })
+    expect(series.status).toBe(201)
+    expect((await get('/api/series')).json[0].dtstart).toBe(Date.parse('2026-03-01T15:00:00Z'))
+
+    // An edit that only changes the zone re-reads the same wall time there.
+    const patched = await server.inject({
+      method: 'PATCH',
+      url: `/api/series/${series.json.id}`,
+      payload: { timezone: 'America/New_York', dtstartLocal: { date: '2026-03-01', time: '09:00' } },
+    })
+    expect(patched.statusCode).toBe(200)
+    expect((await get('/api/series')).json[0].dtstart).toBe(Date.parse('2026-03-01T14:00:00Z'))
   })
 })

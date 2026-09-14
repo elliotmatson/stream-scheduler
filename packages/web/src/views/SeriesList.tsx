@@ -1,33 +1,90 @@
+import { useState } from 'react'
 import type { ReactNode } from 'react'
 import { api, useResource, type Series } from '../api.ts'
-import { Card, Empty, ErrorBanner } from '../components.tsx'
+import { Card, ConfirmButton, Empty, ErrorBanner } from '../components.tsx'
 import { duration } from '../format.ts'
+import { EventForm } from './EventForm.tsx'
 
 export function SeriesList(): ReactNode {
-  const { data, error } = useResource(() => api.series(), [])
+  const { data, error, reload } = useResource(() => api.series(), [])
+  const [adding, setAdding] = useState(false)
+  const [editing, setEditing] = useState<string>()
+  const [actionError, setActionError] = useState<string>()
+
+  const remove = async (id: string): Promise<void> => {
+    setActionError(undefined)
+    try {
+      await api.deleteSeries(id)
+      reload()
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : String(err))
+    }
+  }
 
   return (
     <>
       <div className="page-head">
-        <h1>Events</h1>
-      </div>
-      <ErrorBanner error={error} />
-      {(data ?? []).length === 0 ? (
-        <Card>
-          <Empty>No recurring events yet.</Empty>
-        </Card>
-      ) : (
-        <div className="stack">
-          {(data ?? []).map((series) => (
-            <SeriesCard key={series.id} series={series} />
-          ))}
+        <div>
+          <h1>Events</h1>
+          <p className="muted" style={{ margin: '4px 0 0' }}>
+            What runs, when, and under what name.
+          </p>
         </div>
-      )}
+        <button className="primary" onClick={() => setAdding((open) => !open)}>
+          {adding ? 'Cancel' : 'New event'}
+        </button>
+      </div>
+      <ErrorBanner error={error ?? actionError} />
+
+      <div className="stack">
+        {adding ? (
+          <EventForm
+            onDone={() => {
+              setAdding(false)
+              reload()
+            }}
+          />
+        ) : null}
+
+        {(data ?? []).length === 0 && !adding ? (
+          <Card>
+            <Empty>No recurring events yet.</Empty>
+          </Card>
+        ) : null}
+
+        {(data ?? []).map((series) =>
+          editing === series.id ? (
+            <EventForm
+              key={series.id}
+              series={series}
+              onDone={() => {
+                setEditing(undefined)
+                reload()
+              }}
+            />
+          ) : (
+            <SeriesCard
+              key={series.id}
+              series={series}
+              onEdit={() => setEditing(series.id)}
+              onRemove={() => void remove(series.id)}
+            />
+          ),
+        )}
+      </div>
     </>
   )
 }
 
-function SeriesCard({ series }: { series: Series }): ReactNode {
+function SeriesCard({
+  series,
+  onEdit,
+  onRemove,
+}: {
+  series: Series
+  onEdit: () => void
+  onRemove: () => void
+}): ReactNode {
   const { data: preview } = useResource(() => api.preview(series.id), [series.id])
 
   return (
@@ -39,7 +96,11 @@ function SeriesCard({ series }: { series: Series }): ReactNode {
             {series.rrule ?? 'Once'} · {series.timezone} · {duration(series.durationMs)}
           </span>
         </div>
-        <span className="muted">prepares {duration(series.prepareLeadMs)} early</span>
+        <div className="row">
+          <span className="muted">prepares {duration(series.prepareLeadMs)} early</span>
+          <button onClick={onEdit}>Edit</button>
+          <ConfirmButton label="Remove" onConfirm={onRemove} />
+        </div>
       </div>
 
       {Object.keys(series.templates).length > 0 ? (

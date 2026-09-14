@@ -229,6 +229,121 @@ async function main() {
 
   const preflight = await api('GET', `/api/occurrences/${occurrences[0].id}/preflight`)
   check('pre-flight checks an occurrence on demand', Array.isArray(preflight.problems), JSON.stringify(preflight))
+
+  // -- setting the app up through the UI's own endpoints --------------------
+  //
+  // Everything above was reachable only with curl until the setup screens
+  // landed. These are exactly the calls those screens make, in the order a
+  // person makes them, so an install that cannot be configured fails here.
+
+  const discovered = await api('POST', '/api/plugins/mock/discover')
+  check('a plugin that can scan the network returns candidates', discovered.length >= 1, JSON.stringify(discovered))
+  check(
+    'a discovered candidate carries config the form can use as-is',
+    typeof discovered[0]?.config?.host === 'string',
+    JSON.stringify(discovered[0]),
+  )
+
+  const shown = (await api('GET', '/api/devices')).find((d) => d.id === device.id)
+  check('the edit form is given the stored config', shown?.config?.kind === 'encoder', JSON.stringify(shown?.config))
+  check('...with the password masked rather than absent', shown?.config?.password === '\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022')
+
+  // Re-saving the form without retyping the password must keep the stored
+  // one, or every edit would silently break the device.
+  await api('PATCH', `/api/devices/${device.id}`, { label: 'Smoke encoder', config: shown.config })
+  const reconnected = await api('POST', `/api/devices/${device.id}/connect`)
+  check('re-saving a device without retyping its password keeps it working', reconnected.health.state === 'connected', JSON.stringify(reconnected.health))
+
+  const dryRun = await api('POST', '/api/schedule/preview', {
+    label: 'Preview Service',
+    timezone: 'America/Chicago',
+    rrule: 'FREQ=WEEKLY;BYDAY=SU',
+    dtstartLocal: { date: '2026-03-01', time: '09:00' },
+    durationMs: 5_400_000,
+    templates: { title: '{{event.name}} - {{date "MMMM d"}}' },
+    count: 3,
+  })
+  check('a rule can be previewed before anything is saved', dryRun.occurrences.length === 3, JSON.stringify(dryRun))
+  check('...described in plain language', /week/i.test(dryRun.describes), dryRun.describes)
+  check(
+    '...with each name rendered against its own occurrence',
+    dryRun.occurrences[0].title === 'Preview Service - March 1' &&
+      dryRun.occurrences[1].title === 'Preview Service - March 8',
+    JSON.stringify(dryRun.occurrences.map((o) => o.title)),
+  )
+  check(
+    '...and the 9am service still at 9am after the clocks go forward',
+    dryRun.occurrences[0].start === Date.parse('2026-03-01T15:00:00Z') &&
+      dryRun.occurrences[1].start === Date.parse('2026-03-08T14:00:00Z'),
+    JSON.stringify(dryRun.occurrences.map((o) => new Date(o.start).toISOString())),
+  )
+
+  const brokenPreview = await api('POST', '/api/schedule/preview', {
+    label: 'Preview Service',
+    timezone: 'America/Chicago',
+    rrule: null,
+    dtstartLocal: { date: '2026-03-01', time: '09:00' },
+    durationMs: 5_400_000,
+    templates: { title: '{{no_such_token}}' },
+    count: 1,
+  })
+  const badTemplate = brokenPreview.occurrences[0]?.error
+  check('a bad template token is reported while typing', typeof badTemplate === 'string' && badTemplate.includes('no_such_token'), String(badTemplate))
+
+  let skippedRejected = false
+  try {
+    await api('POST', '/api/schedule/preview', {
+      label: 'Preview Service',
+      timezone: 'America/Chicago',
+      rrule: null,
+      // 02:30 never happens on the morning the clocks go forward.
+      dtstartLocal: { date: '2026-03-08', time: '02:30' },
+      durationMs: 5_400_000,
+    })
+  } catch (error) {
+    skippedRejected = String(error).includes('does not exist')
+  }
+  check('a start time the clocks skip over is refused, not shifted', skippedRejected)
+
+  const uiSeries = await api('POST', '/api/series', {
+    label: 'Form Service',
+    pipelineId: pipeline.id,
+    timezone: 'America/Chicago',
+    rrule: 'FREQ=WEEKLY;BYDAY=SU',
+    dtstartLocal: { date: '2026-03-01', time: '09:00' },
+    durationMs: 5_400_000,
+    prepareLeadMs: 1_800_000,
+    templates: { title: '{{event.name}} - {{date "yyyy-MM-dd"}}' },
+  })
+  const savedSeries = (await api('GET', '/api/series')).find((row) => row.id === uiSeries.id)
+  check(
+    'an event created from wall-clock time lands on the right instant',
+    savedSeries?.dtstart === Date.parse('2026-03-01T15:00:00Z'),
+    new Date(savedSeries?.dtstart ?? 0).toISOString(),
+  )
+
+  let pipelineLocked = false
+  try {
+    await api('DELETE', `/api/pipelines/${pipeline.id}`)
+  } catch (error) {
+    pipelineLocked = String(error).includes('Form Service')
+  }
+  check('a pipeline an event still runs cannot be deleted, and says which event', pipelineLocked)
+
+  let keyLocked = false
+  try {
+    await api('DELETE', `/api/credentials/${credential.id}`)
+  } catch (error) {
+    keyLocked = String(error).includes('Smoke pipeline')
+  }
+  check('a stream key a pipeline still points at cannot be deleted', keyLocked)
+
+  await api('DELETE', `/api/series/${uiSeries.id}`)
+  await api('PATCH', `/api/pipelines/${pipeline.id}`, { label: 'Renamed pipeline' })
+  check(
+    'a pipeline can be renamed in place',
+    (await api('GET', '/api/pipelines')).some((row) => row.label === 'Renamed pipeline'),
+  )
 }
 
 try {

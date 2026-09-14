@@ -39,15 +39,19 @@ records, stops and tidies up — without anyone touching it.
   fails, plus a pre-flight check the evening before that catches an expired
   YouTube token or an unplugged encoder while there is still time
 - Calendar and list views, a run timeline, and a device health page
+- Setup entirely in the browser: adding a device (with network discovery
+  where a plugin supports it), connecting a YouTube account, building a
+  pipeline, and writing a recurring event against a live preview of what the
+  rule and the name templates would actually produce
 - Runs headless, in Docker, or as an Electron tray app from one codebase
 
 **Not built yet**
 
 - The older Web Presenter's own TCP 9977 protocol, which is a different
   interface from the Streaming Encoder REST API
-- UI for connecting an account and editing pipelines; both are API-only today
+- Fanning one encoder out to several services at once, which needs a relay
+  in the pipeline
 - Signed and notarized installers
-- The pipeline graph editor; pipelines are defined via the API for now
 
 See [the roadmap](./docs/plan/08-roadmap-and-risks.md) for the plan.
 

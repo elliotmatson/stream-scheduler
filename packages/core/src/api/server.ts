@@ -7,11 +7,18 @@ import fastifyStatic from '@fastify/static'
 import { z } from 'zod'
 import type { ConfigValues } from '@scheduler/plugin-sdk'
 import type { Application } from '../app.js'
-import { InvalidScheduleError, validateSchedule } from '../schedule/recurrence.js'
+import {
+  describeSchedule,
+  expandOccurrences,
+  InvalidScheduleError,
+  validateSchedule,
+} from '../schedule/recurrence.js'
 import { bumpSeriesVersion, materializeSeries } from '../schedule/materialize.js'
-import { isValidTimeZone } from '../schedule/zoned.js'
+import { isValidTimeZone, zonedWallTimeToUtc } from '../schedule/zoned.js'
 import { ConfigInvalidError, UnknownPluginError } from '../plugins/registry.js'
-import { TemplateError } from '../template/render.js'
+import { renderTemplate, TemplateError } from '../template/render.js'
+import { sanitizeFilename } from '../template/index.js'
+import { assertUnreferenced, ConflictError, NotFoundError } from './errors.js'
 import { registerNotifyRoutes } from './notify-routes.js'
 import { registerOAuthRoutes } from './oauth-routes.js'
 
@@ -218,6 +225,13 @@ function registerRoutes(fastify: FastifyInstance, app: Application): void {
     return reply.code(201).send({ id })
   })
 
+  fastify.delete('/api/credentials/:id', async (request) => {
+    const { id } = z.object({ id: z.string() }).parse(request.params)
+    assertUnreferenced(db, 'credentialId', id, 'stream key')
+    db.prepare('DELETE FROM stream_credential WHERE id = ?').run(id)
+    return { ok: true }
+  })
+
   // -- pipelines ----------------------------------------------------------
 
   fastify.get('/api/pipelines', async () =>
@@ -242,6 +256,105 @@ function registerRoutes(fastify: FastifyInstance, app: Application): void {
     return reply.code(201).send({ id })
   })
 
+  fastify.patch('/api/pipelines/:id', async (request) => {
+    const { id } = z.object({ id: z.string() }).parse(request.params)
+    const body = z
+      .object({ label: z.string().min(1).optional(), graph: z.record(z.unknown()).optional() })
+      .parse(request.body)
+    const row = db.prepare('SELECT id, label, graph FROM pipeline WHERE id = ?').get(id) as
+      | { id: string; label: string; graph: string }
+      | undefined
+    if (!row) throw new NotFoundError(`No pipeline with id "${id}".`)
+
+    db.prepare('UPDATE pipeline SET label = ?, graph = ? WHERE id = ?').run(
+      body.label ?? row.label,
+      body.graph ? JSON.stringify(body.graph) : row.graph,
+      id,
+    )
+    return { ok: true }
+  })
+
+  fastify.delete('/api/pipelines/:id', async (request) => {
+    const { id } = z.object({ id: z.string() }).parse(request.params)
+    // The foreign key would raise this anyway, as an opaque SQLITE_CONSTRAINT.
+    // Naming the events that depend on it is the difference between a fixable
+    // mistake and a puzzle.
+    const users = db.prepare('SELECT label FROM event_series WHERE pipeline_id = ?').all(id) as { label: string }[]
+    if (users.length > 0) {
+      throw new ConflictError(
+        `This pipeline still runs ${users.map((row) => `"${row.label}"`).join(', ')}. ` +
+          'Point those events at another pipeline first.',
+      )
+    }
+    db.prepare('DELETE FROM pipeline WHERE id = ?').run(id)
+    return { ok: true }
+  })
+
+  // -- schedule preview ---------------------------------------------------
+
+  /**
+   * Answers "what would this actually do?" before anything is saved.
+   *
+   * The two mistakes this catches are the two that are invisible until they
+   * air: a recurrence that lands on the wrong day once the timezone is
+   * applied, and a name template that renders yesterday's date. Both are
+   * obvious the moment you see the next few occurrences written out, and
+   * essentially undetectable from the rule text alone.
+   */
+  fastify.post('/api/schedule/preview', async (request) => {
+    const body = z
+      .object({
+        label: z.string().default('Untitled event'),
+        timezone: z.string().min(1),
+        rrule: z.string().nullable().default(null),
+        dtstart: z.number().int().optional(),
+        dtstartLocal: LOCAL_START.optional(),
+        durationMs: z.number().int().positive(),
+        templates: z.record(z.string()).default({}),
+        count: z.number().int().positive().max(20).default(5),
+      })
+      .parse(request.body)
+
+    const dtstart = resolveDtstart(body)
+    assertSchedulable({ ...body, dtstart })
+
+    const from = Math.min(dtstart, app.clock.now())
+    const expanded = expandOccurrences(
+      { timezone: body.timezone, rrule: body.rrule, dtstart, durationMs: body.durationMs },
+      from,
+      // Two years is enough to show something for an annual rule without
+      // expanding a daily one into thousands of rows first.
+      from + 730 * 86_400_000,
+      { limit: body.count },
+    )
+
+    return {
+      describes: describeSchedule({
+        timezone: body.timezone,
+        rrule: body.rrule,
+        dtstart,
+        durationMs: body.durationMs,
+      }),
+      occurrences: expanded.map((occurrence, offset) => ({
+        start: occurrence.start,
+        end: occurrence.end,
+        localDate: occurrence.localDate,
+        // 'skipped' or 'ambiguous' means this one falls in a DST gap or
+        // repeat, and the UI flags it rather than quietly shifting the time.
+        resolution: occurrence.resolution,
+        ...renderNames(body.templates, {
+          occurrenceStart: occurrence.start,
+          timezone: body.timezone,
+          event: { name: body.label },
+          series: { name: body.label },
+          // Counts from this preview, not from the database: an unsaved
+          // series has no history, and an edited one is re-materialized.
+          occurrence: { index: offset + 1 },
+        }),
+      })),
+    }
+  })
+
   // -- series -------------------------------------------------------------
 
   const seriesBody = z.object({
@@ -249,7 +362,9 @@ function registerRoutes(fastify: FastifyInstance, app: Application): void {
     pipelineId: z.string().min(1),
     timezone: z.string().min(1),
     rrule: z.string().nullable().default(null),
-    dtstart: z.number().int(),
+    dtstart: z.number().int().optional(),
+    /** The wall time the operator actually means, resolved in `timezone`. */
+    dtstartLocal: LOCAL_START.optional(),
     durationMs: z.number().int().positive(),
     prepareLeadMs: z.number().int().nonnegative().default(30 * 60_000),
     prerollMs: z.number().int().nonnegative().default(0),
@@ -265,7 +380,8 @@ function registerRoutes(fastify: FastifyInstance, app: Application): void {
   )
 
   fastify.post('/api/series', async (request, reply) => {
-    const body = seriesBody.parse(request.body)
+    const parsed = seriesBody.parse(request.body)
+    const body = { ...parsed, dtstart: resolveDtstart(parsed) }
     assertSchedulable(body)
 
     const id = randomUUID()
@@ -303,7 +419,10 @@ function registerRoutes(fastify: FastifyInstance, app: Application): void {
     const row = db.prepare('SELECT * FROM event_series WHERE id = ?').get(id) as SeriesRowShape | undefined
     if (!row) throw new NotFoundError(`No series with id "${id}".`)
 
-    const merged = { ...toSeriesDto(row), ...body }
+    const merged = { ...toSeriesDto(row), ...body, dtstart: body.dtstart ?? row.dtstart }
+    // A local start only makes sense against a timezone, and an edit may be
+    // changing both at once, so it is resolved against the merged pair.
+    if (body.dtstartLocal) merged.dtstart = resolveDtstart({ ...merged, dtstartLocal: body.dtstartLocal })
     assertSchedulable(merged)
 
     db.prepare(
@@ -494,11 +613,26 @@ function registerWebsocket(fastify: FastifyInstance, app: Application): void {
 
 // -- helpers --------------------------------------------------------------
 
-class NotFoundError extends Error {
-  constructor(message: string) {
-    super(message)
-    this.name = 'NotFoundError'
+
+/** Renders whichever name templates are set, reporting a bad one inline. */
+function renderNames(
+  templates: Record<string, string>,
+  context: Parameters<typeof renderTemplate>[1],
+): { title?: string; description?: string; filename?: string; error?: string } {
+  const out: { title?: string; description?: string; filename?: string; error?: string } = {}
+  for (const key of ['title', 'description', 'filename'] as const) {
+    const pattern = templates[key]
+    if (!pattern) continue
+    const result = renderTemplate(pattern, context)
+    if (result.issues.length > 0) {
+      // One bad token is worth reporting immediately; the rest of the
+      // preview is still useful, so this does not throw.
+      out.error = result.issues.map((issue) => `${issue.token} — ${issue.message}`).join('; ')
+      continue
+    }
+    out[key] = key === 'filename' ? sanitizeFilename(result.text) : result.text
   }
+  return out
 }
 
 function isLoopback(host: string): boolean {
@@ -507,6 +641,7 @@ function isLoopback(host: string): boolean {
 
 function statusFor(error: Error): number {
   if (error instanceof NotFoundError || error instanceof UnknownPluginError) return 404
+  if (error instanceof ConflictError) return 409
   if (error instanceof ConfigInvalidError || error instanceof InvalidScheduleError || error instanceof TemplateError) {
     return 400
   }
@@ -611,6 +746,44 @@ function toRunDto(row: RunRowShape & { scheduled_start: number; series_label: st
     endedAt: row.ended_at,
     failure: row.failure ? JSON.parse(row.failure) : null,
   }
+}
+
+const LOCAL_START = z.object({
+  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'expected YYYY-MM-DD'),
+  time: z.string().regex(/^\d{2}:\d{2}$/, 'expected HH:mm'),
+})
+
+/**
+ * Turns the wall time an operator typed into the UTC instant we store.
+ *
+ * This conversion stays on the server so there is exactly one implementation
+ * of it: "9am on the 8th, in Chicago" is not a subtraction, and a browser
+ * doing its own arithmetic is how an event ends up an hour out twice a year.
+ */
+function resolveDtstart(body: {
+  dtstart?: number
+  dtstartLocal?: { date: string; time: string }
+  timezone: string
+}): number {
+  if (body.dtstartLocal === undefined) {
+    if (body.dtstart === undefined) throw new InvalidScheduleError('The event needs a start time.')
+    return body.dtstart
+  }
+  if (!isValidTimeZone(body.timezone)) {
+    throw new InvalidScheduleError(`"${body.timezone}" is not a known IANA time zone.`)
+  }
+
+  const [year, month, day] = body.dtstartLocal.date.split('-').map(Number) as [number, number, number]
+  const [hour, minute] = body.dtstartLocal.time.split(':').map(Number) as [number, number]
+  const resolved = zonedWallTimeToUtc({ year, month, day, hour, minute, second: 0 }, body.timezone)
+  if (resolved.resolution === 'skipped') {
+    // 2:30am on the morning the clocks go forward does not exist.
+    throw new InvalidScheduleError(
+      `${body.dtstartLocal.date} ${body.dtstartLocal.time} does not exist in ${body.timezone}: ` +
+        'the clocks go forward over that time. Pick another start.',
+    )
+  }
+  return resolved.instant
 }
 
 function assertSchedulable(series: {

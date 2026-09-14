@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import type { ReactNode } from 'react'
 import { api, useResource, type ChannelKind, type NotificationChannel } from '../api.ts'
-import { Card, Empty, ErrorBanner, StatusPill } from '../components.tsx'
+import { Card, ConfigFields, ConfirmButton, Empty, ErrorBanner, Field, StatusPill } from '../components.tsx'
 import { relative } from '../format.ts'
 
 /**
@@ -87,13 +87,11 @@ export function Alerts(): ReactNode {
                 <button disabled={busy === channel.id} onClick={() => void act(channel.id, () => api.testChannel(channel.id), true)}>
                   {busy === channel.id ? 'Sending…' : 'Send a test'}
                 </button>
-                <button
-                  className="danger"
+                <ConfirmButton
+                  label="Remove"
                   disabled={busy === channel.id}
-                  onClick={() => void act(channel.id, () => api.deleteChannel(channel.id))}
-                >
-                  Remove
-                </button>
+                  onConfirm={() => void act(channel.id, () => api.deleteChannel(channel.id))}
+                />
               </div>
             </div>
 
@@ -169,29 +167,7 @@ function AddChannel({ kinds, onAdded }: { kinds: ChannelKind[]; onAdded: () => v
 
         {/* Rendered straight from the channel's declared fields, the same way
             device settings are, so a new channel needs no UI work. */}
-        {(selected?.configSchema ?? []).map((field) => (
-          <Field key={field.id} label={field.label} hint={'tooltip' in field ? field.tooltip : undefined}>
-            {field.type === 'checkbox' ? (
-              <input
-                type="checkbox"
-                checked={Boolean(config[field.id] ?? field.default ?? false)}
-                onChange={(event) => setConfig({ ...config, [field.id]: event.target.checked })}
-              />
-            ) : field.type === 'number' ? (
-              <input
-                type="number"
-                value={String(config[field.id] ?? field.default ?? '')}
-                onChange={(event) => setConfig({ ...config, [field.id]: Number(event.target.value) })}
-              />
-            ) : (
-              <input
-                type={field.type === 'secret' ? 'password' : 'text'}
-                value={String(config[field.id] ?? ('default' in field ? (field.default ?? '') : ''))}
-                onChange={(event) => setConfig({ ...config, [field.id]: event.target.value })}
-              />
-            )}
-          </Field>
-        ))}
+        <ConfigFields fields={selected?.configSchema ?? []} values={config} onChange={setConfig} />
 
         <div className="row">
           <button className="primary" disabled={saving} onClick={() => void save()}>
@@ -200,20 +176,6 @@ function AddChannel({ kinds, onAdded }: { kinds: ChannelKind[]; onAdded: () => v
         </div>
       </div>
     </Card>
-  )
-}
-
-function Field({ label, hint, children }: { label: string; hint?: string; children: ReactNode }): ReactNode {
-  return (
-    <label style={{ display: 'grid', gap: 4 }}>
-      <span style={{ fontSize: 13 }}>{label}</span>
-      {children}
-      {hint ? (
-        <span className="muted" style={{ fontSize: 12 }}>
-          {hint}
-        </span>
-      ) : null}
-    </label>
   )
 }
 

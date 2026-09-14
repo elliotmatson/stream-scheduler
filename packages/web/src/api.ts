@@ -32,6 +32,8 @@ export interface Device {
   id: string
   pluginId: string
   label: string
+  /** Secret fields arrive as a masked marker; there is no read path for them. */
+  config: Record<string, unknown>
   probedModel: string | null
   capabilities: { model: string; firmware?: string; features: string[] } | null
   health: string
@@ -71,13 +73,7 @@ export interface Run {
 export interface ChannelKind {
   kind: string
   displayName: string
-  configSchema: {
-    type: string
-    id: string
-    label: string
-    default?: unknown
-    tooltip?: string
-  }[]
+  configSchema: ConfigField[]
 }
 
 export interface NotificationChannel {
@@ -96,6 +92,119 @@ export interface Preview {
   description?: string
   filename?: string
   error?: string
+}
+
+/** Mirrors `ConfigField` in the SDK: the host renders whatever a plugin declares. */
+export type ConfigField =
+  | { type: 'textinput'; id: string; label: string; default?: string; required?: boolean; tooltip?: string }
+  | { type: 'number'; id: string; label: string; default?: number; min?: number; max?: number; required?: boolean; tooltip?: string }
+  | { type: 'checkbox'; id: string; label: string; default?: boolean; tooltip?: string }
+  | { type: 'dropdown'; id: string; label: string; choices: { id: string; label: string }[]; default?: string; required?: boolean; tooltip?: string }
+  | { type: 'secret'; id: string; label: string; required?: boolean; tooltip?: string }
+  | { type: 'static-text'; id: string; label: string; value: string }
+
+export interface Plugin {
+  id: string
+  displayName: string
+  configSchema: ConfigField[]
+  canDiscover: boolean
+}
+
+export interface DiscoveredDevice {
+  label: string
+  config: Record<string, unknown>
+  detail?: Record<string, unknown>
+}
+
+export interface DestinationProvider {
+  id: string
+  displayName: string
+  configSchema: ConfigField[]
+  providesIngest: boolean
+  supportsOAuth: boolean
+}
+
+export interface OAuthInstructions {
+  steps: string[]
+  redirectUri: string
+  warning: string
+}
+
+export interface OAuthClient {
+  id: string
+  provider: string
+  label: string
+  clientId: string
+}
+
+export interface Account {
+  id: string
+  provider: string
+  externalId: string
+  displayName: string
+  status: string
+  scopes: string[]
+}
+
+export interface Destination {
+  id: string
+  providerId: string
+  label: string
+  accountId: string | null
+  config: Record<string, unknown>
+}
+
+export interface Credential {
+  id: string
+  label: string
+  source: string
+  ingestUrl: string | null
+  externalId: string | null
+  key: string
+}
+
+export interface PipelineNode {
+  id: string
+  deviceId: string
+  nodeId: string
+  credentialId?: string
+  ingestFrom?: string
+  filenameTemplate?: string
+}
+
+export interface Pipeline {
+  id: string
+  label: string
+  graph: { nodes: PipelineNode[]; destinations?: { id: string; destinationId: string }[] }
+}
+
+export interface PreviewOccurrence {
+  start: number
+  end: number
+  localDate: string
+  resolution: 'exact' | 'ambiguous' | 'skipped'
+  title?: string
+  description?: string
+  filename?: string
+  error?: string
+}
+
+export interface SchedulePreview {
+  describes: string
+  occurrences: PreviewOccurrence[]
+}
+
+export interface SeriesInput {
+  label: string
+  pipelineId: string
+  timezone: string
+  rrule: string | null
+  /** The wall time as typed. The server resolves it in `timezone`. */
+  dtstartLocal: { date: string; time: string }
+  durationMs: number
+  prepareLeadMs?: number
+  templates: Record<string, string>
+  enabled?: boolean
 }
 
 export class ApiError extends Error {
@@ -150,6 +259,64 @@ export const api = {
   testChannel: (id: string) => request<unknown>(`/api/notifications/channels/${id}/test`, { method: 'POST' }),
   deleteChannel: (id: string) => request<unknown>(`/api/notifications/channels/${id}`, { method: 'DELETE' }),
   unskip: (occurrenceId: string) => request<unknown>(`/api/occurrences/${occurrenceId}/unskip`, { method: 'POST' }),
+
+  // -- setup --------------------------------------------------------------
+
+  plugins: () => request<Plugin[]>('/api/plugins'),
+  discover: (pluginId: string) =>
+    request<DiscoveredDevice[]>(`/api/plugins/${pluginId}/discover`, { method: 'POST' }),
+  createDevice: (input: { pluginId: string; label: string; config: Record<string, unknown> }) =>
+    request<{ id: string }>('/api/devices', { method: 'POST', body: JSON.stringify(input) }),
+  updateDevice: (id: string, input: { label?: string; config?: Record<string, unknown>; enabled?: boolean }) =>
+    request<unknown>(`/api/devices/${id}`, { method: 'PATCH', body: JSON.stringify(input) }),
+  deleteDevice: (id: string) => request<unknown>(`/api/devices/${id}`, { method: 'DELETE' }),
+
+  destinationProviders: () => request<DestinationProvider[]>('/api/destination-providers'),
+  oauthInstructions: (provider: string) => request<OAuthInstructions>(`/api/oauth/${provider}/instructions`),
+  oauthClients: () => request<OAuthClient[]>('/api/oauth/clients'),
+  createOAuthClient: (input: { provider: string; label: string; clientId: string; clientSecret: string }) =>
+    request<{ id: string }>('/api/oauth/clients', { method: 'POST', body: JSON.stringify(input) }),
+  /** `clientRef` is the stored client's row id, not Google's client ID. */
+  startOAuth: (provider: string, clientRef: string) =>
+    request<{ url: string }>(`/api/oauth/${provider}/start`, { method: 'POST', body: JSON.stringify({ clientRef }) }),
+  accounts: () => request<Account[]>('/api/accounts'),
+  deleteAccount: (id: string) => request<unknown>(`/api/accounts/${id}`, { method: 'DELETE' }),
+
+  destinations: () => request<Destination[]>('/api/destinations'),
+  createDestination: (input: {
+    providerId: string
+    label: string
+    accountId: string
+    config: Record<string, unknown>
+  }) => request<{ id: string }>('/api/destinations', { method: 'POST', body: JSON.stringify(input) }),
+  deleteDestination: (id: string) => request<unknown>(`/api/destinations/${id}`, { method: 'DELETE' }),
+
+  credentials: () => request<Credential[]>('/api/credentials'),
+  createCredential: (input: { label: string; ingestUrl: string; key: string }) =>
+    request<{ id: string }>('/api/credentials', { method: 'POST', body: JSON.stringify(input) }),
+  deleteCredential: (id: string) => request<unknown>(`/api/credentials/${id}`, { method: 'DELETE' }),
+
+  pipelines: () => request<Pipeline[]>('/api/pipelines'),
+  createPipeline: (input: { label: string; graph: Pipeline['graph'] }) =>
+    request<{ id: string }>('/api/pipelines', { method: 'POST', body: JSON.stringify(input) }),
+  updatePipeline: (id: string, input: { label?: string; graph?: Pipeline['graph'] }) =>
+    request<unknown>(`/api/pipelines/${id}`, { method: 'PATCH', body: JSON.stringify(input) }),
+  deletePipeline: (id: string) => request<unknown>(`/api/pipelines/${id}`, { method: 'DELETE' }),
+
+  schedulePreview: (input: {
+    label: string
+    timezone: string
+    rrule: string | null
+    dtstartLocal: { date: string; time: string }
+    durationMs: number
+    templates: Record<string, string>
+    count?: number
+  }) => request<SchedulePreview>('/api/schedule/preview', { method: 'POST', body: JSON.stringify(input) }),
+  createSeries: (input: SeriesInput) =>
+    request<{ id: string }>('/api/series', { method: 'POST', body: JSON.stringify(input) }),
+  updateSeries: (id: string, input: Partial<SeriesInput>) =>
+    request<unknown>(`/api/series/${id}`, { method: 'PATCH', body: JSON.stringify(input) }),
+  deleteSeries: (id: string) => request<unknown>(`/api/series/${id}`, { method: 'DELETE' }),
 }
 
 /** Loads once, then again whenever `deps` change or `reload` is called. */
