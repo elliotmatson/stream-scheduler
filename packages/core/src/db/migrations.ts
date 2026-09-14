@@ -158,4 +158,14 @@ CREATE TABLE quota_ledger (
 CREATE INDEX quota_day ON quota_ledger (provider, client_ref, day);
 `,
   },
+  {
+    id: 2,
+    name: 'forced-runs',
+    sql: `
+-- When an operator starts an occurrence by hand, the run must go immediately
+-- rather than waiting for its scheduled window, and must run for its normal
+-- duration measured from when it actually started.
+ALTER TABLE run ADD COLUMN forced_at INTEGER;
+`,
+  },
 ]

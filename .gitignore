@@ -2,6 +2,7 @@ node_modules/
 dist/
 build/
 release/
+packages/host/web/
 coverage/
 .turbo/
 *.tsbuildinfo

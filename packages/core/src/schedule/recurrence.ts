@@ -1,4 +1,10 @@
-import { RRule } from 'rrule'
+// rrule v2 ships CommonJS with no ESM named exports, so a named import
+// compiles but throws at runtime under native ESM. Vitest bundles and hides
+// this; the built artifact does not. Import the module object instead.
+import rrulePkg from 'rrule'
+import type { RRule as RRuleInstance } from 'rrule'
+
+const { RRule } = rrulePkg
 import { asNaiveUtc, isValidTimeZone, localDateAt, wallTimeAt, zonedWallTimeToUtc } from './zoned.js'
 import type { WallTime, WallTimeResolution, ZonedInstant } from './zoned.js'
 
@@ -114,7 +120,7 @@ function expandRule(
   return naiveResults.map((naive) => zonedWallTimeToUtc(wallOf(naive), schedule.timezone))
 }
 
-function buildRule(schedule: SeriesSchedule): RRule {
+function buildRule(schedule: SeriesSchedule): RRuleInstance {
   const dtstart = new Date(asNaiveUtc(wallTimeAt(schedule.dtstart, schedule.timezone)))
   try {
     return new RRule({ ...RRule.parseString(schedule.rrule ?? ''), dtstart })

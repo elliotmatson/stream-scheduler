@@ -518,3 +518,47 @@ describe('crash recovery', () => {
 function occurrenceStatus(occurrenceId: string): string {
   return (db.prepare('SELECT status FROM occurrence WHERE id = ?').get(occurrenceId) as { status: string }).status
 }
+
+describe('operator start-now', () => {
+  it('starts an occurrence that is days away, without waiting for its window', async () => {
+    const occurrenceId = seedOccurrence()
+    const engine = engineFor(plannerFor(makePlan(new FakeBroadcastService())))
+
+    // Nowhere near the prepare window: a scheduled tick would do nothing.
+    clock.set(START - 6 * 24 * 60 * MINUTE)
+    expect((await engine.tick()).created).toHaveLength(0)
+
+    const runId = await engine.startNow(occurrenceId)
+    expect(await engine.advance(runId)).toBe('live')
+  })
+
+  it('runs for its normal length measured from when it was forced', async () => {
+    const occurrenceId = seedOccurrence()
+    const engine = engineFor(plannerFor(makePlan(new FakeBroadcastService())))
+
+    const forcedAt = START - 6 * 24 * 60 * MINUTE
+    clock.set(forcedAt)
+    const runId = await engine.startNow(occurrenceId)
+    await engine.advance(runId)
+
+    // The scheduled end is days later, but that must not stop a run that
+    // only just started; nor should the run end instantly when forced after
+    // its scheduled window.
+    clock.set(forcedAt + DURATION - MINUTE)
+    await engine.tick()
+    expect(store.getRun(runId).state).toBe('live')
+
+    clock.set(forcedAt + DURATION)
+    await engine.tick()
+    expect(store.getRun(runId).state).toBe('completed')
+  })
+
+  it('never calls a forced run late', async () => {
+    const occurrenceId = seedOccurrence({ graceMs: MINUTE })
+    const engine = engineFor(plannerFor(makePlan(new FakeBroadcastService())))
+
+    clock.set(START + 5 * 60 * MINUTE) // hours past the grace period
+    const runId = await engine.startNow(occurrenceId)
+    expect(await engine.advance(runId)).toBe('live')
+  })
+})

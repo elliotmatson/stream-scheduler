@@ -114,7 +114,7 @@ export class RunEngine {
       return 'failed'
     }
 
-    const phase = this.duePhase(run.state, timing, now)
+    const phase = this.duePhase(run, timing, now)
     if (!phase) return run.state
 
     return this.runPhase(run, phase)
@@ -147,18 +147,27 @@ export class RunEngine {
    * treating that as a missed window fails every run at the finish line.
    */
   private hasMissedItsWindow(run: RunRecord, timing: Timing, now: number): boolean {
+    // An operator who pressed "start now" has said what they want; the
+    // scheduled window no longer applies.
+    if (run.forced_at !== null) return false
     if (run.state !== 'scheduled' && run.state !== 'preparing' && run.state !== 'ready') return false
     return now > timing.scheduledStart + timing.lateStartGraceMs
   }
 
-  private duePhase(state: RunState, timing: Timing, now: number): RunPhase | undefined {
-    switch (state) {
+  private duePhase(run: RunRecord, timing: Timing, now: number): RunPhase | undefined {
+    const forced = run.forced_at !== null
+    // A forced run is measured from when it actually started, so starting an
+    // event outside its window gives it a full-length run rather than
+    // stopping it the instant it goes live.
+    const endsAt = forced ? run.forced_at! + (timing.scheduledEnd - timing.scheduledStart) : timing.scheduledEnd
+
+    switch (run.state) {
       case 'scheduled':
-        return now >= timing.scheduledStart - timing.prepareLeadMs ? 'prepare' : undefined
+        return forced || now >= timing.scheduledStart - timing.prepareLeadMs ? 'prepare' : undefined
       case 'ready':
-        return now >= timing.scheduledStart - timing.prerollMs ? 'start' : undefined
+        return forced || now >= timing.scheduledStart - timing.prerollMs ? 'start' : undefined
       case 'live':
-        return now >= timing.scheduledEnd + timing.postrollMs ? 'stop' : undefined
+        return now >= endsAt + timing.postrollMs ? 'stop' : undefined
       case 'completing':
         return 'complete'
 
@@ -219,7 +228,10 @@ export class RunEngine {
     const existing = this.deps.store.findRunForOccurrence(occurrenceId)
     if (existing && !isTerminal(existing.state)) return existing.id
     const plan = await this.deps.planner.plan(occurrenceId)
-    const run = this.deps.store.createRun(occurrenceId, plan, { attempt: (existing?.attempt ?? 0) + 1 })
+    const run = this.deps.store.createRun(occurrenceId, plan, {
+      attempt: (existing?.attempt ?? 0) + 1,
+      forcedAt: this.deps.clock.now(),
+    })
     this.deps.db.prepare("UPDATE occurrence SET status = 'running' WHERE id = ?").run(occurrenceId)
     return run.id
   }

@@ -17,6 +17,8 @@ export interface RunRecord {
   ended_at: number | null
   resolved: string | null
   failure: string | null
+  /** Set when an operator started this run by hand; see RunEngine.startNow. */
+  forced_at: number | null
 }
 
 export interface StepRecord {
@@ -58,15 +60,21 @@ export class RunStore {
   ) {}
 
   /** Creates the run and every step row in one transaction. */
-  createRun(occurrenceId: string, plan: RunPlan, options: { attempt?: number } = {}): RunRecord {
+  createRun(
+    occurrenceId: string,
+    plan: RunPlan,
+    options: { attempt?: number; forcedAt?: number } = {},
+  ): RunRecord {
     const runId = randomUUID()
     const attempt = options.attempt ?? 1
     const now = this.clock.now()
 
     this.db.transaction(() => {
       this.db
-        .prepare('INSERT INTO run (id, occurrence_id, state, attempt, created_at) VALUES (?, ?, ?, ?, ?)')
-        .run(runId, occurrenceId, 'scheduled', attempt, now)
+        .prepare(
+          'INSERT INTO run (id, occurrence_id, state, attempt, created_at, forced_at) VALUES (?, ?, ?, ?, ?, ?)',
+        )
+        .run(runId, occurrenceId, 'scheduled', attempt, now, options.forcedAt ?? null)
       const insert = this.db.prepare(
         `INSERT INTO run_step (id, run_id, seq, kind, state, idempotency_key, request)
          VALUES (?, ?, ?, ?, 'pending', ?, ?)`,
