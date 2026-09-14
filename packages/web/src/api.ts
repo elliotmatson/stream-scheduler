@@ -68,6 +68,28 @@ export interface Run {
   steps?: RunStep[]
 }
 
+export interface ChannelKind {
+  kind: string
+  displayName: string
+  configSchema: {
+    type: string
+    id: string
+    label: string
+    default?: unknown
+    tooltip?: string
+  }[]
+}
+
+export interface NotificationChannel {
+  id: string
+  kind: string
+  label: string
+  events: string[]
+  enabled: boolean
+  lastError: string | null
+  lastSentAt: number | null
+}
+
 export interface Preview {
   occurrenceId: string
   title?: string
@@ -120,6 +142,13 @@ export const api = {
   startNow: (occurrenceId: string) =>
     request<{ runId: string; state: string }>(`/api/occurrences/${occurrenceId}/start-now`, { method: 'POST' }),
   skip: (occurrenceId: string) => request<unknown>(`/api/occurrences/${occurrenceId}/skip`, { method: 'POST' }),
+  notificationKinds: () => request<ChannelKind[]>('/api/notifications/kinds'),
+  notificationChannels: () =>
+    request<{ channels: NotificationChannel[]; pending: number }>('/api/notifications/channels'),
+  createChannel: (input: { kind: string; label: string; config: Record<string, unknown> }) =>
+    request<{ id: string }>('/api/notifications/channels', { method: 'POST', body: JSON.stringify(input) }),
+  testChannel: (id: string) => request<unknown>(`/api/notifications/channels/${id}/test`, { method: 'POST' }),
+  deleteChannel: (id: string) => request<unknown>(`/api/notifications/channels/${id}`, { method: 'DELETE' }),
   unskip: (occurrenceId: string) => request<unknown>(`/api/occurrences/${occurrenceId}/unskip`, { method: 'POST' }),
 }
 

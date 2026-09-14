@@ -33,6 +33,9 @@ records, stops and tidies up — without anyone touching it.
   templated title and description, automatic playlist insertion, a reusable
   ingestion stream so the encoder key never changes, and a quota ledger that
   keeps a reserve for the calls that make a stream happen
+- Alerts to **Google Chat**, Slack, a generic webhook or email when a run
+  fails, plus a pre-flight check the evening before that catches an expired
+  YouTube token or an unplugged encoder while there is still time
 - Calendar and list views, a run timeline, and a device health page
 - Runs headless, in Docker, or as an Electron tray app from one codebase
 
@@ -40,8 +43,8 @@ records, stops and tidies up — without anyone touching it.
 
 - The Web Presenter adapter (TCP 9977)
 - UI for connecting an account and editing pipelines; both are API-only today
-- The pipeline graph editor; pipelines are defined via the API for now
 - Signed and notarized installers
+- The pipeline graph editor; pipelines are defined via the API for now
 
 See [the roadmap](./docs/plan/08-roadmap-and-risks.md) for the plan.
 
@@ -152,6 +155,21 @@ Start with [`docs/plan/README.md`](./docs/plan/README.md).
 | [06 Templating & secrets](./docs/plan/06-templating-and-secrets.md) | Name templates, key management, encryption at rest |
 | [07 Packaging](./docs/plan/07-packaging.md) | Monorepo, Electron, Docker, signing, CI |
 | [08 Roadmap & risks](./docs/plan/08-roadmap-and-risks.md) | Phases with deliverables, open risks |
+
+## Alerts
+
+Add a channel under **Alerts**. Google Chat needs a webhook from the space
+(Apps & integrations > Webhooks); the URL carries a key and token, so it is
+stored encrypted and never shown again.
+
+Send a test before trusting it. A channel nobody has proved works is worse
+than none, because it reads as coverage while being silence.
+
+Two things happen automatically once a channel exists: a failed run is
+reported with the step that broke and a link into its timeline, and every
+event is checked around 18 hours ahead — templates render, devices answer,
+the YouTube authorization is still good. Messages about one event are
+threaded together in Chat rather than scattered across the space.
 
 ## A note on network security
 

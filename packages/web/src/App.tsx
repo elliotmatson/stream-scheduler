@@ -5,9 +5,10 @@ import { Schedule } from './views/Schedule.tsx'
 import { Devices } from './views/Devices.tsx'
 import { SeriesList } from './views/SeriesList.tsx'
 import { RunDetail, Runs } from './views/RunDetail.tsx'
+import { Alerts } from './views/Alerts.tsx'
 
 /**
- * A hash router in twenty lines. This app has four screens; a routing
+ * A hash router in twenty lines. This app has a handful of screens; a routing
  * library would be more code than the routes.
  */
 function useHashRoute(): [string, (path: string) => void] {
@@ -39,6 +40,7 @@ export function App(): ReactNode {
         <NavLink path={path} to="/events" label="Events" navigate={navigate} />
         <NavLink path={path} to="/devices" label="Devices" navigate={navigate} />
         <NavLink path={path} to="/runs" label="Runs" navigate={navigate} />
+        <NavLink path={path} to="/alerts" label="Alerts" navigate={navigate} />
         <div style={{ marginTop: 'auto', paddingTop: 12 }}>
           {liveRuns > 0 ? (
             <span className="pill live">
@@ -66,6 +68,7 @@ function Route({ path, navigate }: { path: string; navigate: (path: string) => v
   if (path === '/devices') return <Devices />
   if (path === '/events') return <SeriesList />
   if (path === '/runs') return <Runs navigate={navigate} />
+  if (path === '/alerts') return <Alerts />
   return <Schedule navigate={navigate} />
 }
 

@@ -19,6 +19,7 @@ const configDir = mkdtempSync(join(tmpdir(), 'scheduler-smoke-'))
 const STREAM_KEY = 'live_smoke-test-secret-key'
 const DEVICE_PASSWORD = 'smoke-test-device-password'
 const OAUTH_SECRET = 'smoke-test-oauth-client-secret'
+const CHAT_WEBHOOK = 'https://chat.googleapis.invalid/v1/spaces/AAA/messages?key=k&token=smoke-chat-token'
 
 let child
 let failures = 0
@@ -187,6 +188,42 @@ async function main() {
 
   const expired = await fetch(`${BASE}/oauth/callback?code=x&state=not-a-real-state`)
   check('a callback with an unknown state is rejected', (await expired.text()).includes('expired'))
+
+  // -- alerts ---------------------------------------------------------------
+
+  const kinds = await api('GET', '/api/notifications/kinds')
+  check(
+    'Google Chat, Slack, webhook and email channels are available',
+    ['google-chat', 'slack', 'webhook', 'email'].every((k) => kinds.some((c) => c.kind === k)),
+    kinds.map((k) => k.kind).join(', '),
+  )
+
+  const chat = kinds.find((k) => k.kind === 'google-chat')
+  check(
+    'the Google Chat webhook URL is a secret field',
+    chat?.configSchema.find((f) => f.id === 'webhookUrl')?.type === 'secret',
+  )
+
+  const channel = await api('POST', '/api/notifications/channels', {
+    kind: 'google-chat',
+    label: 'Smoke space',
+    config: { webhookUrl: CHAT_WEBHOOK },
+  })
+  const listed = await api('GET', '/api/notifications/channels')
+  check('the Chat webhook URL is never returned', !JSON.stringify(listed).includes('smoke-chat-token'))
+  check('the channel is listed', listed.channels.some((c) => c.id === channel.id))
+
+  // An unreachable webhook must fail loudly at the button, not silently later.
+  let testFailed = false
+  try {
+    await api('POST', `/api/notifications/channels/${channel.id}/test`)
+  } catch {
+    testFailed = true
+  }
+  check('a test to an unreachable webhook reports the failure', testFailed)
+
+  const preflight = await api('GET', `/api/occurrences/${occurrences[0].id}/preflight`)
+  check('pre-flight checks an occurrence on demand', Array.isArray(preflight.problems), JSON.stringify(preflight))
 }
 
 try {

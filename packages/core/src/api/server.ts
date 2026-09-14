@@ -12,6 +12,7 @@ import { bumpSeriesVersion, materializeSeries } from '../schedule/materialize.js
 import { isValidTimeZone } from '../schedule/zoned.js'
 import { ConfigInvalidError, UnknownPluginError } from '../plugins/registry.js'
 import { TemplateError } from '../template/render.js'
+import { registerNotifyRoutes } from './notify-routes.js'
 import { registerOAuthRoutes } from './oauth-routes.js'
 
 export interface ServerOptions {
@@ -70,6 +71,7 @@ export async function createServer(options: ServerOptions): Promise<FastifyInsta
 
   registerRoutes(fastify, app)
   registerOAuthRoutes(fastify, app)
+  registerNotifyRoutes(fastify, app)
   registerWebsocket(fastify, app)
 
   if (options.webRoot && existsSync(options.webRoot)) {

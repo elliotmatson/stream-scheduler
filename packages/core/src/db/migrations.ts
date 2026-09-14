@@ -185,4 +185,45 @@ CREATE TABLE oauth_client (
 );
 `,
   },
+  {
+    id: 4,
+    name: 'notifications',
+    sql: `
+CREATE TABLE notification_channel (
+  id           TEXT PRIMARY KEY,
+  kind         TEXT NOT NULL,
+  label        TEXT NOT NULL,
+  config       TEXT NOT NULL,
+  events       TEXT NOT NULL DEFAULT '[]',
+  enabled      INTEGER NOT NULL DEFAULT 1,
+  last_error   TEXT,
+  last_sent_at INTEGER,
+  created_at   INTEGER NOT NULL
+);
+
+-- A durable outbox rather than fire-and-forget. A run that fails at 08:30
+-- must still tell somebody even if the app is killed a second later, and the
+-- unique key is what stops one failure being announced on every tick.
+CREATE TABLE notification_outbox (
+  id              INTEGER PRIMARY KEY AUTOINCREMENT,
+  channel_id      TEXT NOT NULL REFERENCES notification_channel(id) ON DELETE CASCADE,
+  dedupe_key      TEXT NOT NULL,
+  event           TEXT NOT NULL,
+  payload         TEXT NOT NULL,
+  status          TEXT NOT NULL DEFAULT 'pending',
+  attempts        INTEGER NOT NULL DEFAULT 0,
+  next_attempt_at INTEGER NOT NULL,
+  last_error      TEXT,
+  created_at      INTEGER NOT NULL,
+  sent_at         INTEGER,
+  UNIQUE (channel_id, dedupe_key)
+);
+CREATE INDEX notification_due ON notification_outbox (status, next_attempt_at);
+
+CREATE TABLE setting (
+  key   TEXT PRIMARY KEY,
+  value TEXT NOT NULL
+);
+`,
+  },
 ]

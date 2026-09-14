@@ -26,12 +26,14 @@
     "@fastify/static": "^8.0.3",
     "pino": "^9.5.0",
     "rrule": "^2.8.1",
-    "zod": "^3.24.1"
+    "zod": "^3.24.1",
+    "nodemailer": "^7.0.0"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.12",
     "typescript": "^5.7.2",
     "@scheduler/plugin-mock": "workspace:*",
-    "@scheduler/plugin-youtube": "workspace:*"
+    "@scheduler/plugin-youtube": "workspace:*",
+    "@types/nodemailer": "^6.4.17"
   }
 }

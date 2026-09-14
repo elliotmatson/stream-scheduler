@@ -13,6 +13,11 @@ export interface EngineDeps {
   planner: RunPlanner
   sleeper?: Sleeper
   logger?: Logger
+  /**
+   * Called when a run ends badly. A hook rather than a notifier so the
+   * engine stays unaware of channels, outboxes and email servers.
+   */
+  onFailure?: (event: { runId: string; occurrenceId: string; failure: RunFailure; attempt: number }) => void
 }
 
 export interface Timing {
@@ -195,6 +200,21 @@ export class RunEngine {
     this.deps.store.transition(run.id, 'failed')
     this.deps.db.prepare("UPDATE occurrence SET status = 'failed' WHERE id = ?").run(run.occurrence_id)
     this.logger.error('run failed', { runId: run.id, code: failure.code, message: failure.message })
+
+    try {
+      this.deps.onFailure?.({
+        runId: run.id,
+        occurrenceId: run.occurrence_id,
+        failure,
+        attempt: run.attempt,
+      })
+    } catch (error) {
+      // Telling somebody is best-effort; it must never turn a failed run
+      // into a crashed scheduler.
+      this.logger.error('the failure hook threw', {
+        error: error instanceof Error ? error.message : String(error),
+      })
+    }
   }
 
   /**

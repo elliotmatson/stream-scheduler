@@ -467,3 +467,33 @@ pre {
     min-height: 62px;
   }
 }
+
+/* forms ----------------------------------------------------------------- */
+
+input[type='text'],
+input[type='password'],
+input[type='number'],
+select {
+  font: inherit;
+  padding: 6px 9px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  width: 100%;
+  max-width: 100%;
+}
+
+input[type='checkbox'] {
+  justify-self: start;
+  width: 16px;
+  height: 16px;
+}
+
+input:focus-visible,
+select:focus-visible,
+button:focus-visible,
+a:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}

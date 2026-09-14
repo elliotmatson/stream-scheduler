@@ -13,6 +13,9 @@ import { DEFAULT_HORIZON_MS, materializeAll } from './schedule/materialize.js'
 import { PipelinePlanner } from './runs/pipeline-planner.js'
 import { RunEngine } from './runs/engine.js'
 import { RunStore } from './runs/store.js'
+import { Notifier } from './notify/notifier.js'
+import { PreflightChecker, DEFAULT_PREFLIGHT_LEAD_MS } from './notify/preflight.js'
+import { runFailedNotification } from './notify/run-events.js'
 
 export interface AppOptions {
   configDir?: string
@@ -29,6 +32,10 @@ export interface AppOptions {
    *  package supplies an OS-keychain source here. */
   keySources?: MasterKeySource[]
   enforceSerialization?: boolean
+  /** How far ahead events are pre-flight checked. */
+  preflightLeadMs?: number
+  /** Used in notification links back into the UI. */
+  baseUrl?: string
 }
 
 /**
@@ -47,6 +54,8 @@ export class Application {
   readonly store: RunStore
   readonly planner: PipelinePlanner
   readonly engine: RunEngine
+  readonly notifier: Notifier
+  readonly preflight: PreflightChecker
   readonly logger: Logger
   readonly clock: Clock
 
@@ -54,6 +63,7 @@ export class Application {
   private timer: NodeJS.Timeout | undefined
   private ticking = false
   private lastMaterializedAt = 0
+  private lastPreflightAt = 0
   private readonly tickIntervalMs: number
   private readonly horizonMs: number
 
@@ -67,6 +77,8 @@ export class Application {
     store: RunStore
     planner: PipelinePlanner
     engine: RunEngine
+    notifier: Notifier
+    preflight: PreflightChecker
     logger: Logger
     clock: Clock
     tickIntervalMs: number
@@ -81,6 +93,8 @@ export class Application {
     this.store = init.store
     this.planner = init.planner
     this.engine = init.engine
+    this.notifier = init.notifier
+    this.preflight = init.preflight
     this.logger = init.logger
     this.clock = init.clock
     this.tickIntervalMs = init.tickIntervalMs
@@ -124,7 +138,32 @@ export class Application {
     })
     const store = new RunStore(db, clock, scrubber)
     const planner = new PipelinePlanner({ db, connections, vault, clock, destinations })
-    const engine = new RunEngine({ db, store, clock, planner, logger })
+    const notifier = new Notifier({ db, clock, vault, logger })
+    const baseUrl = options.baseUrl ?? 'http://127.0.0.1:8500'
+
+    const engine = new RunEngine({
+      db,
+      store,
+      clock,
+      planner,
+      logger,
+      // Queued rather than sent here: the run engine's job is to end the run
+      // cleanly, and a mail server that hangs must not be on that path.
+      onFailure: (event) => {
+        notifier.enqueue(runFailedNotification(db, event, baseUrl))
+      },
+    })
+
+    const preflight = new PreflightChecker({
+      db,
+      clock,
+      planner,
+      connections,
+      destinations,
+      notifier,
+      logger,
+      leadMs: options.preflightLeadMs ?? DEFAULT_PREFLIGHT_LEAD_MS,
+    })
 
     return new Application({
       paths,
@@ -136,6 +175,8 @@ export class Application {
       store,
       planner,
       engine,
+      notifier,
+      preflight,
       logger,
       clock,
       tickIntervalMs: options.tickIntervalMs ?? 5_000,
@@ -170,6 +211,14 @@ export class Application {
       }
       await this.connections.tick()
       await this.engine.tick()
+
+      // Pre-flight is hourly: the checks reach out to every device and
+      // service, and doing that every five seconds would be rude to both.
+      if (now - this.lastPreflightAt > 60 * 60_000) {
+        this.lastPreflightAt = now
+        await this.preflight.run()
+      }
+      await this.notifier.flush()
     } catch (error) {
       this.logger.error('scheduler tick failed', {
         error: error instanceof Error ? error.message : String(error),
