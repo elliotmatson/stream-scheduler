@@ -78,6 +78,14 @@ export function defineDevice(spec: DeviceSpec): DeviceInstance {
             ...(typeof args.quality === 'string' && args.quality ? { quality: args.quality } : {}),
           })
           break
+        case 'selectSlot': {
+          const slot = args.slot
+          if (typeof slot !== 'number' || !Number.isInteger(slot)) {
+            throw new DeviceError('bad-argument', '"slot" must be a slot number.')
+          }
+          await actions.selectSlot!({ slot })
+          break
+        }
         case 'route':
           await actions.route!({ input: readString(args, 'input'), output: readString(args, 'output') })
           break

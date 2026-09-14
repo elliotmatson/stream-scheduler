@@ -50,6 +50,11 @@ export class FakeYouTube {
   readonly broadcasts = new Map<string, FakeBroadcast>()
   readonly streams = new Map<string, FakeStream>()
   readonly playlistItems: { playlistId: string; videoId: string }[] = []
+  /** The channel's playlists, as the picker would offer them. */
+  playlists: { id: string; title: string }[] = [
+    { id: 'PL-services', title: 'Sunday Services' },
+    { id: 'PL-worship', title: 'Worship' },
+  ]
   readonly calls: string[] = []
   options: FakeOptions = {}
 
@@ -100,8 +105,21 @@ export class FakeYouTube {
     if (path === '/liveStreams' && verb === 'POST') return this.insertStream(body)
     if (path === '/liveStreams' && verb === 'GET') return this.listStreams(query)
     if (path === '/playlistItems' && verb === 'POST') return this.insertPlaylistItem(body)
+    if (path === '/playlists' && verb === 'GET') return this.listPlaylists()
+    if (path === '/channels' && verb === 'GET') return this.myChannel()
 
     return this.error(404, 'notFound', `the fake does not implement ${verb} ${path}`)
+  }
+
+  /** What a channel has to file videos in. Named like a church's would be. */
+  private listPlaylists(): ReturnType<Fetch> {
+    return this.ok({
+      items: this.playlists.map((playlist) => ({ id: playlist.id, snippet: { title: playlist.title } })),
+    })
+  }
+
+  private myChannel(): ReturnType<Fetch> {
+    return this.ok({ items: [{ id: 'chan-1', snippet: { title: 'Grace Bible Church' } }] })
   }
 
   private insertBroadcast(body: Record<string, unknown> | undefined): ReturnType<Fetch> {

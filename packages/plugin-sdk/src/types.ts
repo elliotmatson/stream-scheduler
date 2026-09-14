@@ -35,6 +35,8 @@ export type NodeAction =
   | 'startRecording'
   | 'stopRecording'
   | 'route'
+  /** Puts the device on a particular card, ahead of recording to it. */
+  | 'selectSlot'
   /** Erases a card or disk. Two-step by design; see `NodeActions`. */
   | 'formatStorage'
 
@@ -199,6 +201,9 @@ export interface NodeActions {
   /** `slot` is which card or disk to write to, where the device has more
    *  than one. Absent means whichever it is already on. */
   startRecording?(options: { filename: string; slot?: number; quality?: string }): Promise<void>
+  /** Put the device on a card without recording to it yet. A recording
+   *  names its own slot; this is for an operator standing at the app. */
+  selectSlot?(options: { slot: number }): Promise<void>
   stopRecording?(): Promise<void>
   route?(options: { input: string; output: string }): Promise<void>
   /**

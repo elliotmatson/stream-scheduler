@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import type { ReactNode } from 'react'
 import {
   api,
@@ -317,9 +317,28 @@ function AddDestination({
   const [accountId, setAccountId] = useState(accounts[0]?.id ?? '')
   const [config, setConfig] = useState<Record<string, unknown>>({})
   const [saving, setSaving] = useState(false)
+  const [playlists, setPlaylists] = useState<{ id: string; label: string }[]>()
 
   // `accountRef` is filled in from the picker above, not typed by hand.
   const fields = provider.configSchema.filter((field) => field.id !== 'accountRef')
+  const wantsPlaylists = fields.some(
+    (field) => field.type === 'dropdown' && field.choicesFrom === 'playlists',
+  )
+
+  // Asked of the channel itself, and re-asked when the account changes or
+  // the operator presses Refresh — a playlist made a minute ago in YouTube
+  // should not need a page reload. A service that will not answer is not an
+  // error here: the field stays empty and the destination saves without one.
+  const loadPlaylists = useCallback((): void => {
+    if (!wantsPlaylists || !accountId) return
+    setPlaylists(undefined)
+    api
+      .playlists(provider.id, accountId)
+      .then((result) => setPlaylists(result.playlists.map((p) => ({ id: p.id, label: p.title }))))
+      .catch(() => setPlaylists([]))
+  }, [provider.id, accountId, wantsPlaylists])
+
+  useEffect(loadPlaylists, [loadPlaylists])
 
   const save = async (): Promise<void> => {
     setSaving(true)
@@ -353,7 +372,13 @@ function AddDestination({
           ))}
         </select>
       </Field>
-      <ConfigFields fields={fields} values={config} onChange={setConfig} />
+      <ConfigFields
+        fields={fields}
+        values={config}
+        onChange={setConfig}
+        runtimeChoices={{ playlists }}
+        onRefreshChoices={(source) => source === 'playlists' && loadPlaylists()}
+      />
       <div className="row">
         <button className="primary" disabled={saving} onClick={() => void save()}>
           {saving ? 'Saving…' : 'Add'}

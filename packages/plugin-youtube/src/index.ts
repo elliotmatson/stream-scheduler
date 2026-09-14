@@ -43,7 +43,15 @@ const configSchema: ConfigField[] = [
       'quota. Turn off only if you want a fresh key per event.',
   },
   { type: 'textinput', id: 'streamTitle', label: 'Ingestion stream name', default: 'Stream Scheduler' },
-  { type: 'textinput', id: 'playlistId', label: 'Add finished videos to playlist' },
+  {
+    type: 'dropdown',
+    id: 'playlistId',
+    label: 'Add finished videos to playlist',
+    // Read off the channel when the account is picked. Pasting a `PL…` id
+    // copied out of a URL is a step nobody gets right first time.
+    choices: [],
+    choicesFrom: 'playlists',
+  },
   {
     type: 'checkbox',
     id: 'autoStartStop',
@@ -66,6 +74,10 @@ const configSchema: ConfigField[] = [
  */
 class YouTubeDestination implements DestinationInstance {
   private lastError: string | undefined
+
+  async listPlaylists(): Promise<{ id: string; title: string }[]> {
+    return this.wrap(() => this.api.listPlaylists())
+  }
 
   constructor(
     private readonly ctx: DestinationContext,

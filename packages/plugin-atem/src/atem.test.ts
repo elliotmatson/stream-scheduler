@@ -158,8 +158,26 @@ function recordingBlock() {
       error: Enums.RecordingError.None,
       recordingTimeAvailable: 7200,
     },
-    properties: { filename: '', workingSet1DiskId: 0, workingSet2DiskId: 0, recordInAllCameras: false },
+    properties: { filename: '', workingSet1DiskId: 7, workingSet2DiskId: 0, recordInAllCameras: false },
     disks: {},
+  }
+}
+
+/** Media plugged into the switcher, as it reports it. */
+function disks() {
+  return {
+    7: {
+      diskId: 7,
+      volumeName: 'Sunday A',
+      recordingTimeAvailable: 3600,
+      status: Enums.RecordingDiskStatus.Active,
+    },
+    9: {
+      diskId: 9,
+      volumeName: 'Spare',
+      recordingTimeAvailable: 120,
+      status: Enums.RecordingDiskStatus.Idle,
+    },
   }
 }
 
@@ -215,6 +233,46 @@ describe('capability probing', () => {
     const atem = await connect(client)
     const stream = (await atem.listNodes()).find((n) => n.id === 'stream')
     expect(stream?.ports[0]).toMatchObject({ maxLinks: 1, requiresCredential: 'stream-key' })
+  })
+})
+
+describe('recording media', () => {
+  it('reports the switcher\u2019s disks the way a deck reports its cards', async () => {
+    const client = new FakeAtem({ recording: { ...recordingBlock(), disks: disks() } } as Partial<AtemState>)
+    const atem = await connect(client)
+
+    const state = await atem.invoke('record', 'readState')
+    expect(state?.recording?.slots).toEqual([
+      { id: 7, status: 'mounted', volumeName: 'Sunday A', remainingMs: 3_600_000, active: true },
+      { id: 9, status: 'mounted', volumeName: 'Spare', remainingMs: 120_000 },
+    ])
+    // Two disks in the working set is somewhere to go when the first fills.
+    expect(state?.recording?.rollover).toBe(true)
+  })
+
+  it('says a disk needs formatting rather than showing it as media', async () => {
+    const client = new FakeAtem({
+      recording: {
+        ...recordingBlock(),
+        disks: { 7: { ...disks()[7], status: Enums.RecordingDiskStatus.Unformatted } },
+      },
+    } as Partial<AtemState>)
+    const atem = await connect(client)
+
+    const state = await atem.invoke('record', 'readState')
+    expect(state?.recording?.slots?.[0]).toMatchObject({ id: 7, status: 'unformatted' })
+    // One disk: nothing to roll onto.
+    expect(state?.recording?.rollover).toBe(false)
+  })
+
+  it('offers no way to format one, because the protocol has none', async () => {
+    // ATEM Software Control formats media over USB; the control protocol
+    // this adapter speaks has no command for it, and a Format button that
+    // did nothing would be worse than none.
+    const client = new FakeAtem({ recording: { ...recordingBlock(), disks: disks() } } as Partial<AtemState>)
+    const atem = await connect(client)
+    const record = (await atem.listNodes()).find((node) => node.id === 'record')
+    expect(record?.supports).not.toContain('formatStorage')
   })
 })
 
@@ -299,11 +357,14 @@ describe('streaming', () => {
     expect(JSON.stringify(state)).not.toContain(key)
   })
 
-  it('uses the configured service name so the front panel matches', async () => {
+  it('names itself on the front panel, rather than a service that may not be the one', async () => {
+    // The switcher shows this label wherever somebody is standing at it. It
+    // is not a setting: nothing about the stream depends on it, and it used
+    // to be asked for at setup where it would go stale.
     const client = new FakeAtem({ streaming: streamingBlock() } as Partial<AtemState>)
-    const atem = await connect(client, { serviceName: 'Church Stream' })
+    const atem = await connect(client)
     await atem.invoke('stream', 'applyStreamTarget', { url: 'rtmps://x/live2', key: 'live_key-value' })
-    expect(client.state?.streaming?.service.serviceName).toBe('Church Stream')
+    expect(client.state?.streaming?.service.serviceName).toBe('Stream Scheduler')
   })
 
   it('starts and stops, and the read-back confirms it', async () => {

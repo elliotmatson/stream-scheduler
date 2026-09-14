@@ -126,6 +126,23 @@ describe('preparing a broadcast', () => {
   })
 })
 
+describe('playlists', () => {
+  it('lists what the channel has, so nobody pastes an id out of a URL', async () => {
+    const dest = await destination({})
+    expect(await dest.listPlaylists?.()).toEqual([
+      { id: 'PL-services', title: 'Sunday Services' },
+      { id: 'PL-worship', title: 'Worship' },
+    ])
+  })
+
+  it('costs one quota unit, cheap enough to re-ask whenever the form opens', async () => {
+    const dest = await destination({})
+    await dest.listPlaylists?.()
+    expect(youtube.calls).toContain('GET /playlists')
+    expect(quota.used).toBe(1)
+  })
+})
+
 describe('idempotency', () => {
   it('adopts a broadcast created by an interrupted attempt instead of making a second', async () => {
     // The call landed; the response was lost. This is the exact crash window

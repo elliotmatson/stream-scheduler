@@ -34,6 +34,12 @@ export const DEFAULT_PORT = 9993
  * whatever the deck reports it is on — which is always a valid answer.
  */
 const KNOWN_FILE_FORMATS = [
+  'H.264High',
+  'H.264Medium',
+  'H.264Low',
+  'H.265High',
+  'H.265Medium',
+  'H.265Low',
   'QuickTimeProResHQ',
   'QuickTimeProRes',
   'QuickTimeProResLT',
@@ -42,6 +48,7 @@ const KNOWN_FILE_FORMATS = [
   'DNxHR220',
   'QuickTimeUncompressed',
 ]
+
 
 const configSchema: ConfigField[] = [
   {
@@ -52,14 +59,9 @@ const configSchema: ConfigField[] = [
     tooltip: 'The HyperDeck must be reachable on the control network.',
   },
   { type: 'number', id: 'port', label: 'Port', default: DEFAULT_PORT, min: 1, max: 65535 },
-  {
-    type: 'number',
-    id: 'slot',
-    label: 'Slot to record to',
-    min: 1,
-    max: 8,
-    tooltip: 'Leave blank to use whichever slot the deck has selected.',
-  },
+  // No slot or codec here. Both are per-recording rather than per-device —
+  // an event names them, and an event that names neither leaves the deck on
+  // whatever it is set to.
 ]
 
 /** How long to wait for the deck to answer on connect. */
@@ -71,6 +73,8 @@ class HyperdeckDevice {
   private lastError: string | undefined
   private model = 'HyperDeck'
   private slots = 1
+  /** What the deck answered at the handshake, for the diagnostics. */
+  private protocolVersion = 0
   private disposed = false
   /**
    * Guards against a state read feeding itself.
@@ -89,7 +93,6 @@ class HyperdeckDevice {
     private readonly ctx: DeviceContext,
     private readonly host: string,
     private readonly port: number,
-    private readonly slot: number | undefined,
     private readonly now: () => number,
   ) {}
 
@@ -108,6 +111,7 @@ class HyperdeckDevice {
       const onConnected = (info: { model: string; protocolVersion: number }): void => {
         cleanup()
         this.model = info.model
+        this.protocolVersion = info.protocolVersion
         this.connectedAt = this.now()
         resolve()
       }
@@ -162,6 +166,7 @@ class HyperdeckDevice {
     const info = await this.send(new Commands.DeviceInfoCommand())
     this.model = info.model
     this.slots = info.slots
+    this.protocolVersion = info.protocolVersion
     return {
       model: info.model,
       firmware: `protocol ${info.protocolVersion}`,
@@ -201,7 +206,7 @@ class HyperdeckDevice {
         ports: [
           { id: 'in', direction: 'in', label: 'Record input', transport: ['sdi', 'hdmi'], maxLinks: 1 },
         ],
-        supports: ['startRecording', 'stopRecording', 'formatStorage'],
+        supports: ['startRecording', 'stopRecording', 'selectSlot', 'formatStorage'],
       },
     ]
   }
@@ -210,12 +215,9 @@ class HyperdeckDevice {
     if (nodeId !== 'record') return undefined
     return {
       startRecording: async ({ filename, slot, quality }) => {
-        // An event that names a slot beats the device's own default: the
-        // device setting is the house rule, the event is the exception.
-        const wanted = slot ?? this.slot
-        if (wanted !== undefined) {
+        if (slot !== undefined) {
           const select = new Commands.SlotSelectCommand()
-          select.slotId = wanted
+          select.slotId = slot
           await this.send(select)
         }
         // A deck's quality is its recording codec, set on the deck rather
@@ -231,6 +233,11 @@ class HyperdeckDevice {
       },
       stopRecording: async () => {
         await this.send(new Commands.StopCommand())
+      },
+      selectSlot: async ({ slot }) => {
+        const select = new Commands.SlotSelectCommand()
+        select.slotId = slot
+        await this.send(select)
       },
       /**
        * Erases a card. The deck's own protocol is a handshake — `format
@@ -268,7 +275,10 @@ class HyperdeckDevice {
     return {
       recording: {
         active: transport.status === TransportStatus.RECORD,
-        ...(transport.clipId === null ? {} : { filename: String(transport.clipId) }),
+        // No filename: `clip id` is an index into the deck's timeline, not a
+        // name, and showing "40" where an operator expects "Sunday Service"
+        // reads as a bug. The name lives in the clip list, which is a
+        // round trip this path does not need; the index goes in `raw`.
         // `recordingTime` is seconds of headroom left on the media, which is
         // the number an operator actually wants before a long service.
         ...(slot === undefined ? {} : { remainingMs: slot.recordingTime * 1000 }),
@@ -295,10 +305,9 @@ class HyperdeckDevice {
               },
             },
           }),
+      // `inputVideoFormat` is what the deck sees on the wire, as opposed to
+      // `videoFormat`, which is the format of the clip it is on.
       input: {
-        // `inputVideoFormat` is what the deck sees on the wire, as opposed
-        // to `videoFormat`, which is the format of the clip it is on. Older
-        // protocols do not report it, so its absence is not "no signal".
         present: transport.inputVideoFormat !== null && transport.inputVideoFormat !== undefined,
         ...(transport.inputVideoFormat ? { format: String(transport.inputVideoFormat) } : {}),
         ...(config?.videoInput ? { source: config.videoInput } : {}),
@@ -306,6 +315,8 @@ class HyperdeckDevice {
       raw: {
         transportStatus: transport.status,
         timecode: transport.timecode,
+        protocolVersion: this.protocolVersion,
+        ...(transport.clipId === null ? {} : { clipId: transport.clipId }),
         ...(transport.videoFormat === null ? {} : { videoFormat: transport.videoFormat }),
         ...(transport.inputVideoFormat == null ? {} : { inputVideoFormat: transport.inputVideoFormat }),
         ...(config === undefined
@@ -335,7 +346,7 @@ class HyperdeckDevice {
   private async slotInfo(
     transport: Commands.TransportInfoCommandResponse,
   ): Promise<{ slotId: number; status: SlotStatus; volumeName: string; recordingTime: number } | undefined> {
-    const slotId = this.slot ?? transport.slotId ?? undefined
+    const slotId = transport.slotId ?? undefined
     if (slotId === undefined) return undefined
     try {
       return await this.send(new Commands.SlotInfoCommand(slotId))
@@ -379,8 +390,9 @@ class HyperdeckDevice {
       retryable: true,
       remediation:
         'Check the feed into the deck and that its video input setting matches the socket it is plugged ' +
-        'into. If the deck reports a format above and still refuses, the refusal is about something else ' +
-        'and is worth reporting.',
+        'into — a deck set to SDI ignores an HDMI feed and calls it no input. The format has to be one ' +
+        'the deck supports at its current setting, too. If the deck reports a format above and still ' +
+        'refuses, the refusal is about something else and is worth reporting.',
     })
   }
 
@@ -548,9 +560,8 @@ export function hyperdeckPlugin(options: HyperdeckPluginOptions = {}): PluginDef
       const host = String(ctx.config.host ?? '')
       if (!host) throw new DeviceError('no-host', 'This HyperDeck has no address configured.')
       const port = typeof ctx.config.port === 'number' ? ctx.config.port : DEFAULT_PORT
-      const slot = typeof ctx.config.slot === 'number' ? ctx.config.slot : undefined
 
-      const device = new HyperdeckDevice(ctx, host, port, slot, now)
+      const device = new HyperdeckDevice(ctx, host, port, now)
       await device.connect()
 
       return defineDevice({

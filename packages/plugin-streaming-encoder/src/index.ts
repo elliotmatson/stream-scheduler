@@ -41,26 +41,11 @@ const configSchema: ConfigField[] = [
       '/control/api/v1/. Older Web Presenter firmware speaks a different protocol and is not supported.',
   },
   { type: 'number', id: 'port', label: 'Port', default: 80, min: 1, max: 65535 },
-  {
-    type: 'textinput',
-    id: 'platform',
-    label: 'Platform',
-    tooltip:
-      'Leave blank to use whichever platform lets the URL be set freely, which is what a scheduled event ' +
-      'needs. Name one only if you want the encoder\'s own preset for a service.',
-  },
-  {
-    type: 'textinput',
-    id: 'server',
-    label: 'Server',
-    tooltip: 'Only used with a named platform. Blank picks the platform\'s first server.',
-  },
-  {
-    type: 'textinput',
-    id: 'quality',
-    label: 'Quality profile',
-    tooltip: 'Blank uses the platform\'s default, e.g. "Streaming High".',
-  },
+  // Platform, server and quality used to be set here as device-wide
+  // defaults. They are per-stream decisions, so they live on the output that
+  // makes them: the scheduler picks the platform that can be pointed
+  // anywhere, and an event names a quality profile or leaves the encoder on
+  // the one it has.
 ]
 
 /** The device reports these while it is doing something, or trying to. */
@@ -76,11 +61,6 @@ class StreamingEncoderDevice {
   constructor(
     private readonly ctx: DeviceContext,
     private readonly api: StreamingEncoderApi,
-    private readonly settings: {
-      platform: string | undefined
-      server: string | undefined
-      quality: string | undefined
-    },
     private readonly now: () => number,
   ) {}
 
@@ -244,41 +224,6 @@ class StreamingEncoderDevice {
    * server already points at the requested URL, where only the key changes.
    */
   private resolveTarget(url: string, key: string, quality?: string): ActivePlatform {
-    const named = this.settings.platform
-      ? this.platforms.find((p) => p.platform === this.settings.platform)
-      : undefined
-
-    if (this.settings.platform && !named) {
-      throw new DeviceError('unknown-platform', `This encoder has no platform called "${this.settings.platform}".`, {
-        remediation: `It offers: ${this.platforms.map((p) => p.platform).join(', ') || 'nothing'}.`,
-      })
-    }
-
-    // A named platform that already points where we want: set the key only.
-    if (named) {
-      const server = this.serverFor(named, url)
-      if (server) {
-        return {
-          platform: named.platform,
-          server: server.server,
-          quality: this.qualityFor(named, quality),
-          key,
-        }
-      }
-      if (named.customizableUrlEnabled) {
-        return { platform: named.platform, server: 'Custom', quality: this.qualityFor(named, quality), key, url }
-      }
-      throw new DeviceError(
-        'url-not-available',
-        `The platform "${named.platform}" does not stream to ${url} and will not take a custom URL.`,
-        {
-          remediation:
-            'Choose a platform whose URL can be customized, or leave the platform blank to let the ' +
-            'scheduler pick one.',
-        },
-      )
-    }
-
     const customizable = this.customizablePlatform()
     if (customizable) {
       return {
@@ -300,7 +245,11 @@ class StreamingEncoderDevice {
       return {
         platform: matched.platform.platform,
         server: matched.server.server,
-        quality: this.qualityFor(matched.platform),
+        // The event's profile counts here too. This branch used to drop it
+        // and hand the encoder the platform's default, so an output that
+        // asked for a quality quietly got another one whenever its URL
+        // matched a built-in preset.
+        quality: this.qualityFor(matched.platform, quality),
         key,
       }
     }
@@ -308,7 +257,7 @@ class StreamingEncoderDevice {
     throw new DeviceError('no-usable-platform', `This encoder cannot be pointed at ${url}.`, {
       remediation:
         'None of its platforms allow a custom URL or already target that address. Add a custom platform ' +
-        'on the encoder, then name it in this device\'s settings.',
+        'on the encoder itself, pointing at the address you want.',
     })
   }
 
@@ -334,7 +283,8 @@ class StreamingEncoderDevice {
       }
       return requested
     }
-    if (this.settings.quality) return this.settings.quality
+    // Nothing asked for: the encoder's own default, which is what leaving
+    // the setting alone has to mean.
     if (platform.defaultProfile) return platform.defaultProfile
     const first = platform.profiles[0]?.profile
     if (first) return first
@@ -391,11 +341,6 @@ export function streamingEncoderPlugin(options: StreamingEncoderOptions = {}): P
       const device = new StreamingEncoderDevice(
         ctx,
         new StreamingEncoderApi(baseUrl, options.timeoutMs ?? 5_000),
-        {
-          platform: stringOrUndefined(ctx.config.platform),
-          server: stringOrUndefined(ctx.config.server),
-          quality: stringOrUndefined(ctx.config.quality),
-        },
         now,
       )
       await device.connect()
@@ -409,10 +354,6 @@ export function streamingEncoderPlugin(options: StreamingEncoderOptions = {}): P
       })
     },
   }
-}
-
-function stringOrUndefined(value: unknown): string | undefined {
-  return typeof value === 'string' && value !== '' ? value : undefined
 }
 
 export * from './api.js'

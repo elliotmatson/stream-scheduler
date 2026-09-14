@@ -101,7 +101,12 @@ export interface StorageSlot {
   active?: boolean
 }
 
-export type ManualAction = 'startStreaming' | 'stopStreaming' | 'startRecording' | 'stopRecording'
+export type ManualAction =
+  | 'startStreaming'
+  | 'stopStreaming'
+  | 'startRecording'
+  | 'stopRecording'
+  | 'selectSlot'
 
 export interface RunStep {
   seq: number
@@ -170,7 +175,17 @@ export type ConfigField =
   | { type: 'textinput'; id: string; label: string; default?: string; required?: boolean; tooltip?: string }
   | { type: 'number'; id: string; label: string; default?: number; min?: number; max?: number; required?: boolean; tooltip?: string }
   | { type: 'checkbox'; id: string; label: string; default?: boolean; tooltip?: string }
-  | { type: 'dropdown'; id: string; label: string; choices: { id: string; label: string }[]; default?: string; required?: boolean; tooltip?: string }
+  | {
+      type: 'dropdown'
+      id: string
+      label: string
+      choices: { id: string; label: string }[]
+      default?: string
+      required?: boolean
+      tooltip?: string
+      /** Names a list the service supplies at runtime, e.g. 'playlists'. */
+      choicesFrom?: 'playlists'
+    }
   | { type: 'secret'; id: string; label: string; required?: boolean; tooltip?: string }
   | { type: 'static-text'; id: string; label: string; value: string }
 
@@ -417,6 +432,11 @@ export const api = {
   deleteAccount: (id: string) => request<unknown>(`/api/accounts/${id}`, { method: 'DELETE' }),
 
   destinations: () => request<Destination[]>('/api/destinations'),
+  /** What a connected channel can file finished videos in. */
+  playlists: (provider: string, accountRef: string) =>
+    request<{ playlists: { id: string; title: string }[] }>(
+      `/api/destination-providers/${provider}/playlists?accountRef=${encodeURIComponent(accountRef)}`,
+    ),
   createDestination: (input: {
     providerId: string
     label: string

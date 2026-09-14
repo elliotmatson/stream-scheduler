@@ -88,10 +88,21 @@ export function ConfigFields({
   fields,
   values,
   onChange,
+  runtimeChoices,
+  onRefreshChoices,
 }: {
   fields: ConfigField[]
   values: Record<string, unknown>
   onChange: (values: Record<string, unknown>) => void
+  /**
+   * Choices only the service can supply, keyed by what the field asked for
+   * — a channel's playlists, say. Fetched by whoever renders this, because
+   * only they know which account is in play.
+   */
+  runtimeChoices?: Record<string, { id: string; label: string }[] | undefined>
+  /** Re-ask the service for one of those lists. A playlist made a minute
+   *  ago should not need a page reload to show up. */
+  onRefreshChoices?: (source: string) => void
 }): ReactNode {
   const set = (id: string, value: unknown): void => onChange({ ...values, [id]: value })
 
@@ -123,18 +134,40 @@ export function ConfigFields({
         }
 
         if (field.type === 'dropdown') {
+          const fetched = field.choicesFrom ? runtimeChoices?.[field.choicesFrom] : undefined
+          const choices = [...field.choices, ...(fetched ?? [])]
+          // A list that has to be fetched starts empty, and "none" has to
+          // stay expressible: a destination that files nowhere is normal.
+          const optional = field.choicesFrom !== undefined && !field.required
           return (
-            <Field key={field.id} label={label} hint={hint}>
-              <select
-                value={String(values[field.id] ?? field.default ?? field.choices[0]?.id ?? '')}
-                onChange={(event) => set(field.id, event.target.value)}
-              >
-                {field.choices.map((choice) => (
-                  <option key={choice.id} value={choice.id}>
-                    {choice.label}
-                  </option>
-                ))}
-              </select>
+            <Field
+              key={field.id}
+              label={label}
+              hint={
+                field.choicesFrom && fetched === undefined
+                  ? `${hint ? `${hint} ` : ''}Pick an account first.`
+                  : hint
+              }
+            >
+              <span className="row" style={{ gap: 8 }}>
+                <select
+                  style={{ flex: 1 }}
+                  value={String(values[field.id] ?? field.default ?? (optional ? '' : (choices[0]?.id ?? '')))}
+                  onChange={(event) => set(field.id, event.target.value || undefined)}
+                >
+                  {optional ? <option value="">— none —</option> : null}
+                  {choices.map((choice) => (
+                    <option key={choice.id} value={choice.id}>
+                      {choice.label}
+                    </option>
+                  ))}
+                </select>
+                {field.choicesFrom && onRefreshChoices ? (
+                  <button type="button" onClick={() => onRefreshChoices(field.choicesFrom!)}>
+                    Refresh
+                  </button>
+                ) : null}
+              </span>
             </Field>
           )
         }

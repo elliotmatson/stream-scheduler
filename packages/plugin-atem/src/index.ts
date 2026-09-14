@@ -40,14 +40,18 @@ const configSchema: ConfigField[] = [
     tooltip: 'The ATEM must be reachable on the control network.',
   },
   { type: 'number', id: 'port', label: 'Port', default: DEFAULT_PORT, min: 1, max: 65535 },
-  {
-    type: 'textinput',
-    id: 'serviceName',
-    label: 'Streaming service name',
-    default: 'YouTube',
-    tooltip: 'Shown on the ATEM front panel and in ATEM Software Control.',
-  },
 ]
+
+/**
+ * What the switcher calls the stream it is pointed at.
+ *
+ * The ATEM shows this on its front panel and in ATEM Software Control, and
+ * it is a label rather than a setting — nothing about the stream depends on
+ * it. Whoever is looking at the box wants to know what put it there, so it
+ * names this app rather than a service that may not be the one in use by the
+ * time anybody reads it.
+ */
+const SERVICE_NAME = 'Stream Scheduler'
 
 const CONNECT_TIMEOUT_MS = 10_000
 
@@ -61,7 +65,6 @@ class AtemDevice {
     private readonly client: AtemClient,
     private readonly host: string,
     private readonly port: number,
-    private readonly serviceName: string,
     private readonly now: () => number,
   ) {}
 
@@ -211,7 +214,7 @@ class AtemDevice {
           const bitrates = quality === undefined ? undefined : parseQuality(quality)
           await this.guard(() =>
             this.client.setStreamingService({
-              serviceName: this.serviceName,
+              serviceName: SERVICE_NAME,
               url,
               key,
               // Absent leaves the switcher on the bitrate it is set to.
@@ -284,6 +287,9 @@ class AtemDevice {
 
     if (nodeId === 'record') {
       const recording = state.recording
+      const disks = Object.values(recording?.disks ?? {}).filter(
+        (disk): disk is NonNullable<typeof disk> => disk !== undefined,
+      )
       return {
         recording: {
           active: recording?.status?.state === Enums.RecordingStatus.Recording,
@@ -291,6 +297,25 @@ class AtemDevice {
           ...(recording?.status === undefined
             ? {}
             : { remainingMs: recording.status.recordingTimeAvailable * 1000 }),
+          // The media plugged into the switcher. An ATEM calls them disks
+          // and a deck calls them slots; they are the same thing to an
+          // operator asking whether there is room for this morning.
+          ...(disks.length === 0
+            ? {}
+            : {
+                slots: disks
+                  .map((disk) => ({
+                    id: disk.diskId,
+                    status: diskStatusName(disk.status),
+                    ...(disk.volumeName ? { volumeName: disk.volumeName } : {}),
+                    remainingMs: disk.recordingTimeAvailable * 1000,
+                    ...(disk.diskId === recording?.properties.workingSet1DiskId ? { active: true } : {}),
+                  }))
+                  .sort((a, b) => a.id - b.id),
+              }),
+          // The switcher moves to the next disk in its working set when one
+          // fills, if there is one there.
+          rollover: disks.length > 1,
         },
         // Reported on the recorder as well as the streamer, because it is
         // one setting: the recording's quality is the streaming bitrate.
@@ -405,6 +430,23 @@ function streamingErrorName(error: number | undefined): string {
   return error === undefined ? 'none' : (Enums.StreamingError[error] ?? String(error))
 }
 
+/**
+ * A disk's state in words.
+ *
+ * The switcher reports a bitfield, so a disk that is both in the working set
+ * and being written to reads as two things at once; the recording one is the
+ * one worth showing.
+ */
+function diskStatusName(status: number | undefined): string {
+  if (status === undefined) return 'unknown'
+  if (status & Enums.RecordingDiskStatus.Removed) return 'removed'
+  if (status & Enums.RecordingDiskStatus.Unformatted) return 'unformatted'
+  if (status & Enums.RecordingDiskStatus.Recording) return 'recording'
+  if (status & Enums.RecordingDiskStatus.Active) return 'mounted'
+  if (status & Enums.RecordingDiskStatus.Idle) return 'mounted'
+  return String(status)
+}
+
 function recordingErrorName(error: number | undefined): string {
   return error === undefined ? 'none' : (Enums.RecordingError[error] ?? String(error))
 }
@@ -487,9 +529,7 @@ export function atemPlugin(options: AtemPluginOptions = {}): PluginDefinition {
       const host = String(ctx.config.host ?? '')
       if (!host) throw new DeviceError('no-host', 'This ATEM has no address configured.')
       const port = typeof ctx.config.port === 'number' ? ctx.config.port : DEFAULT_PORT
-      const serviceName = typeof ctx.config.serviceName === 'string' ? ctx.config.serviceName : 'YouTube'
-
-      const device = new AtemDevice(ctx, createClient(), host, port, serviceName, now)
+      const device = new AtemDevice(ctx, createClient(), host, port, now)
       await device.connect()
 
       return defineDevice({

@@ -9,6 +9,7 @@ import { DeviceError, fingerprint, VerificationError } from '@scheduler/plugin-s
 import type { ConfigValues, JsonObject, NodeDefinition, NodeState } from '@scheduler/plugin-sdk'
 import type { Application } from '../app.js'
 import type { Db } from '../db/index.js'
+import type { VerifyCheck } from '../devices/connection-manager.js'
 import {
   describeSchedule,
   expandOccurrences,
@@ -262,6 +263,14 @@ function registerRoutes(fastify: FastifyInstance, app: Application): void {
     },
   } as const
 
+  /** Verifying a slot selection needs the slot, so it is built per request. */
+  const selectedSlotCheck = (slot: number): VerifyCheck => ({
+    what: 'Selected card',
+    expected: `slot ${slot}`,
+    satisfiedBy: (state: NodeState) => state.recording?.slots?.find((entry) => entry.active)?.id === slot,
+    settleMs: 10_000,
+  })
+
   fastify.get('/api/devices/:id/nodes/:nodeId/state', async (request) => {
     const { id, nodeId } = z.object({ id: z.string(), nodeId: z.string() }).parse(request.params)
     nodeOr404(app, id, nodeId)
@@ -401,7 +410,13 @@ function registerRoutes(fastify: FastifyInstance, app: Application): void {
       .object({
         id: z.string(),
         nodeId: z.string(),
-        action: z.enum(['startStreaming', 'stopStreaming', 'startRecording', 'stopRecording']),
+        action: z.enum([
+          'startStreaming',
+          'stopStreaming',
+          'startRecording',
+          'stopRecording',
+          'selectSlot',
+        ]),
       })
       .parse(request.params)
     const body = z
@@ -419,6 +434,19 @@ function registerRoutes(fastify: FastifyInstance, app: Application): void {
     const node = nodeOr404(app, id, nodeId)
     if (!node.supports.includes(action)) {
       throw new ConflictError(`"${node.label}" does not do ${action}.`)
+    }
+
+    if (action === 'selectSlot') {
+      if (body.slot === undefined) throw new ConflictError('Say which card to select.')
+      const state = await app.connections.applyAndVerify(
+        id,
+        nodeId,
+        'selectSlot',
+        { slot: body.slot },
+        selectedSlotCheck(body.slot),
+      )
+      app.logger.info('an operator selected a card by hand', { deviceId: id, nodeId, slot: body.slot })
+      return { state }
     }
 
     const check = MANUAL_ACTIONS[action]

@@ -196,7 +196,6 @@ function NodeControls({ device, node }: { device: Device; node: DeviceNode }): R
   const [busy, setBusy] = useState<string>()
   const [error, setError] = useState<string>()
   const [filename, setFilename] = useState('')
-  const [slot, setSlot] = useState<number>()
   const [credentialId, setCredentialId] = useState('')
   const [quality, setQuality] = useState('')
   // Only fetched for a node that can be pointed somewhere, and only once
@@ -230,6 +229,10 @@ function NodeControls({ device, node }: { device: Device; node: DeviceNode }): R
    * re-read afterwards because the volume name and the headroom both
    * change.
    */
+  /** Put the deck on a card. Read back, like every other button here. */
+  const select = (slot: number): void =>
+    void run(`select-${slot}`, () => api.driveNode(device.id, node.id, 'selectSlot', { slot }))
+
   const format = (slot: number): void => {
     setBusy(`format-${slot}`)
     setError(undefined)
@@ -254,7 +257,6 @@ function NodeControls({ device, node }: { device: Device; node: DeviceNode }): R
         action === 'startRecording' && filename
           ? {
               filename,
-              ...(slot === undefined ? {} : { slot }),
               // Only where the quality box belongs to the recorder: on a
               // node that streams, the same box is part of pointing it.
               ...(quality && !canStream ? { quality } : {}),
@@ -281,7 +283,6 @@ function NodeControls({ device, node }: { device: Device; node: DeviceNode }): R
   // than something the scheduler has any business touching, so there is
   // nothing to press. Showing what it is set to is still worth doing.
   const readOnly = !canStream && !canRecord
-  const slots = state?.recording?.slots ?? []
   const qualityChoices = state?.options?.quality?.choices ?? []
   // A device with no named profiles may still take a bitrate — an ATEM
   // keeps only a number, the names being a file on the computer running
@@ -348,17 +349,15 @@ function NodeControls({ device, node }: { device: Device; node: DeviceNode }): R
             ) : null}
 
             {state?.input ? (
-              <div
-                className={state.input.present ? 'banner info' : 'banner warn'}
-                style={{ marginBottom: 0 }}
-              >
+              <div className={state.input.present ? 'banner info' : 'banner warn'} style={{ marginBottom: 0 }}>
                 {state.input.present
-                  ? `Input: ${state.input.format ?? 'signal present'}`
-                  : 'No signal on the input.'}
-                {state.input.source ? ` · taking ${state.input.source}` : ''}
-                {/* A recorder with no signal refuses to record. Saying so
-                    here means nobody has to learn it from a failure. */}
-                {!state.input.present && canRecord ? ' A recording will be refused until there is one.' : ''}
+                  ? `Input: ${state.input.format ?? 'signal present'}${state.input.source ? ` · taking ${state.input.source}` : ''}`
+                  : // A recorder with no signal refuses to record, and a deck
+                    // set to the wrong socket is the usual reason. Saying both
+                    // here means nobody learns it from a failed run.
+                    `No signal${state.input.source ? ` on ${state.input.source}` : ' on the input'}.${
+                      canRecord ? ' A recording will be refused until there is one.' : ''
+                    }`}
               </div>
             ) : null}
 
@@ -430,14 +429,31 @@ function NodeControls({ device, node }: { device: Device; node: DeviceNode }): R
                           {slot.remainingMs === undefined ? '—' : duration(slot.remainingMs)}
                         </td>
                         <td>
-                          {node.supports.includes('formatStorage') ? (
-                            <ConfirmButton
-                              label="Format"
-                              confirmLabel={`Erase slot ${slot.id}?`}
-                              disabled={busy !== undefined || device.inUseBy.length > 0}
-                              onConfirm={() => format(slot.id)}
-                            />
-                          ) : null}
+                          <div className="row" style={{ gap: 6, justifyContent: 'flex-end' }}>
+                            {/* Which card the deck writes to, chosen on the
+                                row it belongs to rather than in a dropdown
+                                that repeats the same list. */}
+                            {node.supports.includes('selectSlot') ? (
+                              <button
+                                disabled={busy !== undefined || slot.active === true}
+                                onClick={() => select(slot.id)}
+                              >
+                                {busy === `select-${slot.id}`
+                                  ? 'Selecting…'
+                                  : slot.active
+                                    ? 'Selected'
+                                    : 'Select'}
+                              </button>
+                            ) : null}
+                            {node.supports.includes('formatStorage') ? (
+                              <ConfirmButton
+                                label="Format"
+                                confirmLabel={`Erase slot ${slot.id}?`}
+                                disabled={busy !== undefined || device.inUseBy.length > 0}
+                                onConfirm={() => format(slot.id)}
+                              />
+                            ) : null}
+                          </div>
                         </td>
                       </tr>
                     ))}
@@ -556,24 +572,6 @@ function NodeControls({ device, node }: { device: Device; node: DeviceNode }): R
                         <option key={example} value={example} />
                       ))}
                     </datalist>
-                  </Field>
-                ) : null}
-                {slots.length > 0 ? (
-                  <Field label="Card" hint="Leave it and the deck records onto whichever it is set to.">
-                    <select
-                      value={slot === undefined ? '' : String(slot)}
-                      onChange={(event) =>
-                        setSlot(event.target.value === '' ? undefined : Number(event.target.value))
-                      }
-                    >
-                      <option value="">Leave as it is</option>
-                      {slots.map((card) => (
-                        <option key={card.id} value={card.id}>
-                          Slot {card.id}
-                          {card.volumeName ? ` · ${card.volumeName}` : ''}
-                        </option>
-                      ))}
-                    </select>
                   </Field>
                 ) : null}
               </div>

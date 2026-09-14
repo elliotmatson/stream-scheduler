@@ -199,6 +199,23 @@ export class YouTubeApi {
     })
   }
 
+  /**
+   * The channel's playlists, newest first as the API returns them.
+   *
+   * One page of 50 is plenty for choosing where a service is filed, and it
+   * costs a single quota unit — cheap enough to fetch whenever somebody
+   * opens the form.
+   */
+  async listPlaylists(): Promise<{ id: string; title: string }[]> {
+    const response = await this.call<{ items?: { id: string; snippet?: { title?: string } }[] }>(
+      'playlists.list',
+      'GET',
+      '/playlists',
+      { part: 'snippet', mine: 'true', maxResults: '50' },
+    )
+    return (response.items ?? []).map((item) => ({ id: item.id, title: item.snippet?.title ?? item.id }))
+  }
+
   /** Identifies the channel behind the tokens, so the UI can name it. */
   async myChannel(): Promise<{ id: string; title: string }> {
     const response = await this.call<{ items?: { id: string; snippet?: { title?: string } }[] }>(

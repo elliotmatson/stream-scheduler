@@ -507,9 +507,17 @@ describe('the OAuth callback address', () => {
           throw new Error('not exercised here')
         },
       },
-      createDestination: async () => {
-        throw new Error('not exercised here')
-      },
+      createDestination: async (ctx) => ({
+        listPlaylists: async () => [{ id: `PL-${ctx.config.accountRef as string}`, title: 'Sunday Services' }],
+        prepare: async () => {
+          throw new Error('not exercised here')
+        },
+        reconcile: async () => undefined,
+        finalize: async () => {},
+        compensate: async () => {},
+        health: () => ({ state: 'connected' as const, since: 0 }),
+        dispose: async () => {},
+      }),
     })
   })
 
@@ -520,6 +528,37 @@ describe('the OAuth callback address', () => {
     JSON.parse(
       (await server.inject({ method: 'GET', url: '/api/oauth/youtube/instructions', headers })).body,
     )
+
+  it('offers the channel\u2019s own playlists, before any destination exists', async () => {
+    // The form that needs the list is the one creating the destination, so
+    // the list is asked of the account rather than of a saved destination.
+    const answer = await get('/api/destination-providers/youtube/playlists?accountRef=acct-1')
+    expect(answer.status).toBe(200)
+    expect(answer.json.playlists).toEqual([{ id: 'PL-acct-1', title: 'Sunday Services' }])
+  })
+
+  it('says so rather than 500ing when a service has no such notion', async () => {
+    app.destinations.register({
+      id: 'rtmp',
+      displayName: 'Plain RTMP',
+      apiVersion: '1',
+      configSchema: [],
+      providesIngest: false,
+      createDestination: async () => ({
+        prepare: async () => {
+          throw new Error('not exercised here')
+        },
+        reconcile: async () => undefined,
+        finalize: async () => {},
+        compensate: async () => {},
+        health: () => ({ state: 'connected' as const, since: 0 }),
+        dispose: async () => {},
+      }),
+    })
+    const refused = await get('/api/destination-providers/rtmp/playlists?accountRef=acct-1')
+    expect(refused.status).toBe(409)
+    expect(refused.json.error).toMatch(/no playlists/)
+  })
 
   it('uses the host the browser asked for', async () => {
     const body = await instructions({ host: 'scheduler.local:8500' })

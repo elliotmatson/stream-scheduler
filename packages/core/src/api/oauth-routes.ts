@@ -222,6 +222,25 @@ export function registerOAuthRoutes(fastify: FastifyInstance, app: Application):
     })),
   )
 
+  /**
+   * What a channel has to file finished videos in.
+   *
+   * Asked of the account rather than a saved destination, because the form
+   * that needs it is the one creating the destination. A dropdown of the
+   * names somebody recognises beats a box wanting a `PL…` id copied out of
+   * a URL.
+   */
+  fastify.get('/api/destination-providers/:provider/playlists', async (request) => {
+    const { provider: providerId } = z.object({ provider: z.string() }).parse(request.params)
+    const { accountRef } = z.object({ accountRef: z.string().min(1) }).parse(request.query)
+
+    const instance = await app.destinations.openForAccount(providerId, accountRef)
+    if (!instance.listPlaylists) {
+      throw new ConflictError(`${app.destinations.get(providerId).displayName} has no playlists.`)
+    }
+    return { playlists: await instance.listPlaylists() }
+  })
+
   fastify.post('/api/destinations', async (request, reply) => {
     const body = z
       .object({

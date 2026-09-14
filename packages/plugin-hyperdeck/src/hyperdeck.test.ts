@@ -215,7 +215,12 @@ describe('connecting', () => {
     const nodes = await hyperdeck.listNodes()
     expect(nodes).toHaveLength(1)
     expect(nodes[0]).toMatchObject({ id: 'record', roles: ['sink'] })
-    expect(nodes[0]?.supports).toEqual(['startRecording', 'stopRecording', 'formatStorage'])
+    expect(nodes[0]?.supports).toEqual([
+      'startRecording',
+      'stopRecording',
+      'selectSlot',
+      'formatStorage',
+    ])
   })
 })
 
@@ -240,8 +245,17 @@ describe('recording', () => {
     expect((await hyperdeck.invoke('record', 'readState'))?.recording?.active).toBe(false)
   })
 
-  it('selects the configured slot before recording', async () => {
-    const hyperdeck = await connect({ slot: 2 })
+  it('records onto the card the output named', async () => {
+    const hyperdeck = await connect()
+    await hyperdeck.invoke('record', 'startRecording', { filename: 'service', slot: 2 })
+    expect(deck.state.selectedSlot).toBe(2)
+  })
+
+  it('leaves the deck on its own card when nothing names one', async () => {
+    // There is no device-wide slot setting any more: an output that does not
+    // care must not move a deck somebody set up by hand.
+    deck.state.selectedSlot = 2
+    const hyperdeck = await connect()
     await hyperdeck.invoke('record', 'startRecording', { filename: 'service' })
     expect(deck.state.selectedSlot).toBe(2)
   })
@@ -374,6 +388,18 @@ describe('protocol errors', () => {
       code: 'no-input',
       message: expect.stringContaining('no signal'),
     })
+  })
+
+  it('does not pass the deck\u2019s clip index off as a recording name', async () => {
+    // `clip id` is an index into the deck's timeline. Showing "40" where an
+    // operator expects "Sunday Service" reads as a bug in the scheduler.
+    const hyperdeck = await connect()
+    await hyperdeck.invoke('record', 'startRecording', { filename: 'service' })
+
+    const state = await hyperdeck.invoke('record', 'readState')
+    expect(state?.recording?.active).toBe(true)
+    expect(state?.recording?.filename).toBeUndefined()
+    expect(state?.raw?.clipId).toBe(1)
   })
 
   it('translates remote control being switched off on the front panel', async () => {

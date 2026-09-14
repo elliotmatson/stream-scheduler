@@ -12,7 +12,22 @@ export type ConfigField =
   | { type: 'textinput'; id: string; label: string; default?: string; required?: boolean; regex?: string; tooltip?: string }
   | { type: 'number'; id: string; label: string; default?: number; min?: number; max?: number; required?: boolean; tooltip?: string }
   | { type: 'checkbox'; id: string; label: string; default?: boolean; tooltip?: string }
-  | { type: 'dropdown'; id: string; label: string; choices: { id: string; label: string }[]; default?: string; required?: boolean; tooltip?: string }
+  | {
+      type: 'dropdown'
+      id: string
+      label: string
+      choices: { id: string; label: string }[]
+      default?: string
+      required?: boolean
+      tooltip?: string
+      /**
+       * Names a list only the service can supply — a channel's playlists,
+       * say. The host fetches it and offers those alongside `choices`, so a
+       * plugin does not have to invent a widget and nobody has to paste an
+       * id copied out of a URL.
+       */
+      choicesFrom?: 'playlists'
+    }
   | { type: 'secret'; id: string; label: string; required?: boolean; tooltip?: string }
   | { type: 'static-text'; id: string; label: string; value: string }
 

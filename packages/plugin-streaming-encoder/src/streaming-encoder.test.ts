@@ -116,8 +116,10 @@ describe('pointing the encoder at a destination', () => {
     expect(JSON.stringify(state)).not.toContain(KEY)
   })
 
-  it('uses a named platform\'s own server when it already points there', async () => {
-    const enc = await connect({ platform: 'YouTube' })
+  it('uses a platform\'s own server when it already points there', async () => {
+    // No platform is named anywhere any more, so this is the encoder's own
+    // preset being matched by address rather than chosen by configuration.
+    const enc = await connect({}, { noCustomizablePlatform: true })
     await enc.invoke('stream', 'applyStreamTarget', { url: YOUTUBE_PRIMARY, key: KEY })
 
     expect(encoder.active).toMatchObject({ platform: 'YouTube', server: 'Primary', key: KEY })
@@ -128,7 +130,7 @@ describe('pointing the encoder at a destination', () => {
   it('reports the destination for a named platform, which the device omits', async () => {
     // The API only returns `url` for customizable platforms, so without
     // this the verify-after-write check would have nothing to compare.
-    const enc = await connect({ platform: 'YouTube' })
+    const enc = await connect({}, { noCustomizablePlatform: true })
     await enc.invoke('stream', 'applyStreamTarget', { url: YOUTUBE_PRIMARY, key: KEY })
 
     const state = await enc.invoke('stream', 'readState')
@@ -136,24 +138,38 @@ describe('pointing the encoder at a destination', () => {
   })
 
   it('tolerates a trailing slash between the service and the preset', async () => {
-    const enc = await connect({ platform: 'YouTube' })
+    const enc = await connect({}, { noCustomizablePlatform: true })
     await enc.invoke('stream', 'applyStreamTarget', { url: `${YOUTUBE_PRIMARY}/`, key: KEY })
     expect(encoder.active).toMatchObject({ server: 'Primary' })
   })
 
-  it('honours a configured quality profile', async () => {
-    const enc = await connect({ quality: 'Streaming Medium', platform: 'YouTube' })
-    await enc.invoke('stream', 'applyStreamTarget', { url: YOUTUBE_PRIMARY, key: KEY })
+  it('takes the quality the event asked for', async () => {
+    const enc = await connect({}, { noCustomizablePlatform: true })
+    await enc.invoke('stream', 'applyStreamTarget', {
+      url: YOUTUBE_PRIMARY,
+      key: KEY,
+      quality: 'Streaming Medium',
+    })
     expect(encoder.active?.quality).toBe('Streaming Medium')
   })
 
-  it('names the platforms it has when configured with one it does not', async () => {
-    const enc = await connect({ platform: 'Twitch' })
+  it('leaves the encoder on its own profile when nothing asks for one', async () => {
+    const enc = await connect()
+    await enc.invoke('stream', 'applyStreamTarget', { url: 'rtmps://live.example.com/app', key: KEY })
+    expect(encoder.active?.quality).toBe('Streaming High')
+  })
+
+  it('names the profiles it has when asked for one it does not', async () => {
+    const enc = await connect()
     await expect(
-      enc.invoke('stream', 'applyStreamTarget', { url: YOUTUBE_PRIMARY, key: KEY }),
+      enc.invoke('stream', 'applyStreamTarget', {
+        url: 'rtmps://live.example.com/app',
+        key: KEY,
+        quality: 'Ludicrous',
+      }),
     ).rejects.toMatchObject({
-      code: 'unknown-platform',
-      remediation: expect.stringContaining('YouTube'),
+      code: 'unknown-quality',
+      remediation: expect.stringContaining('Streaming High'),
     })
   })
 

@@ -21,6 +21,7 @@ export const QUOTA_COSTS = {
   'liveStreams.insert': 50,
   'liveStreams.list': 1,
   'playlistItems.insert': 50,
+  'playlists.list': 1,
   'videos.update': 50,
   'channels.list': 1,
 } as const
