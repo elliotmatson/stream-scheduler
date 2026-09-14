@@ -32,6 +32,8 @@ interface FakeDeck {
     inputVideoFormat?: string
     videoInput: string
     configurationReads: number
+    formatted: number[]
+    formatPending?: { slot: number; token: string }
   }
 }
 
@@ -50,6 +52,7 @@ function makeDeck(): FakeDeck {
     inputVideoFormat: '1080p50',
     videoInput: 'SDI',
     configurationReads: 0,
+    formatted: [] as number[],
   }
   const server = new HyperdeckServer('127.0.0.1', PORT)
 
@@ -85,6 +88,31 @@ function makeDeck(): FakeDeck {
     loop: 'false',
     ...(state.inputVideoFormat === undefined ? {} : { 'input video format': state.inputVideoFormat }),
   })
+  server.onFormat = async (command) => {
+    // The deck's format is a two-step handshake: `prepare` hands back a
+    // token and erases nothing, and only quoting that token back on
+    // `confirm` wipes the card.
+    const params = command.parameters as Record<string, string | undefined>
+    if (params.prepare !== undefined) {
+      state.formatPending = {
+        slot: Number(params['slot id'] ?? state.selectedSlot),
+        token: 'f0rm4t',
+      }
+      // A real deck answers `216 format ready` with the token on a bare,
+      // unlabelled line, which `hyperdeck-connection` surfaces as a `code`
+      // parameter. This emulator can only write `name: value` lines, so the
+      // token goes out under the name the client reads rather than the
+      // `token` one the emulator's own types suggest.
+      return { code: state.formatPending.token } as unknown as { token: string }
+    }
+    if (state.formatPending && params.confirm === state.formatPending.token) {
+      state.formatted.push(state.formatPending.slot)
+      state.formatPending = undefined
+    }
+    // Confirming earns a plain `200 ok`, which the emulator sends when the
+    // handler resolves with nothing.
+    return undefined as unknown as { token: string }
+  }
   server.onConfiguration = async () => ({
     ...((state.configurationReads += 1), {}),
     'video input': state.videoInput,
@@ -156,7 +184,7 @@ describe('connecting', () => {
     const nodes = await hyperdeck.listNodes()
     expect(nodes).toHaveLength(1)
     expect(nodes[0]).toMatchObject({ id: 'record', roles: ['sink'] })
-    expect(nodes[0]?.supports).toEqual(['startRecording', 'stopRecording'])
+    expect(nodes[0]?.supports).toEqual(['startRecording', 'stopRecording', 'formatStorage'])
   })
 })
 
@@ -210,6 +238,38 @@ describe('protocol errors', () => {
     const hyperdeck = await connect()
     await expect(hyperdeck.invoke('record', 'startRecording', { filename: 'service' })).rejects.toMatchObject({
       code: 'no-disk',
+    })
+  })
+
+  it('formats a card only after the confirmation handshake the deck requires', async () => {
+    const hyperdeck = await connect()
+
+    // The safety-critical half: preparing asks, and erases nothing.
+    // The token comes back on the state's `raw`, where a one-shot capability
+    // belongs: it is not a property of the deck.
+    const prepared = await hyperdeck.invoke('record', 'formatStorage', { slot: 2 })
+    const confirm = prepared?.raw?.confirm
+    expect(confirm).toBe('f0rm4t')
+    expect(deck.state.formatted).toEqual([])
+
+    // Quoting the deck's own token back is what erases, and it erases the
+    // slot that was prepared rather than whichever one happens to be selected.
+    await hyperdeck.invoke('record', 'formatStorage', { slot: 2, confirm: String(confirm) })
+    expect(deck.state.formatted).toEqual([2])
+  })
+
+  it('erases nothing when the token is not the one the deck handed out', async () => {
+    const hyperdeck = await connect()
+
+    await hyperdeck.invoke('record', 'formatStorage', { slot: 1 })
+    await hyperdeck.invoke('record', 'formatStorage', { slot: 1, confirm: 'guessed' })
+    expect(deck.state.formatted).toEqual([])
+  })
+
+  it('refuses to format a node that cannot', async () => {
+    const hyperdeck = await connect()
+    await expect(hyperdeck.invoke('nope', 'formatStorage', { slot: 1 })).rejects.toMatchObject({
+      code: 'unknown-node',
     })
   })
 

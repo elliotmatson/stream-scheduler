@@ -9,6 +9,7 @@ import type {
   NodeDefinition,
   NodeState,
   PluginDefinition,
+  StorageSlot,
   StreamTarget,
 } from '@scheduler/plugin-sdk'
 
@@ -59,6 +60,9 @@ type Fault = 'none' | 'unreachable' | 'ignores-writes' | 'flaky' | 'slow-to-sett
 class MockDevice {
   private streaming = false
   private recording = false
+  /** The card being written to. A deck records onto one slot at a time and
+   *  an event may name which. */
+  private recordingSlot = 1
   private target: StreamTarget | undefined
   private filename: string | undefined
   private commandCount = 0
@@ -71,6 +75,11 @@ class MockDevice {
    * two different events.
    */
   private settleReads = 0
+  /** The token handed out by the last `format` prepare, if it has not been
+   *  quoted back yet. */
+  private formatToken: { slot: number; token: string } | undefined
+  private formatCount = 0
+  private readonly blanked = new Set<number>()
   private readonly connectedAt: number
 
   constructor(
@@ -120,7 +129,7 @@ class MockDevice {
         label: 'Mock recorder',
         roles: ['sink'],
         ports: [{ id: 'in', direction: 'in', label: 'Record input', transport: ['sdi', 'hdmi'], maxLinks: 1 }],
-        supports: ['startRecording', 'stopRecording'],
+        supports: ['startRecording', 'stopRecording', 'formatStorage'],
       })
     }
     return nodes
@@ -154,12 +163,13 @@ class MockDevice {
     }
     if (nodeId === 'record' && this.canRecord) {
       return {
-        startRecording: async ({ filename }) => {
+        startRecording: async ({ filename, slot }) => {
           this.guard()
           if (this.fault === 'slow-to-settle') this.settleReads = SLOW_READS
           if (this.fault !== 'ignores-writes') {
             this.recording = true
             this.filename = filename
+            if (slot !== undefined) this.recordingSlot = slot
           }
           this.emit(nodeId)
         },
@@ -167,6 +177,24 @@ class MockDevice {
           this.guard()
           this.recording = false
           this.emit(nodeId)
+        },
+        // Two steps, like the deck this stands in for: preparing hands back
+        // a token and erases nothing, and only that token erases the card.
+        formatStorage: async ({ slot, confirm }) => {
+          this.guard()
+          if (confirm === undefined) {
+            this.formatToken = { slot, token: `mock-token-${++this.formatCount}` }
+            return { confirm: this.formatToken.token }
+          }
+          if (this.formatToken?.token !== confirm || this.formatToken.slot !== slot) {
+            throw new DeviceError('invalid-token', 'That is not the confirmation this device handed out.', {
+              remediation: 'Start the format again: the token is good for one erase of one slot.',
+            })
+          }
+          this.formatToken = undefined
+          if (this.fault !== 'ignores-writes') this.blanked.add(slot)
+          this.emit(nodeId)
+          return {}
         },
         readState: async () => this.stateOf(nodeId),
       }
@@ -195,8 +223,10 @@ class MockDevice {
           ...(this.filename === undefined ? {} : { filename: this.filename }),
           remainingMs: 4 * 3_600_000,
           slots: [
-            { id: 1, status: 'mounted', volumeName: 'Sunday A', remainingMs: 4 * 3_600_000, active: true },
-            { id: 2, status: 'mounted', volumeName: 'Sunday B', remainingMs: 40 * 60_000 },
+            this.slot(1, 'Sunday A', 4 * 3_600_000),
+            // Nearly full, so the low-space warning and rollover have
+            // something to be about.
+            this.slot(2, 'Sunday B', 40 * 60_000),
           ],
           rollover: true,
         },
@@ -211,6 +241,18 @@ class MockDevice {
           : { targetUrl: this.target.url, keyFingerprint: fingerprint(this.target.key) }),
         bitrateBps: this.streaming ? 6_000_000 : 0,
       },
+    }
+  }
+
+  /** A card, blank if it has been formatted since the device connected. */
+  private slot(id: number, volumeName: string, remainingMs: number): StorageSlot {
+    const blank = this.blanked.has(id)
+    return {
+      id,
+      status: 'mounted',
+      volumeName: blank ? 'Untitled' : volumeName,
+      remainingMs: blank ? 4 * 3_600_000 : remainingMs,
+      ...(id === this.recordingSlot ? { active: true } : {}),
     }
   }
 

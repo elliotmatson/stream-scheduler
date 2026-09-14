@@ -5,7 +5,7 @@ import type { FastifyInstance } from 'fastify'
 import websocket from '@fastify/websocket'
 import fastifyStatic from '@fastify/static'
 import { z } from 'zod'
-import { DeviceError, VerificationError } from '@scheduler/plugin-sdk'
+import { DeviceError, fingerprint, VerificationError } from '@scheduler/plugin-sdk'
 import type { ConfigValues, JsonObject, NodeDefinition, NodeState } from '@scheduler/plugin-sdk'
 import type { Application } from '../app.js'
 import type { Db } from '../db/index.js'
@@ -268,6 +268,134 @@ function registerRoutes(fastify: FastifyInstance, app: Application): void {
     return { state: await app.connections.invoke(id, nodeId, 'readState') }
   })
 
+  /**
+   * The event, if any, that is mid-run on this device.
+   *
+   * Two things on this screen are refused while one is: erasing a card and
+   * re-pointing an encoder. Both would be undone or, worse, not undone, by
+   * a run that is part-way through its window.
+   */
+  const eventMidRunOn = (deviceId: string): string | undefined =>
+    (
+      db
+        .prepare(
+          `SELECT s.label AS label
+             FROM run r
+             JOIN occurrence o ON o.id = r.occurrence_id
+             JOIN event_series s ON s.id = o.series_id
+             JOIN event_output eo ON eo.series_id = s.id AND eo.enabled = 1
+            WHERE r.state NOT IN ('completed', 'failed', 'cancelled') AND eo.device_id = ?
+            LIMIT 1`,
+        )
+        .get(deviceId) as { label: string } | undefined
+    )?.label
+
+  /**
+   * Point an encoder at a stored stream target by hand.
+   *
+   * Takes the id of a saved credential, never a key. The key is read out of
+   * the vault on this side and handed straight to the device, so no secret
+   * crosses this API in either direction — which is what the action
+   * allow-list above refuses to allow and this route does not change.
+   *
+   * Quality rides along because the device takes both in one command: an
+   * encoder is told its platform, server, key and profile together, and
+   * there is no way to set the profile on its own. Leaving it out leaves
+   * the device on whatever profile it is already set to.
+   */
+  fastify.post('/api/devices/:id/nodes/:nodeId/stream-target', async (request) => {
+    const { id, nodeId } = z.object({ id: z.string(), nodeId: z.string() }).parse(request.params)
+    const body = z
+      .object({ credentialId: z.string(), quality: z.string().min(1).max(100).optional() })
+      .parse(request.body)
+
+    const node = nodeOr404(app, id, nodeId)
+    if (!node.supports.includes('applyStreamTarget')) {
+      throw new ConflictError(`"${node.label}" cannot be pointed at a stream target.`)
+    }
+
+    // Re-pointing an encoder that is live sends the stream somewhere else
+    // mid-service, and the scheduler will not put it back until the next
+    // event starts.
+    const busy = eventMidRunOn(id)
+    if (busy) {
+      throw new ConflictError(`"${busy}" is mid-run on this device. Stop the run before re-pointing it.`)
+    }
+
+    const credential = db
+      .prepare('SELECT label, ingest_url, secret_ref FROM stream_credential WHERE id = ?')
+      .get(body.credentialId) as { label: string; ingest_url: string | null; secret_ref: string } | undefined
+    if (!credential) throw new NotFoundError(`No stream credential with id "${body.credentialId}".`)
+    if (!credential.ingest_url) {
+      throw new ConflictError(`"${credential.label}" has no ingest URL to point anything at.`)
+    }
+
+    const key = app.vault.reveal(credential.secret_ref)
+    const state = await app.connections.applyAndVerify(
+      id,
+      nodeId,
+      'applyStreamTarget',
+      { url: credential.ingest_url, key, ...(body.quality ? { quality: body.quality } : {}) },
+      {
+        what: 'Stream target',
+        expected: `${credential.ingest_url} with key ${fingerprint(key)}`,
+        // The device reports the key back as a fingerprint, so the check is
+        // that the right key landed without the value making the trip.
+        satisfiedBy: (state: NodeState) =>
+          state.streaming?.targetUrl === credential.ingest_url &&
+          state.streaming?.keyFingerprint === fingerprint(key),
+        settleMs: 10_000,
+      },
+    )
+
+    app.logger.info('an operator pointed a device at a stream target by hand', {
+      deviceId: id,
+      nodeId,
+      credentialId: body.credentialId,
+    })
+    return { state }
+  })
+
+  /**
+   * Erase a card.
+   *
+   * On its own route rather than in the action allow-list above, because
+   * it is the one thing here that destroys something and it does not share
+   * their shape: it answers with a token instead of state, and it is
+   * refused outright while the device is mid-run. The deck's own protocol
+   * is already a two-step handshake and this passes that through rather
+   * than inventing a confirmation of its own.
+   */
+  fastify.post('/api/devices/:id/nodes/:nodeId/format', async (request) => {
+    const { id, nodeId } = z.object({ id: z.string(), nodeId: z.string() }).parse(request.params)
+    const body = z
+      .object({ slot: z.number().int().positive(), confirm: z.string().min(1).optional() })
+      .parse(request.body)
+
+    const node = nodeOr404(app, id, nodeId)
+    if (!node.supports.includes('formatStorage')) {
+      throw new ConflictError(`"${node.label}" cannot format its storage.`)
+    }
+
+    // Erasing the card an event is recording onto is not a thing to find
+    // out about afterwards.
+    const busy = eventMidRunOn(id)
+    if (busy) {
+      throw new ConflictError(`"${busy}" is mid-run on this device. Stop the run before formatting.`)
+    }
+
+    const state = await app.connections.invoke(id, nodeId, 'formatStorage', {
+      slot: body.slot,
+      ...(body.confirm ? { confirm: body.confirm } : {}),
+    })
+    const confirm = (state?.raw as { confirm?: unknown } | undefined)?.confirm
+    if (body.confirm) {
+      app.logger.warn('an operator formatted device storage', { deviceId: id, nodeId, slot: body.slot })
+      return { formatted: true }
+    }
+    return { formatted: false, confirm: typeof confirm === 'string' ? confirm : undefined }
+  })
+
   fastify.post('/api/devices/:id/nodes/:nodeId/:action', async (request) => {
     const { id, nodeId, action } = z
       .object({
@@ -276,7 +404,14 @@ function registerRoutes(fastify: FastifyInstance, app: Application): void {
         action: z.enum(['startStreaming', 'stopStreaming', 'startRecording', 'stopRecording']),
       })
       .parse(request.params)
-    const body = z.object({ filename: z.string().min(1).max(200).optional() }).parse(request.body ?? {})
+    const body = z
+      .object({
+        filename: z.string().min(1).max(200).optional(),
+        // Which card to record onto. Absent means the deck's own setting,
+        // which is what an operator who has not thought about it wants.
+        slot: z.number().int().positive().optional(),
+      })
+      .parse(request.body ?? {})
 
     const node = nodeOr404(app, id, nodeId)
     if (!node.supports.includes(action)) {
@@ -291,7 +426,12 @@ function registerRoutes(fastify: FastifyInstance, app: Application): void {
       throw new ConflictError('Give the recording a name before starting it.')
     }
     const args: JsonObject =
-      action === 'startRecording' ? { filename: sanitizeFilename(body.filename!) } : {}
+      action === 'startRecording'
+        ? {
+            filename: sanitizeFilename(body.filename!),
+            ...(body.slot === undefined ? {} : { slot: body.slot }),
+          }
+        : {}
     const state = await app.connections.applyAndVerify(id, nodeId, action, args, check)
 
     app.logger.info('an operator drove a device by hand', { deviceId: id, nodeId, action })

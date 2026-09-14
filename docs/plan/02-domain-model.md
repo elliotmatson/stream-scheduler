@@ -2,17 +2,23 @@
 
 ## The central abstraction: an event and its outputs
 
-An **event** is one source encoder and one long window. Inside that window sit
-several **outputs**, each with its own start, its own length, and its own name.
+An **event** is one long window. Inside that window sit several **outputs**,
+each with its own start, its own length, its own name, and its own piece of
+hardware.
 
 ```
-EventSeries  "Sunday // Anderson"      source: Web Presenter   window 07:00-12:45
-  ├─ Output  "Grace Anderson // 9:00"   +2h00   75m   -> YouTube (main channel)
-  ├─ Output  "AND Worship // 9:00"      +2h00   75m   -> YouTube (worship channel)
-  ├─ Output  "Grace Anderson // 11:00"  +4h00   75m   -> YouTube (main channel)
-  ├─ Output  "AND Worship // 11:00"     +4h00   75m   -> YouTube (worship channel)
-  └─ Output  "Archive"                  +0h00  345m   -> HyperDeck
+EventSeries  "Sunday // Anderson"      window 07:00-12:45
+  ├─ Output  "Grace Anderson // 9:00"   +2h00   75m   Web Presenter -> YouTube (main channel)
+  ├─ Output  "AND Worship // 9:00"      +2h00   75m   Web Presenter -> YouTube (worship channel)
+  ├─ Output  "Grace Anderson // 11:00"  +4h00   75m   Web Presenter -> YouTube (main channel)
+  ├─ Output  "AND Worship // 11:00"     +4h00   75m   Web Presenter -> YouTube (worship channel)
+  └─ Output  "Archive"                  +0h00  345m   HyperDeck
 ```
+
+The event used to name one source encoder that outputs fell back to. It no
+longer does: every output already named its own device most of the time, two
+places saying where a thing runs is one too many, and an event-level source
+could not express a morning split across two encoders.
 
 This is the shape a Sunday actually has, and it is the shape Resi uses. The
 alternative — one event per stream — makes five things a human has to keep in
@@ -72,7 +78,7 @@ Device            a physical box on the network (IP, credentials, model, health)
 Destination       a configured sink target (a YouTube channel + defaults, an RTMP URL)
 Account           an OAuth identity (a YouTube channel), owning refresh tokens
 StreamCredential  a stream key, from manual entry / YouTube / a reusable stream
-EventSeries       a named recurring (or one-off) event: schedule + source encoder + defaults
+EventSeries       a named recurring (or one-off) event: schedule + window + defaults
   └─ EventOutput  one stream or recording, with its own slot inside the window
 Occurrence        one materialized instance of a series at a concrete instant
 Run               the execution record of an Occurrence
@@ -141,8 +147,6 @@ CREATE TABLE stream_credential (
 CREATE TABLE event_series (
   id             TEXT PRIMARY KEY,
   label          TEXT NOT NULL,
-  source_device_id TEXT REFERENCES device(id),  -- the one feed this event comes off
-  source_node_id TEXT,
   timezone       TEXT NOT NULL,              -- IANA, e.g. 'America/Chicago'
   rrule          TEXT,                       -- NULL for a one-off
   dtstart        INTEGER NOT NULL,           -- first occurrence, UTC epoch ms
@@ -167,9 +171,11 @@ CREATE TABLE event_output (
   duration_ms    INTEGER NOT NULL,
   destination_id TEXT REFERENCES destination(id),        -- a service that issues a key
   credential_id  TEXT REFERENCES stream_credential(id),  -- ...or a key entered by hand
-  device_id      TEXT REFERENCES device(id), -- NULL means the event's source encoder
+  device_id      TEXT REFERENCES device(id), -- the hardware this output runs on
   node_id        TEXT,
   templates      TEXT NOT NULL DEFAULT '{}',
+  settings       TEXT NOT NULL DEFAULT '{}', -- JSON; each key absent means "leave it alone"
+
   enabled        INTEGER NOT NULL DEFAULT 1
 );
 CREATE INDEX event_output_series ON event_output (series_id, position);
@@ -246,9 +252,26 @@ CREATE INDEX quota_day ON quota_ledger (provider, client_ref, day);
   stored as a time of day. It is what keeps a morning together when the event
   moves, and what makes a clock change shift the whole thing rather than
   putting the 11:00 service an hour out from the 9:00 one.
-- **`event_output.device_id` being NULL** means "the event's source encoder".
-  Repeating the source on every output would be a second copy of the same fact,
-  and changing the source would then have to be a fan-out write.
+- **`event_output.device_id`** is the one place an output's hardware is named.
+  A stream may only be put on a node that reports `startStreaming` and a
+  recording only on one that reports `startRecording` — checked against what
+  the device said it can do, not against what it is called. A device that has
+  never connected is allowed through and caught by pre-flight, so next month's
+  events can still be written with the rack powered down.
+- **`event_output.settings`** carries per-output device settings: an encoder
+  quality profile, a recording slot. Every key is optional and an absent key
+  means "leave the device as it is" — an event that does not care must not
+  quietly reconfigure gear somebody set up by hand. The choices are read off
+  the device when one is picked, because a free-text box here is a typo that
+  surfaces as a rejected command at 09:00.
+
+  Two things that look like settings are not offered, because the hardware
+  does not have them: an ATEM's recording quality cannot be set at all (and
+  its stream and record encoders share one bitrate, so two outputs on one
+  ATEM asking for different profiles is reported as a clash rather than
+  resolved), and a HyperDeck's rollover is not a persistent setting — the
+  deck spills onto the next mounted card on its own. Rollover is therefore
+  reported, never offered as a toggle.
 - **`occurrence.local_date`** is stored, not derived at read time. Template
   rendering and the calendar both need the date *in the series' timezone*, and
   recomputing it from a UTC instant in a container running UTC is exactly where

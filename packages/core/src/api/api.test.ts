@@ -361,6 +361,44 @@ describe('driving a device by hand', () => {
     expect(refused.status).toBe(400)
   })
 
+  it('points an encoder at a saved target by id, so no key crosses this API', async () => {
+    const { deviceId, credentialId } = await seedEverything()
+
+    const pointed = await post(`/api/devices/${deviceId}/nodes/stream/stream-target`, { credentialId })
+    expect(pointed.status).toBe(200)
+    expect(pointed.json.state.streaming.targetUrl).toBe('rtmps://a.rtmp.youtube.com/live2')
+    // Read back as a fingerprint: the key went to the device and nowhere else.
+    expect(pointed.json.state.streaming.keyFingerprint).toBeTruthy()
+    expect(JSON.stringify(pointed.json)).not.toContain('live_super-secret-key')
+
+    // And now it can actually go live, which it could not before.
+    const live = await post(`/api/devices/${deviceId}/nodes/stream/startStreaming`, {})
+    expect(live.json.state.streaming.active).toBe(true)
+  })
+
+  it('will not re-point an encoder out from under a running event', async () => {
+    const { deviceId, credentialId } = await seedEverything()
+    const [first] = (await get(`/api/occurrences?from=${START - MINUTE}&to=${START + MINUTE}`)).json
+    clock.set(START)
+    await post(`/api/occurrences/${first.id}/start-now`, {})
+
+    const refused = await post(`/api/devices/${deviceId}/nodes/stream/stream-target`, { credentialId })
+    expect(refused.status).toBe(409)
+    expect(refused.json.error).toMatch(/Sunday Service/)
+  })
+
+  it('records onto the card an operator picked rather than the deck default', async () => {
+    const deviceId = await connectRecorder()
+    const started = await post(`/api/devices/${deviceId}/nodes/record/startRecording`, {
+      filename: 'take 1',
+      slot: 2,
+    })
+    expect(started.status).toBe(200)
+    expect(started.json.state.recording.active).toBe(true)
+    const slots = started.json.state.recording.slots as { id: number; active?: boolean }[]
+    expect(slots.find((slot) => slot.active)?.id).toBe(2)
+  })
+
   it('offers no way to push a stream key at a device', async () => {
     const { deviceId } = await seedEverything()
     const attempt = await post(`/api/devices/${deviceId}/nodes/stream/applyStreamTarget`, {
@@ -386,6 +424,64 @@ describe('driving a device by hand', () => {
     const { deviceId } = await seedEverything()
     const device = (await get('/api/devices')).json.find((row: { id: string }) => row.id === deviceId)
     expect(device.inUseBy).toEqual([])
+  })
+
+  it('erases a card only when the token the device handed out comes back', async () => {
+    const deviceId = await connectRecorder()
+
+    const prepared = await post(`/api/devices/${deviceId}/nodes/record/format`, { slot: 2 })
+    expect(prepared.status).toBe(200)
+    expect(prepared.json).toMatchObject({ formatted: false, confirm: expect.any(String) })
+
+    // Preparing asks the device and erases nothing.
+    const untouched = await get(`/api/devices/${deviceId}/nodes/record/state`)
+    expect(untouched.json.state.recording.slots[1].volumeName).toBe('Sunday B')
+
+    const done = await post(`/api/devices/${deviceId}/nodes/record/format`, {
+      slot: 2,
+      confirm: prepared.json.confirm,
+    })
+    expect(done.json).toEqual({ formatted: true })
+
+    const after = await get(`/api/devices/${deviceId}/nodes/record/state`)
+    expect(after.json.state.recording.slots[1].volumeName).toBe('Untitled')
+  })
+
+  it('passes on the device refusing a confirmation it never gave out', async () => {
+    const deviceId = await connectRecorder()
+    const refused = await post(`/api/devices/${deviceId}/nodes/record/format`, {
+      slot: 1,
+      confirm: 'guessed',
+    })
+    expect(refused.status).toBe(409)
+    expect(refused.json.code).toBe('invalid-token')
+  })
+
+  it('will not erase a card an event is recording onto', async () => {
+    const { seriesId } = await seedEverything()
+    const deck = await post('/api/devices', { pluginId: 'mock', label: 'Deck', config: { kind: 'recorder' } })
+    await post(`/api/devices/${deck.json.id}/connect`, {})
+    await post(`/api/series/${seriesId}/outputs`, {
+      kind: 'recording',
+      label: 'Archive',
+      durationMs: 90 * MINUTE,
+      deviceId: deck.json.id,
+      nodeId: 'record',
+    })
+    const [first] = (await get(`/api/occurrences?from=${START - MINUTE}&to=${START + MINUTE}`)).json
+    clock.set(START)
+    await post(`/api/occurrences/${first.id}/start-now`, {})
+
+    const refused = await post(`/api/devices/${deck.json.id}/nodes/record/format`, { slot: 1 })
+    expect(refused.status).toBe(409)
+    expect(refused.json.error).toMatch(/Sunday Service/)
+  })
+
+  it('refuses to format a node with no storage to format', async () => {
+    const { deviceId } = await seedEverything()
+    const refused = await post(`/api/devices/${deviceId}/nodes/stream/format`, { slot: 1 })
+    expect(refused.status).toBe(409)
+    expect(refused.json.error).toMatch(/cannot format/)
   })
 })
 

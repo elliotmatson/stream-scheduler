@@ -35,6 +35,8 @@ export type NodeAction =
   | 'startRecording'
   | 'stopRecording'
   | 'route'
+  /** Erases a card or disk. Two-step by design; see `NodeActions`. */
+  | 'formatStorage'
 
 export interface StreamTarget {
   url: string
@@ -152,6 +154,16 @@ export interface NodeActions {
   startRecording?(options: { filename: string; slot?: number }): Promise<void>
   stopRecording?(): Promise<void>
   route?(options: { input: string; output: string }): Promise<void>
+  /**
+   * Erases one slot.
+   *
+   * Destructive and irreversible, so the host asks twice over the wire as
+   * well as in the UI: `confirm` absent means "prepare and tell me the
+   * token", and calling again with that token is what actually erases. A
+   * device whose protocol has no such handshake should do the work only
+   * when `confirm` is present.
+   */
+  formatStorage?(options: { slot: number; confirm?: string }): Promise<{ confirm?: string }>
   /** The host calls this after every write and compares. Blackmagic devices
    *  will accept a command and then ignore it; verify-after-write turns that
    *  from a showtime mystery into a prepare-phase failure. */

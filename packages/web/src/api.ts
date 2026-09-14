@@ -329,9 +329,30 @@ export const api = {
   connectDevice: (id: string) => request<unknown>(`/api/devices/${id}/connect`, { method: 'POST' }),
   nodeState: (deviceId: string, nodeId: string) =>
     request<{ state: NodeState | null }>(`/api/devices/${deviceId}/nodes/${nodeId}/state`),
+  /** Erase a card. Call once to get a confirmation token, then again with
+   *  it — the deck's own protocol works that way and this passes it
+   *  through rather than inventing a confirmation. */
+  formatStorage: (deviceId: string, nodeId: string, slot: number, confirm?: string) =>
+    request<{ formatted: boolean; confirm?: string }>(
+      `/api/devices/${deviceId}/nodes/${nodeId}/format`,
+      { method: 'POST', body: JSON.stringify({ slot, ...(confirm ? { confirm } : {}) }) },
+    ),
   /** Drive a device by hand. The server reads the write back before it
    *  answers, so a resolved promise means the device really did it. */
-  driveNode: (deviceId: string, nodeId: string, action: ManualAction, body: { filename?: string } = {}) =>
+  /** Point an encoder at a saved target by hand. The credential is named by
+   *  id: the key is read out of the vault on the server and never travels
+   *  through the browser. */
+  pointAtTarget: (deviceId: string, nodeId: string, body: { credentialId: string; quality?: string }) =>
+    request<{ state: NodeState | null }>(`/api/devices/${deviceId}/nodes/${nodeId}/stream-target`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+  driveNode: (
+    deviceId: string,
+    nodeId: string,
+    action: ManualAction,
+    body: { filename?: string; slot?: number } = {},
+  ) =>
     request<{ state: NodeState | null }>(`/api/devices/${deviceId}/nodes/${nodeId}/${action}`, {
       method: 'POST',
       body: JSON.stringify(body),

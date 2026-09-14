@@ -39,6 +39,24 @@ export function defineDevice(spec: DeviceSpec): DeviceInstance {
 
       if (action === 'readState') return actions.readState()
 
+      // The one action that answers with something other than state. It is
+      // kept off the NodeState path deliberately: a format token is a
+      // one-shot capability, not a property of the device.
+      if (action === 'formatStorage') {
+        if (!actions.formatStorage) {
+          throw new DeviceError('unsupported-action', `"${nodeId}" cannot format its storage.`)
+        }
+        const slot = args.slot
+        if (typeof slot !== 'number' || !Number.isInteger(slot)) {
+          throw new DeviceError('bad-argument', '"slot" must be a slot number.')
+        }
+        const result = await actions.formatStorage({
+          slot,
+          ...(typeof args.confirm === 'string' && args.confirm ? { confirm: args.confirm } : {}),
+        })
+        return { raw: result.confirm === undefined ? {} : { confirm: result.confirm } }
+      }
+
       const handler = actions[action]
       if (!handler) {
         throw new DeviceError('unsupported-action', `"${action}" is not supported by node "${nodeId}".`, {

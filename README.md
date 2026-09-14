@@ -19,10 +19,12 @@ records, stops and tidies up — without anyone touching it.
 
 **Working now**
 
-- An event is one source encoder and one long window, with several streams and
-  recordings inside it that start and stop on their own clocks — a Sunday
-  morning is one event from 7:00 to 12:45 with services at 9:00 and 11:00 and a
-  recorder running the length of it, not five events kept in step by hand
+- An event is one long window, with several streams and recordings inside it
+  that start and stop on their own clocks — a Sunday morning is one event from
+  7:00 to 12:45 with services at 9:00 and 11:00 and a recorder running the
+  length of it, not five events kept in step by hand. Each output names its
+  own encoder or deck, and may name a quality profile or a card to record
+  onto; leave those alone and the device stays as it was set up
 - Recurring events via RFC 5545 `RRULE`, timezone- and DST-correct, with
   per-occurrence skips and edits that survive changes to the series
 - A durable run engine: everything prepares at T−30, each output goes on and
@@ -36,8 +38,12 @@ records, stops and tidies up — without anyone touching it.
 - Encrypted stream keys and device passwords, write-only over the API
 - Device connection management with capability probing and verify-after-write
 - Manual control from the Devices page — start and stop a stream or a
-  recording by hand, read what a device is actually doing, and see which
-  event is mid-run on it before you touch it
+  recording by hand, point an encoder at a saved key (by name: the key itself
+  never leaves the server), pick a quality profile or a card, erase a card
+  with the deck's own two-step confirmation, see free space and whether the
+  deck can roll onto another card, and see which event is mid-run on a device
+  before you touch it. Erasing and re-pointing are refused outright while an
+  event is mid-run
 - **HyperDeck** adapter (TCP 9993), tested against a protocol-level emulator
 - **ATEM** adapter, with capabilities read from what the switcher reports
   rather than a model table that goes stale on the next firmware release

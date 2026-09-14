@@ -34,12 +34,20 @@ export interface NodeDefinition {
 
 /** Every action is idempotent, async, and takes/returns serializable values. */
 export interface NodeActions {
-  applyStreamTarget?(t: { url: string; key: string }): Promise<void>
+  /** `quality` is a profile the device already has, by name. Absent leaves
+   *  the device on whatever it is set to. */
+  applyStreamTarget?(t: { url: string; key: string; quality?: string }): Promise<void>
   startStreaming?(): Promise<void>
   stopStreaming?(): Promise<void>
-  startRecording?(o: { filename: string }): Promise<void>
+  /** `slot` picks the card. Absent records onto whichever the deck is on. */
+  startRecording?(o: { filename: string; slot?: number }): Promise<void>
   stopRecording?(): Promise<void>
   route?(o: { input: string; output: string }): Promise<void>
+  /** Erase a card, in the two steps the deck's own protocol uses: called
+   *  without a token it returns one and erases nothing, and only that token
+   *  coming back erases. The handshake is the device's, not one invented
+   *  here, so the token is as short-lived as the deck makes it. */
+  formatStorage?(o: { slot: number; confirm?: string }): Promise<{ confirm?: string }>
   /** Read back actual state. The host verifies every write with this. */
   readState(): Promise<NodeState>
 }

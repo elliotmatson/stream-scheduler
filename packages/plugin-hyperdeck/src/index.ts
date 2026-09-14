@@ -10,7 +10,7 @@ import type {
   NodeState,
   PluginDefinition,
 } from '@scheduler/plugin-sdk'
-import { Commands, Hyperdeck, SlotStatus, TransportStatus } from 'hyperdeck-connection'
+import { Commands, FilesystemFormat, Hyperdeck, SlotStatus, TransportStatus } from 'hyperdeck-connection'
 
 /**
  * Blackmagic HyperDeck Studio / Extreme / Shuttle.
@@ -173,7 +173,7 @@ class HyperdeckDevice {
         ports: [
           { id: 'in', direction: 'in', label: 'Record input', transport: ['sdi', 'hdmi'], maxLinks: 1 },
         ],
-        supports: ['startRecording', 'stopRecording'],
+        supports: ['startRecording', 'stopRecording', 'formatStorage'],
       },
     ]
   }
@@ -200,6 +200,29 @@ class HyperdeckDevice {
       },
       stopRecording: async () => {
         await this.send(new Commands.StopCommand())
+      },
+      /**
+       * Erases a card. The deck's own protocol is a handshake — `format
+       * prepare` answers with a token and nothing happens until `format
+       * confirm` quotes it back — so this mirrors that rather than
+       * inventing its own confirmation. The token is short-lived, which
+       * is the point: an operator who wanders off does not leave a live
+       * erase primed.
+       */
+      formatStorage: async ({ slot, confirm }) => {
+        if (confirm) {
+          const command = new Commands.FormatConfirmCommand()
+          command.code = confirm
+          await this.send(command)
+          // The volume name and headroom both change; nothing cached
+          // about the slot is true any more.
+          return {}
+        }
+        const prepare = new Commands.FormatCommand()
+        prepare.slotId = slot
+        prepare.filesystem = FilesystemFormat.exFAT
+        const { code } = await this.send(prepare)
+        return { confirm: code }
       },
       readState: async () => this.readState(),
     }
