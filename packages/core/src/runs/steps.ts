@@ -24,6 +24,18 @@ export interface StepDefinition {
   kind: string
   phase: RunPhase
   /**
+   * Which output this step drives, if any.
+   *
+   * The engine gates `start` and `stop` on this: an output that goes on at
+   * 9:00 and off at 10:15 has its steps run then, not when the event's
+   * window opens. It is also the unit of failure — one stream failing to
+   * come up does not abandon the recording or the 11:00 service.
+   */
+  outputId?: string
+  /** Shown on the run timeline. The kind carries an output id, which is
+   *  stable but unreadable. */
+  label?: string
+  /**
    * Safe to run again after an ambiguous failure?
    *
    * Most steps are: creating a broadcast is guarded by the idempotency key,
@@ -61,11 +73,20 @@ export type RunPlan = StepDefinition[]
  * plan before the run exists.
  */
 export interface RunPlanner {
-  plan(occurrenceId: string): Promise<RunPlan> | RunPlan
+  /**
+   * `forcedAt` moves the whole event's window to the moment an operator
+   * pressed the button, so the outputs keep their offsets relative to each
+   * other instead of the first three being instantly in the past.
+   */
+  plan(occurrenceId: string, options?: { forcedAt?: number }): Promise<RunPlan> | RunPlan
 }
 
 export function stepsForPhase(plan: RunPlan, phase: RunPhase): StepDefinition[] {
   return plan.filter((step) => step.phase === phase)
+}
+
+export function stepsForOutput(plan: RunPlan, outputId: string): StepDefinition[] {
+  return plan.filter((step) => step.outputId === outputId)
 }
 
 /** Lets tests run the executor without real delays. */

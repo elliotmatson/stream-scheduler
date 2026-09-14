@@ -1,10 +1,18 @@
 import type { Clock } from '@scheduler/plugin-sdk'
 import type { Db } from '../db/index.js'
 import { silentLogger, type Logger } from '../log.js'
-import { compensateRun, executePhase, reconcileRun, type ExecutorDeps } from './executor.js'
-import { isOnAir, isTerminal, PHASE_STATES, type RunPhase, type RunState } from './state-machine.js'
+import {
+  compensateOutput,
+  compensateRun,
+  executePhase,
+  executeSteps,
+  reconcileRun,
+  type ExecutorDeps,
+} from './executor.js'
+import { isOnAir, isTerminal, type RunState } from './state-machine.js'
 import type { RunFailure, RunRecord, RunStore } from './store.js'
-import type { RunPlanner, Sleeper } from './steps.js'
+import type { RunPlan, RunPlanner, Sleeper } from './steps.js'
+import { timelineEnd, timelineFor, type EventTimeline, type OutputWindow } from './timeline.js'
 
 export interface EngineDeps {
   db: Db
@@ -14,19 +22,18 @@ export interface EngineDeps {
   sleeper?: Sleeper
   logger?: Logger
   /**
-   * Called when a run ends badly. A hook rather than a notifier so the
-   * engine stays unaware of channels, outboxes and email servers.
+   * Called when a run, or one of its outputs, ends badly. A hook rather than
+   * a notifier so the engine stays unaware of channels, outboxes and email
+   * servers.
    */
-  onFailure?: (event: { runId: string; occurrenceId: string; failure: RunFailure; attempt: number }) => void
-}
-
-export interface Timing {
-  scheduledStart: number
-  scheduledEnd: number
-  prepareLeadMs: number
-  prerollMs: number
-  postrollMs: number
-  lateStartGraceMs: number
+  onFailure?: (event: {
+    runId: string
+    occurrenceId: string
+    failure: RunFailure
+    attempt: number
+    /** Set when one output failed and the rest of the event carried on. */
+    outputLabel?: string
+  }) => void
 }
 
 export interface TickReport {
@@ -36,6 +43,9 @@ export interface TickReport {
   completed: string[]
 }
 
+/** What one output of a run has got to. Read from its steps, not stored. */
+export type OutputProgress = 'pending' | 'started' | 'stopped' | 'failed'
+
 /**
  * The scheduler loop.
  *
@@ -43,6 +53,13 @@ export interface TickReport {
  * survive machine sleep, system clock changes or NTP steps, and a desktop app
  * sleeps constantly; recomputing from wall-clock each tick makes all three
  * non-events. See docs/plan/03-scheduling-engine.md.
+ *
+ * A run is a *timeline*, not a single start and stop. Everything prepares at
+ * T-30, then each output goes on and comes off at its own time inside the
+ * event's window, then the whole thing is closed out. One output failing
+ * takes that output off the air and leaves the others running: on a Sunday
+ * morning, a broadcast that cannot be created for the 9:00 service is no
+ * reason to abandon the 11:00 one or to stop recording.
  */
 export class RunEngine {
   private readonly logger: Logger
@@ -58,8 +75,7 @@ export class RunEngine {
   async recover(): Promise<string[]> {
     const recovered: string[] = []
     for (const run of this.deps.store.listActiveRuns()) {
-      const plan = await this.deps.planner.plan(run.occurrence_id)
-      await reconcileRun(run.id, plan, this.executorDeps())
+      await reconcileRun(run.id, await this.planFor(run), this.executorDeps())
       recovered.push(run.id)
       this.logger.info('recovered a run interrupted by a restart', { runId: run.id, state: run.state })
     }
@@ -89,125 +105,316 @@ export class RunEngine {
 
   /** Drives one run as far as the clock currently allows. */
   async advance(runId: string): Promise<RunState> {
-    let state = this.deps.store.getRun(runId).state
-    // A single tick can cross several boundaries — a run created at its
-    // prepare time when the app was asleep may need to prepare, start and go
-    // live immediately — so keep going while progress is being made.
-    for (;;) {
-      const next = await this.step(runId)
-      if (next === state) return state
-      state = next
+    // A single tick can cross several boundaries — a run whose whole window
+    // elapsed while the machine was asleep has to prepare, start, stop and
+    // complete in one go — so keep going while progress is being made.
+    //
+    // The bound is a backstop, not a limit: each pass either commits a step
+    // or a transition, so a run that keeps asking for another pass without
+    // recording anything is a bug, and spinning on it forever inside a tick
+    // would take the scheduler down with it.
+    for (let pass = 0; pass < MAX_PASSES; pass++) {
+      if (!(await this.step(runId))) return this.deps.store.getRun(runId).state
+      const state = this.deps.store.getRun(runId).state
       if (isTerminal(state)) return state
     }
+    this.logger.error('gave up advancing a run after too many passes', { runId })
+    return this.deps.store.getRun(runId).state
   }
 
-  private async step(runId: string): Promise<RunState> {
+  /** One unit of work. Returns whether anything was done. */
+  private async step(runId: string): Promise<boolean> {
     const run = this.deps.store.getRun(runId)
-    if (isTerminal(run.state)) return run.state
+    if (isTerminal(run.state)) return false
 
-    const timing = this.timingFor(run.occurrence_id)
+    const timeline = this.timelineFor(run)
+    const plan = await this.planFor(run)
     const now = this.deps.clock.now()
 
-    if (this.hasMissedItsWindow(run, timing, now)) {
-      await this.fail(run, {
+    if (timeline.outputs.length === 0) {
+      await this.fail(run, plan, {
+        code: 'no_outputs',
+        message: `"${timeline.label}" has nothing to do: it has no enabled streams or recordings.`,
+        remediation: 'Add a stream or a recording to the event, or turn the event off.',
+      })
+      return true
+    }
+
+    const progress = this.progressOf(run.id, plan, timeline)
+
+    if (this.hasMissedItsWindow(run, timeline, progress, now)) {
+      await this.fail(run, plan, {
         code: 'missed_window',
         message:
-          `Scheduled for ${new Date(timing.scheduledStart).toISOString()} but the app was not running until ` +
-          `${new Date(now).toISOString()}, past the ${Math.round(timing.lateStartGraceMs / 60_000)} minute grace period.`,
-        remediation: 'Start it manually if it is still wanted, or widen the late-start grace on the series.',
+          `Scheduled for ${new Date(timeline.windowStart).toISOString()} but the app was not running until ` +
+          `${new Date(now).toISOString()}, past the ${Math.round(timeline.lateStartGraceMs / 60_000)} minute ` +
+          'grace period on every output.',
+        remediation: 'Start it manually if it is still wanted, or widen the late-start grace on the event.',
       })
-      return 'failed'
+      return true
     }
 
-    const phase = this.duePhase(run, timing, now)
-    if (!phase) return run.state
+    if (run.state === 'scheduled' || run.state === 'preparing') {
+      if (!(run.forced_at !== null || now >= timeline.windowStart - timeline.prepareLeadMs)) return false
+      return this.prepare(run, plan, timeline)
+    }
 
-    return this.runPhase(run, phase)
+    // Stops before starts, so one encoder handing over from one service to
+    // the next is released before the next output claims it.
+    for (const entry of timeline.outputs) {
+      if (progress.get(entry.output.id) !== 'started') continue
+      if (now < entry.endsAt + timeline.postrollMs) continue
+      await this.runOutputPhase(run, plan, entry, 'stop')
+      return true
+    }
+
+    for (const entry of timeline.outputs) {
+      if (progress.get(entry.output.id) !== 'pending') continue
+      if (now < entry.startsAt - timeline.prerollMs) continue
+
+      if (!run.forced_at && now > entry.startsAt + timeline.lateStartGraceMs) {
+        this.markMissed(run, plan, entry, now, timeline)
+        return true
+      }
+      if (this.deps.store.getRun(run.id).state === 'ready') this.deps.store.transition(run.id, 'running')
+      await this.runOutputPhase(run, plan, entry, 'start')
+      return true
+    }
+
+    const outstanding = [...progress.values()].some((state) => state === 'pending' || state === 'started')
+    if (!outstanding && now >= timelineEnd(timeline) + timeline.postrollMs) {
+      return this.complete(run, plan, timeline, progress)
+    }
+    return false
   }
 
-  private async runPhase(run: RunRecord, phase: RunPhase): Promise<RunState> {
-    const { during, after } = PHASE_STATES[phase]
-    const plan = await this.deps.planner.plan(run.occurrence_id)
+  // -- phases -------------------------------------------------------------
 
-    this.deps.store.transition(run.id, during)
-    const result = await executePhase(run.id, plan, phase, this.executorDeps())
+  /**
+   * Creates everything the event will need, for every output at once.
+   *
+   * All of it happens at one time — T minus the prepare lead — rather than
+   * per output, because this is the phase whose failures a human can still
+   * do something about. Finding out at 08:30 that the 11:00 broadcast
+   * cannot be created is worth something; finding out at 11:00 is not.
+   */
+  private async prepare(run: RunRecord, plan: RunPlan, timeline: EventTimeline): Promise<boolean> {
+    this.deps.store.transition(run.id, 'preparing')
 
+    let prepared = 0
+    for (const entry of timeline.outputs) {
+      const result = await executeSteps(
+        run.id,
+        plan,
+        (step) => step.outputId === entry.output.id && step.phase === 'prepare',
+        this.executorDeps(),
+        { phase: 'prepare', outputId: entry.output.id },
+      )
+      if (result.ok) prepared++
+      else await this.failOutput(run, plan, entry, result.failure)
+    }
+
+    if (prepared === 0) {
+      await this.failWholeRun(run, plan, {
+        code: 'prepare_failed',
+        message: `Nothing could be prepared for "${timeline.label}": every output failed.`,
+        remediation: 'The timeline shows which step broke on each one.',
+      })
+      return true
+    }
+
+    this.deps.store.transition(run.id, 'ready')
+    return true
+  }
+
+  private async runOutputPhase(
+    run: RunRecord,
+    plan: RunPlan,
+    entry: OutputWindow,
+    phase: 'start' | 'stop',
+  ): Promise<void> {
+    // Starting also picks up any of this output's prepare steps still
+    // outstanding. Normally there are none — they all ran at T minus the
+    // lead — but a crash part-way through the window leaves the run in
+    // `running` with later outputs unprepared, and there is no second
+    // prepare gate coming. The steps are ordered prepare-then-start in the
+    // plan and the done ones are skipped, so in the ordinary case this
+    // costs nothing.
+    const phases = phase === 'start' ? ['prepare', 'start'] : ['stop']
+    const result = await executeSteps(
+      run.id,
+      plan,
+      (step) => step.outputId === entry.output.id && phases.includes(step.phase),
+      this.executorDeps(),
+      { phase, outputId: entry.output.id },
+    )
+    if (result.ok) {
+      this.logger.info(phase === 'start' ? 'output is live' : 'output has stopped', {
+        runId: run.id,
+        output: entry.output.label,
+      })
+      return
+    }
+    await this.failOutput(run, plan, entry, result.failure, { onAir: phase === 'stop' })
+  }
+
+  private async complete(
+    run: RunRecord,
+    plan: RunPlan,
+    timeline: EventTimeline,
+    progress: Map<string, OutputProgress>,
+  ): Promise<boolean> {
+    this.deps.store.transition(run.id, 'completing')
+    // Every output's closing work, including the ones that failed: a
+    // broadcast that went out has to be ended on the channel whether or not
+    // the encoder came off cleanly. An output that was compensated has no
+    // external id left, so its finalize is a no-op.
+    const result = await executePhase(run.id, plan, 'complete', this.executorDeps())
     if (!result.ok) {
-      await this.fail(this.deps.store.getRun(run.id), result.failure)
-      return 'failed'
+      await this.fail(run, plan, result.failure)
+      return true
     }
 
-    this.deps.store.transition(run.id, after)
-    if (after === 'completed') {
-      this.deps.db.prepare("UPDATE occurrence SET status = 'done' WHERE id = ?").run(run.occurrence_id)
+    const delivered = [...progress.values()].some((state) => state === 'stopped')
+    if (!delivered) {
+      await this.failWholeRun(run, plan, {
+        code: 'nothing_aired',
+        message: `Nothing from "${timeline.label}" made it to air: every output failed.`,
+        remediation: 'The timeline shows which step broke on each one.',
+      })
+      return true
     }
-    return after
+
+    this.deps.store.transition(run.id, 'completed')
+    this.deps.db.prepare("UPDATE occurrence SET status = 'done' WHERE id = ?").run(run.occurrence_id)
+    return true
+  }
+
+  // -- failure ------------------------------------------------------------
+
+  /**
+   * Takes one output out of the event and leaves the rest running.
+   *
+   * Compensation is the difference between "never got on air" and "got on
+   * air and then broke": in the first case the broadcast it created is
+   * litter and is discarded, in the second it carried a service and has to
+   * be closed out properly at the end.
+   */
+  private async failOutput(
+    run: RunRecord,
+    plan: RunPlan,
+    entry: OutputWindow,
+    failure: RunFailure,
+    options: { onAir?: boolean } = {},
+  ): Promise<void> {
+    if (!options.onAir) await compensateOutput(run.id, plan, entry.output.id, this.executorDeps())
+    this.logger.error('an output failed; the rest of the event carries on', {
+      runId: run.id,
+      output: entry.output.label,
+      code: failure.code,
+      message: failure.message,
+    })
+    this.notify({
+      runId: run.id,
+      occurrenceId: run.occurrence_id,
+      failure: {
+        ...failure,
+        message: `${entry.output.label}: ${failure.message}`,
+        ...(options.onAir
+          ? {
+              remediation:
+                `${entry.output.label} was on air and did not stop cleanly. Check the encoder — it may still ` +
+                'be streaming.',
+            }
+          : {}),
+      },
+      attempt: run.attempt,
+      outputLabel: entry.output.label,
+    })
   }
 
   /**
-   * Only a run that has not gone on air yet can miss its window.
+   * Records an output that the clock ran past.
    *
-   * Checking "not on air and not terminal" is not enough: a run in `stopping`
-   * or `completing` has long passed its scheduled start by definition, and
-   * treating that as a missed window fails every run at the finish line.
+   * Written onto its start steps rather than tracked separately, so the run
+   * timeline says what happened in the place someone is already looking,
+   * and so the decision survives a restart without a second source of truth.
    */
-  private hasMissedItsWindow(run: RunRecord, timing: Timing, now: number): boolean {
-    // An operator who pressed "start now" has said what they want; the
-    // scheduled window no longer applies.
-    if (run.forced_at !== null) return false
-    if (run.state !== 'scheduled' && run.state !== 'preparing' && run.state !== 'ready') return false
-    return now > timing.scheduledStart + timing.lateStartGraceMs
+  private markMissed(
+    run: RunRecord,
+    plan: RunPlan,
+    entry: OutputWindow,
+    now: number,
+    timeline: EventTimeline,
+  ): void {
+    const late = Math.round((now - entry.startsAt) / 60_000)
+    const message =
+      `Should have started at ${new Date(entry.startsAt).toISOString()}, ${late} minutes ago, past the ` +
+      `${Math.round(timeline.lateStartGraceMs / 60_000)} minute grace period. Skipped.`
+
+    for (const [seq, step] of plan.entries()) {
+      if (step.outputId !== entry.output.id || step.phase !== 'start') continue
+      if (this.deps.store.step(run.id, seq).state !== 'pending') continue
+      this.deps.store.markStepFailed(run.id, seq, message)
+    }
+    this.logger.warn('skipped an output the clock had run past', {
+      runId: run.id,
+      output: entry.output.label,
+    })
+    this.notify({
+      runId: run.id,
+      occurrenceId: run.occurrence_id,
+      failure: { code: 'missed_output', message: `${entry.output.label}: ${message}`, step: entry.output.label },
+      attempt: run.attempt,
+      outputLabel: entry.output.label,
+    })
   }
 
-  private duePhase(run: RunRecord, timing: Timing, now: number): RunPhase | undefined {
-    const forced = run.forced_at !== null
-    // A forced run is measured from when it actually started, so starting an
-    // event outside its window gives it a full-length run rather than
-    // stopping it the instant it goes live.
-    const endsAt = forced ? run.forced_at! + (timing.scheduledEnd - timing.scheduledStart) : timing.scheduledEnd
+  /**
+   * Fails the run once every output has failed.
+   *
+   * Keeps the cause a step already recorded rather than replacing it with
+   * the summary: "the stored YouTube authorization was rejected, reconnect
+   * the account" is the sentence somebody can act on, and "every output
+   * failed" is not.
+   */
+  private async failWholeRun(run: RunRecord, plan: RunPlan, summary: RunFailure): Promise<void> {
+    const recorded = this.recordedFailure(run.id)
+    await this.fail(
+      run,
+      plan,
+      recorded ? { ...recorded, message: `${summary.message} The first was: ${recorded.message}` } : summary,
+    )
+  }
 
-    switch (run.state) {
-      case 'scheduled':
-        return forced || now >= timing.scheduledStart - timing.prepareLeadMs ? 'prepare' : undefined
-      case 'ready':
-        return forced || now >= timing.scheduledStart - timing.prerollMs ? 'start' : undefined
-      case 'live':
-        return now >= endsAt + timing.postrollMs ? 'stop' : undefined
-      case 'completing':
-        return 'complete'
-
-      // A run found in one of these states is one a crash interrupted
-      // part-way through that phase: its clock gate was already passed, so
-      // resume it. Without these cases a restart leaves the run wedged
-      // forever, which is the failure the whole recovery path exists to
-      // prevent.
-      case 'preparing':
-        return 'prepare'
-      case 'starting':
-        return 'start'
-      case 'stopping':
-        return 'stop'
-
-      default:
-        return undefined
+  private recordedFailure(runId: string): RunFailure | undefined {
+    const raw = this.deps.store.getRun(runId).failure
+    if (!raw) return undefined
+    try {
+      return JSON.parse(raw) as RunFailure
+    } catch {
+      return undefined
     }
   }
 
-  private async fail(run: RunRecord, failure: RunFailure): Promise<void> {
-    const plan = await this.deps.planner.plan(run.occurrence_id)
+  private async fail(run: RunRecord, plan: RunPlan, failure: RunFailure): Promise<void> {
     await compensateRun(run.id, plan, this.executorDeps())
     this.deps.store.recordFailure(run.id, failure)
     this.deps.store.transition(run.id, 'failed')
     this.deps.db.prepare("UPDATE occurrence SET status = 'failed' WHERE id = ?").run(run.occurrence_id)
     this.logger.error('run failed', { runId: run.id, code: failure.code, message: failure.message })
+    this.notify({ runId: run.id, occurrenceId: run.occurrence_id, failure, attempt: run.attempt })
+  }
 
+  private notify(event: {
+    runId: string
+    occurrenceId: string
+    failure: RunFailure
+    attempt: number
+    outputLabel?: string
+  }): void {
     try {
-      this.deps.onFailure?.({
-        runId: run.id,
-        occurrenceId: run.occurrence_id,
-        failure,
-        attempt: run.attempt,
-      })
+      this.deps.onFailure?.(event)
     } catch (error) {
       // Telling somebody is best-effort; it must never turn a failed run
       // into a crashed scheduler.
@@ -217,6 +424,8 @@ export class RunEngine {
     }
   }
 
+  // -- operator overrides -------------------------------------------------
+
   /**
    * Operator override. The scheduler must never be the only way to stop a
    * stream: someone standing in a control room needs a stop button, not a
@@ -225,13 +434,24 @@ export class RunEngine {
   async cancel(runId: string, reason = 'Stopped by an operator'): Promise<RunState> {
     const run = this.deps.store.getRun(runId)
     if (isTerminal(run.state)) return run.state
-    const plan = await this.deps.planner.plan(run.occurrence_id)
+    const plan = await this.planFor(run)
 
     if (isOnAir(run.state)) {
-      // Already streaming: run the stop steps so the encoder is actually told
-      // to stop, rather than just marking the row cancelled.
-      if (run.state !== 'stopping') this.deps.store.transition(runId, 'stopping')
-      await executePhase(runId, plan, 'stop', this.executorDeps())
+      // Something may be streaming: run the stop steps of everything that
+      // actually started, so the encoder is told to stop rather than the row
+      // just being marked cancelled.
+      const timeline = this.timelineFor(run)
+      const progress = this.progressOf(run.id, plan, timeline)
+      for (const entry of timeline.outputs) {
+        if (progress.get(entry.output.id) !== 'started') continue
+        await executeSteps(
+          runId,
+          plan,
+          (step) => step.outputId === entry.output.id && step.phase === 'stop',
+          this.executorDeps(),
+          { phase: 'stop', outputId: entry.output.id },
+        )
+      }
     } else {
       await compensateRun(runId, plan, this.executorDeps())
     }
@@ -247,13 +467,70 @@ export class RunEngine {
   async startNow(occurrenceId: string): Promise<string> {
     const existing = this.deps.store.findRunForOccurrence(occurrenceId)
     if (existing && !isTerminal(existing.state)) return existing.id
-    const plan = await this.deps.planner.plan(occurrenceId)
+    const forcedAt = this.deps.clock.now()
+    const plan = await this.deps.planner.plan(occurrenceId, { forcedAt })
     const run = this.deps.store.createRun(occurrenceId, plan, {
       attempt: (existing?.attempt ?? 0) + 1,
-      forcedAt: this.deps.clock.now(),
+      forcedAt,
     })
     this.deps.db.prepare("UPDATE occurrence SET status = 'running' WHERE id = ?").run(occurrenceId)
     return run.id
+  }
+
+  // -- reading the run ----------------------------------------------------
+
+  /**
+   * What each output has got to, derived from its step rows.
+   *
+   * Derived rather than stored: the step rows are already the durable record
+   * of what was attempted and what landed, and a second copy of the same
+   * fact is a second thing that can be wrong after a crash.
+   */
+  progressOf(runId: string, plan: RunPlan, timeline: EventTimeline): Map<string, OutputProgress> {
+    const records = this.deps.store.steps(runId)
+    const progress = new Map<string, OutputProgress>()
+
+    for (const entry of timeline.outputs) {
+      const seqs = plan
+        .map((step, seq) => ({ step, seq }))
+        .filter(({ step }) => step.outputId === entry.output.id)
+      const stateOf = (phase: string): ('done' | 'other')[] =>
+        seqs
+          .filter(({ step }) => step.phase === phase)
+          .map(({ seq }) => (records[seq]?.state === 'done' ? 'done' : 'other'))
+
+      if (seqs.some(({ seq }) => records[seq]?.state === 'failed')) {
+        progress.set(entry.output.id, 'failed')
+        continue
+      }
+      const stops = stateOf('stop')
+      const starts = stateOf('start')
+      if (stops.length > 0 && stops.every((s) => s === 'done')) progress.set(entry.output.id, 'stopped')
+      else if (starts.length > 0 && starts.every((s) => s === 'done')) progress.set(entry.output.id, 'started')
+      else progress.set(entry.output.id, 'pending')
+    }
+    return progress
+  }
+
+  /**
+   * True when the clock ran past every output and none of them got away.
+   *
+   * Per output rather than per event: an app that came back at 10:00 has
+   * missed the 9:00 service, but the 11:00 one and the recording that runs
+   * to 12:45 are still perfectly deliverable, and failing the whole event
+   * would throw them away too.
+   */
+  private hasMissedItsWindow(
+    run: RunRecord,
+    timeline: EventTimeline,
+    progress: Map<string, OutputProgress>,
+    now: number,
+  ): boolean {
+    // An operator who pressed "start now" has said what they want; the
+    // scheduled window no longer applies.
+    if (run.forced_at !== null) return false
+    if ([...progress.values()].some((state) => state !== 'pending')) return false
+    return timeline.outputs.every((entry) => now > entry.startsAt + timeline.lateStartGraceMs)
   }
 
   private dueOccurrences(now: number): string[] {
@@ -272,34 +549,16 @@ export class RunEngine {
     return rows.map((row) => row.id)
   }
 
-  private timingFor(occurrenceId: string): Timing {
-    const row = this.deps.db
-      .prepare(
-        `SELECT o.scheduled_start, o.scheduled_end, s.prepare_lead_ms, s.preroll_ms, s.postroll_ms,
-                s.late_start_grace_ms
-           FROM occurrence o
-           JOIN event_series s ON s.id = o.series_id
-          WHERE o.id = ?`,
-      )
-      .get(occurrenceId) as
-      | {
-          scheduled_start: number
-          scheduled_end: number
-          prepare_lead_ms: number
-          preroll_ms: number
-          postroll_ms: number
-          late_start_grace_ms: number
-        }
-      | undefined
-    if (!row) throw new Error(`No occurrence with id "${occurrenceId}".`)
-    return {
-      scheduledStart: row.scheduled_start,
-      scheduledEnd: row.scheduled_end,
-      prepareLeadMs: row.prepare_lead_ms,
-      prerollMs: row.preroll_ms,
-      postrollMs: row.postroll_ms,
-      lateStartGraceMs: row.late_start_grace_ms,
-    }
+  private timelineFor(run: RunRecord): EventTimeline {
+    return timelineFor(this.deps.db, run.occurrence_id, this.forcing(run))
+  }
+
+  private async planFor(run: RunRecord): Promise<RunPlan> {
+    return this.deps.planner.plan(run.occurrence_id, this.forcing(run))
+  }
+
+  private forcing(run: RunRecord): { forcedAt?: number } {
+    return run.forced_at === null ? {} : { forcedAt: run.forced_at }
   }
 
   private executorDeps(): ExecutorDeps {
@@ -308,3 +567,6 @@ export class RunEngine {
     return deps
   }
 }
+
+/** Enough for a full day's outputs to prepare, start, stop and close out. */
+const MAX_PASSES = 500

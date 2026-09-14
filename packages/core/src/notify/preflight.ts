@@ -3,7 +3,10 @@ import type { Db } from '../db/index.js'
 import type { ConnectionManager } from '../devices/connection-manager.js'
 import type { DestinationRegistry } from '../destinations/registry.js'
 import { silentLogger, type Logger } from '../log.js'
-import type { PipelineGraph, PipelinePlanner } from '../runs/pipeline-planner.js'
+import { deviceFor } from '../events/outputs.js'
+import { describeConflict, overlapsForSeries } from '../events/overlap.js'
+import type { EventPlanner } from '../runs/event-planner.js'
+import { timelineFor, type EventTimeline } from '../runs/timeline.js'
 import { localDateAt } from '../schedule/zoned.js'
 import type { Notifier } from './notifier.js'
 import type { Notification } from './types.js'
@@ -28,7 +31,7 @@ export interface PreflightResult {
 export interface PreflightDeps {
   db: Db
   clock: Clock
-  planner: PipelinePlanner
+  planner: EventPlanner
   connections: ConnectionManager
   destinations?: DestinationRegistry
   notifier: Notifier
@@ -98,13 +101,15 @@ export class PreflightChecker {
       .get(occurrenceId) as { scheduled_start: number; label: string; timezone: string } | undefined
     if (!row) throw new Error(`No occurrence with id "${occurrenceId}".`)
 
+    const timeline = timelineFor(this.deps.db, occurrenceId)
+
     const problems: PreflightProblem[] = []
     problems.push(...this.checkTemplates(occurrenceId))
-
-    const graph = this.graphFor(occurrenceId)
-    problems.push(...(await this.checkDevices(graph)))
-    problems.push(...(await this.checkDestinations(graph)))
-    problems.push(...this.checkPlan(occurrenceId, graph))
+    problems.push(...this.checkOutputs(timeline))
+    problems.push(...this.checkOverlaps(timeline))
+    problems.push(...(await this.checkDevices(timeline)))
+    problems.push(...(await this.checkDestinations(timeline)))
+    problems.push(...this.checkPlan(occurrenceId, timeline))
 
     return {
       occurrenceId,
@@ -130,23 +135,72 @@ export class PreflightChecker {
     }
   }
 
-  private async checkDevices(graph: PipelineGraph): Promise<PreflightProblem[]> {
+  /** Every output has to have hardware to run on, or it cannot air. */
+  private checkOutputs(timeline: EventTimeline): PreflightProblem[] {
+    if (timeline.outputs.length === 0) {
+      return [
+        {
+          what: 'Outputs',
+          detail: 'This event would do nothing: it has no enabled streams or recordings.',
+          remediation: 'Add a stream or a recording to the event.',
+        },
+      ]
+    }
+
+    const problems: PreflightProblem[] = []
+    for (const entry of timeline.outputs) {
+      const output = entry.output
+      if (!deviceFor(output, timeline.source)) {
+        problems.push({
+          what: output.label,
+          detail: 'No device: it does not name one of its own, and the event has no source encoder.',
+          remediation: 'Set the event\'s source encoder, or give this output its own device.',
+        })
+      }
+      if (output.kind === 'stream' && !output.destinationId && !output.credentialId) {
+        problems.push({
+          what: output.label,
+          detail: 'Nowhere to stream to: no streaming service and no stream key.',
+          remediation: 'Pick a service or paste a stream key on this output.',
+        })
+      }
+    }
+    return problems
+  }
+
+  /**
+   * One encoder cannot feed two services at once, and finding that out at
+   * 09:00 is the whole problem. Reported here as well as at save time,
+   * because the clash may have been introduced by editing a *different*
+   * output since.
+   */
+  private checkOverlaps(timeline: EventTimeline): PreflightProblem[] {
+    return overlapsForSeries(this.deps.db, timeline.seriesId).map((conflict) => ({
+      what: 'Overlapping outputs',
+      detail: describeConflict(conflict),
+    }))
+  }
+
+  private async checkDevices(timeline: EventTimeline): Promise<PreflightProblem[]> {
     const problems: PreflightProblem[] = []
     const seen = new Set<string>()
 
-    for (const node of graph.nodes) {
-      if (seen.has(node.deviceId)) continue
-      seen.add(node.deviceId)
+    for (const entry of timeline.outputs) {
+      const device = deviceFor(entry.output, timeline.source)
+      if (!device) continue // already reported by checkOutputs
+      const key = `${device.deviceId}/${device.nodeId}`
+      if (seen.has(key)) continue
+      seen.add(key)
 
-      const label = this.deviceLabel(node.deviceId)
+      const label = this.deviceLabel(device.deviceId)
       try {
-        const connection = await this.deps.connections.open(node.deviceId)
-        const definition = connection.nodes.find((n) => n.id === node.nodeId)
+        const connection = await this.deps.connections.open(device.deviceId)
+        const definition = connection.nodes.find((n) => n.id === device.nodeId)
         if (!definition) {
           problems.push({
             what: label,
-            detail: `The device is reachable but does not offer "${node.nodeId}".`,
-            remediation: 'The pipeline may point at a node this model does not have. Re-check the pipeline.',
+            detail: `The device is reachable but does not offer "${device.nodeId}".`,
+            remediation: 'The event points at a node this model does not have. Re-check the event.',
           })
         }
       } catch (error) {
@@ -160,15 +214,20 @@ export class PreflightChecker {
     return problems
   }
 
-  private async checkDestinations(graph: PipelineGraph): Promise<PreflightProblem[]> {
+  private async checkDestinations(timeline: EventTimeline): Promise<PreflightProblem[]> {
     const registry = this.deps.destinations
     if (!registry) return []
 
     const problems: PreflightProblem[] = []
-    for (const spec of graph.destinations ?? []) {
-      const label = this.destinationLabel(spec.destinationId)
+    const seen = new Set<string>()
+    for (const entry of timeline.outputs) {
+      const destinationId = entry.output.destinationId
+      if (!destinationId || seen.has(destinationId)) continue
+      seen.add(destinationId)
+
+      const label = this.destinationLabel(destinationId)
       try {
-        const destination = await registry.open(spec.destinationId)
+        const destination = await registry.open(destinationId)
         try {
           const status = await destination.status()
           if (status.state === 'reauth_required') {
@@ -210,41 +269,17 @@ export class PreflightChecker {
     return problems
   }
 
-  private checkPlan(occurrenceId: string, graph: PipelineGraph): PreflightProblem[] {
+  private checkPlan(occurrenceId: string, timeline: EventTimeline): PreflightProblem[] {
+    // An event with nothing on it has already been reported, more
+    // usefully, by checkOutputs. Reporting it twice turns one mistake into
+    // two problems.
+    if (timeline.outputs.length === 0) return []
     try {
       this.deps.planner.plan(occurrenceId)
+      return []
     } catch (error) {
-      return [{ what: 'Pipeline', detail: describe(error) }]
+      return [{ what: 'Event', detail: describe(error) }]
     }
-
-    // An empty plan is only worth reporting when the pipeline itself is
-    // empty. A configured pipeline plans nothing when its devices are
-    // unreachable — which the device check has already said, more usefully.
-    // Reporting both turns one unplugged encoder into two problems.
-    const configured = graph.nodes.length > 0 || (graph.destinations?.length ?? 0) > 0
-    if (configured) return []
-
-    return [
-      {
-        what: 'Pipeline',
-        detail: 'This event would do nothing: no encoders or destinations are attached to it.',
-        remediation: 'Attach at least one encoder or streaming service to the pipeline.',
-      },
-    ]
-  }
-
-  private graphFor(occurrenceId: string): PipelineGraph {
-    const row = this.deps.db
-      .prepare(
-        `SELECT p.graph AS graph
-           FROM occurrence o
-           JOIN event_series s ON s.id = o.series_id
-           JOIN pipeline p ON p.id = s.pipeline_id
-          WHERE o.id = ?`,
-      )
-      .get(occurrenceId) as { graph: string } | undefined
-    const parsed = (row ? JSON.parse(row.graph) : {}) as Partial<PipelineGraph>
-    return { nodes: parsed.nodes ?? [], destinations: parsed.destinations ?? [] }
   }
 
   private deviceLabel(deviceId: string): string {
