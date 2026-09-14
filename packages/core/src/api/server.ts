@@ -225,11 +225,20 @@ function registerRoutes(fastify: FastifyInstance, app: Application): void {
    * Blackmagic device will accept a command and quietly ignore it, and a
    * button that lies is worse than no button.
    *
-   * `applyStreamTarget` is deliberately not offered. It takes a stream key,
-   * so exposing it here would mean posting a key in the clear to be pushed
-   * at a device outside any run, with nothing to clean it up afterwards.
-   * Getting a key onto an encoder is what stream credentials and the prepare
-   * phase are for.
+   * Two actions a node may declare are deliberately not offered.
+   *
+   * `applyStreamTarget` takes a stream key, so exposing it here would mean
+   * posting a key in the clear to be pushed at a device outside any run,
+   * with nothing to clean it up afterwards. Getting a key onto an encoder is
+   * what stream credentials and the prepare phase are for.
+   *
+   * `route` is a live-production control — what is on an ATEM's aux bus is
+   * the operator's call at the desk, second by second, not something worth
+   * reaching through a scheduler to set. Its arguments are the device's own
+   * vocabulary too (the ATEM wants numeric source and bus ids), and there is
+   * nothing here that could turn those into something an operator recognises.
+   * The current routing is readable through the state endpoint below; it
+   * just cannot be written. See docs/plan/04-plugin-sdk.md.
    */
   const MANUAL_ACTIONS = {
     startStreaming: {

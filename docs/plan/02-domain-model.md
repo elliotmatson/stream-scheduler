@@ -32,7 +32,7 @@ Every device is provided by a plugin and exposes **nodes**, each declaring a
 | Role | Means | Examples |
 |---|---|---|
 | `source` | produces video, and may itself push a stream | ATEM Mini Pro, Web Presenter, Streaming Bridge |
-| `router` | selects or routes an existing signal | ATEM aux output, Videohub, ATEM macro |
+| `router` | selects or routes an existing signal | ATEM aux output, Videohub, ATEM macro. Implemented by the ATEM adapter; nothing schedules it, and [04](./04-plugin-sdk.md#routing) says why |
 | `relay` | ingests a stream and re-emits one or more | built-in ffmpeg/SRT relay, external restreamer |
 | `sink` | terminates the chain | YouTube, generic RTMP/RTMPS/SRT, HyperDeck recording |
 

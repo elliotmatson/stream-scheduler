@@ -56,7 +56,6 @@ class MockDevice {
   private recording = false
   private target: StreamTarget | undefined
   private filename: string | undefined
-  private routes: Record<string, string> = {}
   private commandCount = 0
   private readonly connectedAt: number
 
@@ -73,7 +72,6 @@ class MockDevice {
     const features = [
       ...(this.canStream ? ['streaming'] : []),
       ...(this.canRecord ? ['recording'] : []),
-      'routing',
     ]
     return { model: `Mock ${this.kind}`, firmware: '1.0.0', features }
   }
@@ -99,7 +97,7 @@ class MockDevice {
             requiresCredential: 'stream-key',
           },
         ],
-        supports: ['applyStreamTarget', 'startStreaming', 'stopStreaming', 'route'],
+        supports: ['applyStreamTarget', 'startStreaming', 'stopStreaming'],
       })
     }
     if (this.canRecord) {
@@ -135,10 +133,6 @@ class MockDevice {
           this.guard()
           this.streaming = false
           this.emit(nodeId)
-        },
-        route: async ({ input, output }) => {
-          this.guard()
-          this.routes[output] = input
         },
         readState: async () => this.stateOf(nodeId),
       }
@@ -195,7 +189,6 @@ class MockDevice {
           : { targetUrl: this.target.url, keyFingerprint: fingerprint(this.target.key) }),
         bitrateBps: this.streaming ? 6_000_000 : 0,
       },
-      routing: { ...this.routes },
     }
   }
 

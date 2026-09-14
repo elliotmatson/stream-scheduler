@@ -352,6 +352,15 @@ describe('driving a device by hand', () => {
     expect(refused.json.error).toMatch(/not connected/)
   })
 
+  it('offers no way to route signal, which is the desk\'s job and not the scheduler\'s', async () => {
+    // The ATEM adapter implements `route` and nothing above the plugin
+    // drives it. Pinned so that stays a decision rather than drifting back
+    // in because the action happens to exist.
+    const { deviceId } = await seedEverything()
+    const refused = await post(`/api/devices/${deviceId}/nodes/stream/route`, { input: '3', output: '0' })
+    expect(refused.status).toBe(400)
+  })
+
   it('offers no way to push a stream key at a device', async () => {
     const { deviceId } = await seedEverything()
     const attempt = await post(`/api/devices/${deviceId}/nodes/stream/applyStreamTarget`, {

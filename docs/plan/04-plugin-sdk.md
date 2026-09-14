@@ -91,7 +91,8 @@ Sofie project's TypeScript implementation of the ATEM protocol. Relevant surface
 - `startStreaming()` / `stopStreaming()`
 - `requestStreamingDuration()`, plus streaming status and bitrate in the state
 - `startRecording()` / `stopRecording()` on models with a disk recorder
-- aux output routing, for the `router` role
+- aux output routing, for the `router` role — implemented and tested, but
+  see **Routing** below for what drives it
 
 Capabilities are **probed, not declared**. The ATEM family's streaming and
 recording support varies by model and firmware — a Mini Pro streams and records to
@@ -142,9 +143,41 @@ touching the core, the abstraction is wrong and we find out early.
 
 ### `plugin-mock`
 
-Fake source, sink, router and a fake that fails on demand. Lets the entire
+A fake source, a fake sink, and a fake that fails on demand. Lets the entire
 scheduling engine be developed and tested with no hardware, and lets a prospective
 user evaluate the app before buying anything.
+
+No fake router: nothing above the plugin layer drives routing, so a fake one
+would exercise nothing. See **Routing** below.
+
+## Routing
+
+`route` is a real part of the contract and the ATEM adapter implements it
+against aux busses, with the mapping read back afterwards like every other
+write. **Nothing above the plugin layer calls it**, and that is deliberate
+rather than unfinished.
+
+What is on an aux bus during a service is a live-production decision, made at
+the desk second by second. A scheduler's job is that a thing starts at 09:00
+and stops at 10:15; those are different clocks, and reaching through the
+scheduler to set a crosspoint would be answering a question nobody asked. Its
+arguments are the device's own vocabulary too — the ATEM wants numeric source
+and bus ids — and the SDK has no way for a plugin to say what its inputs are
+called, so there is nothing an operator would recognise to put in a form.
+
+Concretely, as a result:
+
+- `EventOutput` has no crosspoint field and `OutputKind` is `'stream' |
+  'recording'`, so a scheduled run cannot emit a route step.
+- The manual device controls do not offer it; `POST
+  /api/devices/:id/nodes/:nodeId/route` is refused, and a test pins that.
+- `GET /api/devices/:id/nodes/:nodeId/state` does return the live `routing`
+  map, and the Devices page shows it. Reading is useful; writing is not ours.
+
+The shape worth building, if any, is a **pre-flight assertion** — "the aux
+feeding the chapel encoder is still on source 3", checked the evening before
+alongside the token and the encoder. That is a check, not an action, and it
+is a few lines whenever somebody actually wants it.
 
 ## Adding a plugin later
 

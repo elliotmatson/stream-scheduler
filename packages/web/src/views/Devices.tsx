@@ -200,6 +200,11 @@ function NodeControls({ device, node }: { device: Device; node: DeviceNode }): R
   const recording = state?.recording
   const canStream = node.supports.includes('startStreaming')
   const canRecord = node.supports.includes('startRecording')
+  // Nothing here can drive this node. An ATEM's aux bus is the case: the
+  // adapter can route it, but routing is a live-production control rather
+  // than something the scheduler has any business touching, so there is
+  // nothing to press. Showing what it is set to is still worth doing.
+  const readOnly = !canStream && !canRecord
 
   return (
     <details
@@ -248,6 +253,35 @@ function NodeControls({ device, node }: { device: Device; node: DeviceNode }): R
             {/* Only what this node actually does. A recorder with a
                 "Streaming —" line reads as broken rather than as a
                 recorder. */}
+            {readOnly ? (
+              <p className="muted" style={{ margin: 0 }}>
+                Nothing to drive here. This node {node.roles.includes('router') ? 'routes signal' : 'does neither streaming nor recording'}, which is
+                the operator's job at the desk rather than the scheduler's — so this panel only reports what it
+                is set to.
+              </p>
+            ) : null}
+
+            {state?.routing && Object.keys(state.routing).length > 0 ? (
+              <div className="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Output</th>
+                      <th>Source</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {Object.entries(state.routing).map(([output, source]) => (
+                      <tr key={output}>
+                        <td>{output}</td>
+                        <td className="muted">{source}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : null}
+
             <div className="row" style={{ gap: 18 }}>
               {canStream ? (
                 <Fact
@@ -309,12 +343,12 @@ function NodeControls({ device, node }: { device: Device; node: DeviceNode }): R
                 ))}
             </div>
 
-            <p className="muted" style={{ margin: 0 }}>
-              {canStream
-                ? 'Starting a stream sends it wherever this device is already pointed. '
-                : ''}
-              Every button here is read back off the device before it reports success.
-            </p>
+            {readOnly ? null : (
+              <p className="muted" style={{ margin: 0 }}>
+                {canStream ? 'Starting a stream sends it wherever this device is already pointed. ' : ''}
+                Every button here is read back off the device before it reports success.
+              </p>
+            )}
           </>
         )}
       </div>
