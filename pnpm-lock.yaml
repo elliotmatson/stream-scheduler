@@ -130,6 +130,9 @@ importers:
       '@scheduler/plugin-sdk':
         specifier: workspace:*
         version: link:../plugin-sdk
+      '@scheduler/plugin-streaming-encoder':
+        specifier: workspace:*
+        version: link:../plugin-streaming-encoder
       '@scheduler/plugin-youtube':
         specifier: workspace:*
         version: link:../plugin-youtube
@@ -178,6 +181,16 @@ importers:
         version: 5.9.3
 
   packages/plugin-sdk:
+    devDependencies:
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
+
+  packages/plugin-streaming-encoder:
+    dependencies:
+      '@scheduler/plugin-sdk':
+        specifier: workspace:*
+        version: link:../plugin-sdk
     devDependencies:
       typescript:
         specifier: ^5.7.2

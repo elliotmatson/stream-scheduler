@@ -14,7 +14,8 @@
     "@scheduler/plugin-sdk": "workspace:*",
     "@scheduler/plugin-hyperdeck": "workspace:*",
     "@scheduler/plugin-atem": "workspace:*",
-    "@scheduler/plugin-youtube": "workspace:*"
+    "@scheduler/plugin-youtube": "workspace:*",
+    "@scheduler/plugin-streaming-encoder": "workspace:*"
   },
   "devDependencies": {
     "typescript": "^5.7.2"

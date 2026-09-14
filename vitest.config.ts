@@ -15,6 +15,7 @@ export default defineConfig({
       '@scheduler/plugin-hyperdeck': src('plugin-hyperdeck'),
       '@scheduler/plugin-atem': src('plugin-atem'),
       '@scheduler/plugin-youtube': src('plugin-youtube'),
+      '@scheduler/plugin-streaming-encoder': src('plugin-streaming-encoder'),
     },
   },
   test: {

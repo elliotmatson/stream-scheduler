@@ -87,6 +87,11 @@ async function main() {
 
   const plugins = await api('GET', '/api/plugins')
   check('plugins are registered', plugins.some((p) => p.id === 'mock'))
+  check(
+    'ATEM, HyperDeck and Streaming Encoder adapters are loaded',
+    ['atem', 'hyperdeck', 'streaming-encoder'].every((id) => plugins.some((p) => p.id === id)),
+    plugins.map((p) => p.id).join(', '),
+  )
 
   const device = await api('POST', '/api/devices', {
     pluginId: 'mock',
