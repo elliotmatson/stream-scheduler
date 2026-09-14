@@ -53,9 +53,21 @@ describe('negotiateLink', () => {
 
 describe('validateConfig', () => {
   const fields: ConfigField[] = [
-    { type: 'textinput', id: 'host', label: 'IP address', required: true, regex: '^\\d{1,3}(\\.\\d{1,3}){3}$' },
+    {
+      type: 'textinput',
+      id: 'host',
+      label: 'IP address',
+      required: true,
+      regex: '^\\d{1,3}(\\.\\d{1,3}){3}$',
+    },
     { type: 'number', id: 'port', label: 'Port', default: 9977, min: 1, max: 65535 },
-    { type: 'dropdown', id: 'model', label: 'Model', choices: [{ id: 'auto', label: 'Auto' }], default: 'auto' },
+    {
+      type: 'dropdown',
+      id: 'model',
+      label: 'Model',
+      choices: [{ id: 'auto', label: 'Auto' }],
+      default: 'auto',
+    },
   ]
 
   it('passes a well-formed config', () => {
@@ -63,17 +75,26 @@ describe('validateConfig', () => {
   })
 
   it('flags a missing required field and a malformed address', () => {
-    expect(validateConfig(fields, {})).toEqual([{ field: 'host', message: 'IP address is required' }])
+    expect(validateConfig(fields, {})).toEqual([
+      { field: 'host', message: 'IP address is required' },
+    ])
     expect(validateConfig(fields, { host: 'not-an-ip' })[0]?.message).toMatch(/expected format/)
   })
 
   it('flags an out-of-range port and an unknown dropdown choice', () => {
-    expect(validateConfig(fields, { host: '10.0.0.5', port: 99999 })[0]?.message).toMatch(/at most 65535/)
-    expect(validateConfig(fields, { host: '10.0.0.5', model: 'mini-pro' })[0]?.message).toMatch(/available choices/)
+    expect(validateConfig(fields, { host: '10.0.0.5', port: 99999 })[0]?.message).toMatch(
+      /at most 65535/,
+    )
+    expect(validateConfig(fields, { host: '10.0.0.5', model: 'mini-pro' })[0]?.message).toMatch(
+      /available choices/,
+    )
   })
 
   it('applies declared defaults but never invents a secret', () => {
-    const withSecret: ConfigField[] = [...fields, { type: 'secret', id: 'password', label: 'Password' }]
+    const withSecret: ConfigField[] = [
+      ...fields,
+      { type: 'secret', id: 'password', label: 'Password' },
+    ]
     const filled = applyConfigDefaults(withSecret, { host: '10.0.0.5' })
     expect(filled).toEqual({ host: '10.0.0.5', port: 9977, model: 'auto' })
   })
@@ -107,7 +128,9 @@ function deviceReturning(state: unknown) {
 
 describe('withSerializingTransport', () => {
   it('lets a well-behaved device through', async () => {
-    const device = withSerializingTransport(deviceReturning({ streaming: { active: true, bitrateBps: 6_000_000 } }))
+    const device = withSerializingTransport(
+      deviceReturning({ streaming: { active: true, bitrateBps: 6_000_000 } }),
+    )
     await expect(device.invoke('n', 'readState')).resolves.toEqual({
       streaming: { active: true, bitrateBps: 6_000_000 },
     })
@@ -120,7 +143,9 @@ describe('withSerializingTransport', () => {
 
   it('rejects a non-serializable argument before it reaches the device', () => {
     const device = withSerializingTransport(deviceReturning({}))
-    expect(() => device.invoke('n', 'applyStreamTarget', { cb: (() => {}) as never })).toThrow(SerializationViolation)
+    expect(() => device.invoke('n', 'applyStreamTarget', { cb: (() => {}) as never })).toThrow(
+      SerializationViolation,
+    )
   })
 })
 
@@ -138,7 +163,9 @@ describe('defineDevice', () => {
       actionsFor: () => ({ readState: async () => ({}), startRecording: async () => {} }),
       dispose: async () => {},
     })
-    await expect(device.invoke('n', 'startRecording', { filename: '' })).rejects.toThrow(/non-empty string/)
+    await expect(device.invoke('n', 'startRecording', { filename: '' })).rejects.toThrow(
+      /non-empty string/,
+    )
     await expect(device.invoke('n', 'startRecording', { filename: 'svc.mp4' })).resolves.toBeNull()
   })
 })

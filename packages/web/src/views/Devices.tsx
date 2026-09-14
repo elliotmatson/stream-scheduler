@@ -1,7 +1,9 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import type { ReactNode } from 'react'
 import {
   api,
+  useLive,
+  useLiveRefresh,
   useResource,
   type Device,
   type DeviceNode,
@@ -10,11 +12,24 @@ import {
   type NodeState,
   type Plugin,
 } from '../api.ts'
-import { Card, ConfigFields, ConfirmButton, CopyButton, Empty, ErrorBanner, Field, StatusPill } from '../components.tsx'
+import {
+  Card,
+  ConfigFields,
+  ConfirmButton,
+  CopyButton,
+  Empty,
+  ErrorBanner,
+  Fact,
+  Field,
+  StatusPill,
+} from '../components.tsx'
+import { bitrateHint, CUSTOM_VALUE, freeformHint, LEAVE_AS_IS, nowOn } from '../copy.ts'
 import { duration, relative } from '../format.ts'
 
 export function Devices(): ReactNode {
   const { data, error, reload } = useResource(() => api.devices(), [])
+  // Health and what is in use change without anybody pressing anything.
+  useLiveRefresh(reload)
   const { data: plugins } = useResource(() => api.plugins(), [])
   const [busy, setBusy] = useState<string>()
   const [actionError, setActionError] = useState<string>()
@@ -68,8 +83,8 @@ export function Devices(): ReactNode {
         {devices.length === 0 && !adding ? (
           <Card>
             <Empty>
-              No devices yet. Add the bundled mock encoder to try a whole scheduled run without touching hardware,
-              or point this at a real one.
+              No devices yet. Add a real encoder, switcher or deck — or the bundled mock, which runs
+              a whole scheduled event without touching hardware.
             </Empty>
           </Card>
         ) : null}
@@ -89,6 +104,7 @@ export function Devices(): ReactNode {
             <DeviceCard
               key={device.id}
               device={device}
+              kind={plugins?.find((plugin) => plugin.id === device.pluginId)?.displayName}
               busy={busy === device.id}
               onConnect={() => void act(device.id, () => api.connectDevice(device.id))}
               onEdit={() => setEditing(device.id)}
@@ -103,12 +119,15 @@ export function Devices(): ReactNode {
 
 function DeviceCard({
   device,
+  kind,
   busy,
   onConnect,
   onEdit,
   onRemove,
 }: {
   device: Device
+  /** The plugin's own name for this kind of box, e.g. "Blackmagic HyperDeck". */
+  kind: string | undefined
   busy: boolean
   onConnect: () => void
   onEdit: () => void
@@ -119,15 +138,22 @@ function DeviceCard({
       <div className="page-head" style={{ marginBottom: 10 }}>
         <div>
           <h2 style={{ marginBottom: 2 }}>{device.label}</h2>
-          <span className="muted">
-            {device.pluginId}
+          <span
+            className="muted"
+            title="What it is, and — once connected — the model it says it is."
+          >
+            {kind ?? device.pluginId}
             {/* The probed model, not what someone picked in a dropdown. */}
             {device.probedModel ? ` · ${device.probedModel}` : ''}
           </span>
         </div>
         <div className="row">
           <StatusPill status={device.health} />
-          <button disabled={busy} onClick={onConnect}>
+          <button
+            disabled={busy}
+            title="Opens the connection again and re-reads what this device can do."
+            onClick={onConnect}
+          >
             {busy ? 'Connecting…' : 'Connect'}
           </button>
           <button onClick={onEdit}>Edit</button>
@@ -138,21 +164,38 @@ function DeviceCard({
       {device.lastError ? <div className="banner error">{device.lastError}</div> : null}
 
       <div className="row" style={{ gap: 18, marginTop: 8 }}>
-        <Fact label="Last seen" value={device.lastSeenAt ? relative(device.lastSeenAt) : 'never'} />
-        <Fact label="Firmware" value={device.capabilities?.firmware ?? '—'} />
-        <Fact label="Capabilities" value={device.capabilities?.features.join(', ') || '—'} />
+        <Fact
+          label="Last seen"
+          value={device.lastSeenAt ? relative(device.lastSeenAt) : 'never'}
+          tip="When this device last answered."
+        />
+        <Fact
+          label="Firmware"
+          value={device.capabilities?.firmware ?? '—'}
+          tip="The version the device reported when it connected."
+        />
+        <Fact
+          label="Can do"
+          value={device.capabilities?.features.join(', ') || '—'}
+          tip="What this model told us it supports. An event can only ask for these."
+        />
       </div>
 
-      {/* Where to go for the things this app does not do: a deck's media
-          over FTP, say. The plugin builds the address because only it knows
-          the protocol and port; this just shows it and makes it copyable,
-          since browsers no longer open ftp:// themselves. */}
+      {/* Where to go for the things this app does not do: the media on a
+          deck or a switcher's drive. The plugin builds the address because
+          only it knows the protocol and port. */}
       {(device.capabilities?.links ?? []).length > 0 ? (
         <div className="stack" style={{ marginTop: 10, gap: 6 }}>
           {device.capabilities!.links!.map((link) => (
             <div key={link.url} className="row" style={{ gap: 10, alignItems: 'baseline' }}>
               <span style={{ minWidth: 130 }}>{link.label}</span>
-              <code className="address">{link.url}</code>
+              {/* A real link, so it opens wherever the browser or the OS
+                  still handles the scheme. Most browsers dropped ftp://,
+                  which the hint says rather than leaving a dead click, and
+                  the address stays selectable for pasting elsewhere. */}
+              <a className="address" href={link.url} target="_blank" rel="noreferrer">
+                {link.url}
+              </a>
               <CopyButton value={link.url} />
               {link.note ? (
                 <span className="muted" style={{ fontSize: 12 }}>
@@ -161,6 +204,11 @@ function DeviceCard({
               ) : null}
             </div>
           ))}
+          {/* Said once under the list rather than beside every line. */}
+          <p className="muted" style={{ margin: 0, fontSize: 12 }}>
+            Most browsers no longer open ftp:// — if nothing happens, copy the address and paste it
+            into Finder (Go &gt; Connect to Server) or Windows Explorer.
+          </p>
         </div>
       ) : null}
 
@@ -172,7 +220,7 @@ function DeviceCard({
         </div>
       ) : (
         <p className="muted" style={{ marginBottom: 0 }}>
-          Connect to probe what this device can actually do.
+          Connect, and this fills in with what the device can actually do.
         </p>
       )}
     </Card>
@@ -196,18 +244,34 @@ function NodeControls({ device, node }: { device: Device; node: DeviceNode }): R
   const [busy, setBusy] = useState<string>()
   const [error, setError] = useState<string>()
   const [filename, setFilename] = useState('')
+  const live = useLive()
+
+  // Devices push their state as it changes — a deck notifies on transport
+  // and slot, an ATEM on every change — so an open panel follows the box
+  // without anybody pressing Read state, and without this screen polling
+  // hardware that is busy recording.
+  const pushed = live.nodeStates[`${device.id}/${node.id}`]
+  useEffect(() => {
+    if (open && pushed) setState(pushed)
+  }, [open, pushed])
   const [credentialId, setCredentialId] = useState('')
   const [quality, setQuality] = useState('')
+  /** Typing a figure the preset list does not offer. A mode, not a value. */
+  const [typingQuality, setTypingQuality] = useState(false)
   // Only fetched for a node that can be pointed somewhere, and only once
   // the panel is open.
   const { data: credentials } = useResource(
-    () => (open && node.supports.includes('applyStreamTarget') ? api.credentials() : Promise.resolve([])),
+    () =>
+      open && node.supports.includes('applyStreamTarget') ? api.credentials() : Promise.resolve([]),
     [open, node.id],
   )
 
   const connected = device.health === 'connected' || device.health === 'degraded'
 
-  const run = async (label: string, action: () => Promise<{ state: NodeState | null }>): Promise<void> => {
+  const run = async (
+    label: string,
+    action: () => Promise<{ state: NodeState | null }>,
+  ): Promise<void> => {
     setBusy(label)
     setError(undefined)
     try {
@@ -302,7 +366,7 @@ function NodeControls({ device, node }: { device: Device; node: DeviceNode }): R
         if (nowOpen && state === undefined && connected) read()
       }}
     >
-      <summary>
+      <summary title="Open to see what this part of the device is doing, and to drive it by hand.">
         {node.label} <span className="muted">· {node.roles.join(', ')}</span>
       </summary>
 
@@ -316,9 +380,9 @@ function NodeControls({ device, node }: { device: Device; node: DeviceNode }): R
             {device.inUseBy.length > 0 ? (
               <div className="banner warn">
                 {device.inUseBy.map((entry) => entry.label).join(', ')}{' '}
-                {device.inUseBy.length === 1 ? 'is' : 'are'} mid-run on this device. Anything you do here the
-                scheduler may undo at the next start or stop in its window — to end it properly, stop the run
-                on its own page.
+                {device.inUseBy.length === 1 ? 'is' : 'are'} mid-run on this device. Anything you do
+                here the scheduler may undo at the next start or stop in its window — to end it
+                properly, stop the run on its own page.
               </div>
             ) : null}
 
@@ -330,8 +394,9 @@ function NodeControls({ device, node }: { device: Device; node: DeviceNode }): R
                 {/no stream target/i.test(error) ? (
                   <>
                     {' '}
-                    This encoder has not been pointed anywhere yet. Put it on an event, which applies the key
-                    when the event starts — a stream key never travels through this screen.
+                    This encoder has not been pointed anywhere yet. Put it on an event, which
+                    applies the key when the event starts — a stream key never travels through this
+                    screen.
                   </>
                 ) : null}
               </div>
@@ -342,14 +407,20 @@ function NodeControls({ device, node }: { device: Device; node: DeviceNode }): R
                 recorder. */}
             {readOnly ? (
               <p className="muted" style={{ margin: 0 }}>
-                Nothing to drive here. This node {node.roles.includes('router') ? 'routes signal' : 'does neither streaming nor recording'}, which is
-                the operator's job at the desk rather than the scheduler's — so this panel only reports what it
-                is set to.
+                Nothing to drive here. This node{' '}
+                {node.roles.includes('router')
+                  ? 'routes signal'
+                  : 'does neither streaming nor recording'}
+                , which is the operator's job at the desk rather than the scheduler's — so this
+                panel only reports what it is set to.
               </p>
             ) : null}
 
             {state?.input ? (
-              <div className={state.input.present ? 'banner info' : 'banner warn'} style={{ marginBottom: 0 }}>
+              <div
+                className={state.input.present ? 'banner info' : 'banner warn'}
+                style={{ marginBottom: 0 }}
+              >
                 {state.input.present
                   ? `Input: ${state.input.format ?? 'signal present'}${state.input.source ? ` · taking ${state.input.source}` : ''}`
                   : // A recorder with no signal refuses to record, and a deck
@@ -361,31 +432,11 @@ function NodeControls({ device, node }: { device: Device; node: DeviceNode }): R
               </div>
             ) : null}
 
-            {state?.routing && Object.keys(state.routing).length > 0 ? (
-              <div className="table-wrap">
-                <table>
-                  <thead>
-                    <tr>
-                      <th>Output</th>
-                      <th>Source</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {Object.entries(state.routing).map(([output, source]) => (
-                      <tr key={output}>
-                        <td>{output}</td>
-                        <td className="muted">{source}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            ) : null}
-
             <div className="row" style={{ gap: 18 }}>
               {canStream ? (
                 <Fact
                   label="Streaming"
+                  tip="What the device says it is sending right now."
                   value={
                     streaming === undefined
                       ? '—'
@@ -398,12 +449,23 @@ function NodeControls({ device, node }: { device: Device; node: DeviceNode }): R
               {canRecord ? (
                 <Fact
                   label="Recording"
+                  tip="What it is writing right now, and under what name."
                   value={
-                    recording === undefined ? '—' : recording.active ? (recording.filename ?? 'on') : 'off'
+                    recording === undefined
+                      ? '—'
+                      : recording.active
+                        ? (recording.filename ?? 'on')
+                        : 'off'
                   }
                 />
               ) : null}
-              {streaming?.targetUrl ? <Fact label="Pointed at" value={streaming.targetUrl} /> : null}
+              {streaming?.targetUrl ? (
+                <Fact
+                  label="Pointed at"
+                  value={streaming.targetUrl}
+                  tip="The ingest address this encoder is set to. The key itself is never shown."
+                />
+              ) : null}
             </div>
 
             {state?.recording?.slots && state.recording.slots.length > 0 ? (
@@ -412,8 +474,8 @@ function NodeControls({ device, node }: { device: Device; node: DeviceNode }): R
                   <thead>
                     <tr>
                       <th>Slot</th>
-                      <th>Media</th>
-                      <th>Free</th>
+                      <th title="The card or drive in this slot.">Media</th>
+                      <th title="Recording time left, at what the device is set to now.">Free</th>
                       <th />
                     </tr>
                   </thead>
@@ -436,6 +498,7 @@ function NodeControls({ device, node }: { device: Device; node: DeviceNode }): R
                             {node.supports.includes('selectSlot') ? (
                               <button
                                 disabled={busy !== undefined || slot.active === true}
+                                title="Records to this slot from now on."
                                 onClick={() => select(slot.id)}
                               >
                                 {busy === `select-${slot.id}`
@@ -467,8 +530,8 @@ function NodeControls({ device, node }: { device: Device; node: DeviceNode }): R
                 {state.recording.rollover !== undefined ? (
                   <p className="muted" style={{ margin: '6px 0 0' }}>
                     {state.recording.rollover
-                      ? 'Rolls onto the other slot when this one fills.'
-                      : 'Nowhere to roll onto: recording stops when this slot fills.'}
+                      ? 'When the slot in use fills, the deck rolls onto the other one by itself.'
+                      : 'Nowhere to roll onto: recording stops when the slot in use fills.'}
                   </p>
                 ) : null}
               </div>
@@ -478,11 +541,14 @@ function NodeControls({ device, node }: { device: Device; node: DeviceNode }): R
               <div className="stack" style={{ gap: 8 }}>
                 <div className="row" style={{ gap: 10, alignItems: 'flex-end' }}>
                   <Field
-                    label="Stream target"
-                    hint="A saved key, chosen by name. The key itself stays on the server."
+                    label="Stream key"
+                    hint="One of the saved keys, chosen by name. The key itself never reaches this screen."
                   >
-                    <select value={credentialId} onChange={(event) => setCredentialId(event.target.value)}>
-                      <option value="">Leave as it is</option>
+                    <select
+                      value={credentialId}
+                      onChange={(event) => setCredentialId(event.target.value)}
+                    >
+                      <option value="">{LEAVE_AS_IS}</option>
                       {(credentials ?? [])
                         .filter((credential) => credential.ingestUrl)
                         .map((credential) => (
@@ -496,21 +562,29 @@ function NodeControls({ device, node }: { device: Device; node: DeviceNode }): R
                       every device that has it, so it is offered here and
                       nowhere else. */}
                   {qualityChoices.length > 0 ? (
-                    <Field label="Quality" hint={current ? `Now on ${current}.` : undefined}>
-                      <select value={quality} onChange={(event) => setQuality(event.target.value)}>
-                        <option value="">Leave as it is</option>
+                    <Field
+                      label="Quality"
+                      hint={`The presets this device offers.${nowOn(current)}`}
+                    >
+                      <select
+                        value={typingQuality ? CUSTOM_VALUE : quality}
+                        onChange={(event) => {
+                          setTypingQuality(event.target.value === CUSTOM_VALUE)
+                          setQuality(event.target.value === CUSTOM_VALUE ? '' : event.target.value)
+                        }}
+                      >
+                        <option value="">{LEAVE_AS_IS}</option>
                         {qualityChoices.map((choice) => (
                           <option key={choice} value={choice}>
                             {choice}
                           </option>
                         ))}
+                        {bitrate ? <option value={CUSTOM_VALUE}>Custom…</option> : null}
                       </select>
                     </Field>
-                  ) : bitrate ? (
-                    <Field
-                      label="Bitrate (Mb/s)"
-                      hint={`${bitrate.minMbps}–${bitrate.maxMbps}, or a low-high range.${current ? ` Now on ${current}.` : ''}`}
-                    >
+                  ) : null}
+                  {bitrate && (qualityChoices.length === 0 || typingQuality) ? (
+                    <Field label="Bitrate (Mb/s)" hint={bitrateHint(bitrate, current)}>
                       <input
                         value={quality}
                         placeholder={current ?? `${bitrate.minMbps}-${bitrate.maxMbps}`}
@@ -522,20 +596,27 @@ function NodeControls({ device, node }: { device: Device; node: DeviceNode }): R
                     disabled={busy !== undefined || !credentialId || device.inUseBy.length > 0}
                     onClick={point}
                   >
-                    {busy === 'point' ? 'Pointing…' : 'Point at it'}
+                    {busy === 'point' ? 'Applying…' : 'Apply to the device'}
                   </button>
                 </div>
                 <p className="muted" style={{ margin: 0 }}>
                   {device.inUseBy.length > 0
-                    ? 'Re-pointing is off while an event is mid-run on this device.'
-                    : 'For a one-off. An event points its own encoder when it starts, which overwrites this.'}
+                    ? 'Off while an event is mid-run on this device: re-pointing it would move the stream.'
+                    : !credentialId
+                      ? 'Pick a saved target to apply. The quality goes with it — the device takes both in ' +
+                        'one command, so there is no way to send one alone.'
+                      : 'Pushes the key and the quality to the device now. For a one-off: an event points ' +
+                        'its own encoder when it starts, which overwrites this.'}
                 </p>
               </div>
             ) : null}
 
             {canRecord ? (
               <div className="row" style={{ gap: 10, alignItems: 'flex-end' }}>
-                <Field label="Recording name" hint="Needed before a recording can start. Named by you, not by us.">
+                <Field
+                  label="Filename"
+                  hint="Needed before a recording can start. A scheduled event names its own."
+                >
                   <input
                     value={filename}
                     placeholder="2026-09-06 rehearsal"
@@ -546,10 +627,7 @@ function NodeControls({ device, node }: { device: Device; node: DeviceNode }): R
                     quality is set here because there is no stream target to
                     hang it on. */}
                 {!canStream && bitrate ? (
-                  <Field
-                    label="Bitrate (Mb/s)"
-                    hint={`${bitrate.note ? `${bitrate.note} ` : ''}Now on ${current ?? 'whatever it was set to'}.`}
-                  >
+                  <Field label="Bitrate (Mb/s)" hint={bitrateHint(bitrate, current)}>
                     <input
                       value={quality}
                       placeholder={current ?? `${bitrate.minMbps}-${bitrate.maxMbps}`}
@@ -557,10 +635,7 @@ function NodeControls({ device, node }: { device: Device; node: DeviceNode }): R
                     />
                   </Field>
                 ) : !canStream && freeform ? (
-                  <Field
-                    label="Quality"
-                    hint={`${freeform.note ? `${freeform.note} ` : ''}Now on ${current ?? 'whatever it was set to'}. The list is a suggestion; the deck refuses a codec it does not have.`}
-                  >
+                  <Field label="Quality" hint={freeformHint(freeform, current)}>
                     <input
                       list={qualityListId}
                       value={quality}
@@ -578,7 +653,11 @@ function NodeControls({ device, node }: { device: Device; node: DeviceNode }): R
             ) : null}
 
             <div className="row">
-              <button disabled={busy !== undefined} onClick={read}>
+              <button
+                disabled={busy !== undefined}
+                title="Asks the device what it is doing now. It also reports changes by itself while this panel is open."
+                onClick={read}
+              >
                 {busy === 'read' ? 'Reading…' : 'Read state'}
               </button>
               {(
@@ -606,7 +685,9 @@ function NodeControls({ device, node }: { device: Device; node: DeviceNode }): R
 
             {readOnly ? null : (
               <p className="muted" style={{ margin: 0 }}>
-                {canStream ? 'Starting a stream sends it wherever this device is already pointed. ' : ''}
+                {canStream
+                  ? 'Starting a stream sends it wherever this device is already pointed. '
+                  : ''}
                 Every button here is read back off the device before it reports success.
               </p>
             )}
@@ -664,7 +745,11 @@ function DeviceForm({
         // The connection was dropped by the edit; prove the new settings work.
         await api.connectDevice(device.id).catch(() => undefined)
       } else {
-        const created = await api.createDevice({ pluginId, label: label || (plugin?.displayName ?? pluginId), config })
+        const created = await api.createDevice({
+          pluginId,
+          label: label || (plugin?.displayName ?? pluginId),
+          config,
+        })
         await api.connectDevice(created.id).catch(() => undefined)
       }
       onDone()
@@ -680,7 +765,7 @@ function DeviceForm({
       <ErrorBanner error={error} />
       <div className="stack" style={{ maxWidth: 560 }}>
         {device ? null : (
-          <Field label="Type">
+          <Field label="Type" hint="What kind of box it is. This decides the settings below.">
             <select
               value={pluginId}
               onChange={(event) => {
@@ -700,7 +785,11 @@ function DeviceForm({
 
         {!device && plugin?.canDiscover ? (
           <div>
-            <button disabled={scanning} onClick={() => void scan()}>
+            <button
+              disabled={scanning}
+              title="Looks for this kind of device on the local network and fills in what it finds."
+              onClick={() => void scan()}
+            >
               {scanning ? 'Scanning…' : 'Scan the network'}
             </button>
             {found ? (
@@ -729,14 +818,18 @@ function DeviceForm({
         ) : null}
 
         <Field label="Name" hint="What you will call it on the schedule, e.g. “Sanctuary encoder”.">
-          <input value={label} placeholder={plugin?.displayName ?? ''} onChange={(event) => setLabel(event.target.value)} />
+          <input
+            value={label}
+            placeholder={plugin?.displayName ?? ''}
+            onChange={(event) => setLabel(event.target.value)}
+          />
         </Field>
 
         <ConfigFields fields={plugin?.configSchema ?? []} values={config} onChange={setConfig} />
 
         {device ? (
           <p className="muted" style={{ margin: 0 }}>
-            Passwords show as dots. Leave them alone to keep the stored one.
+            Passwords show as dots. Leave one alone to keep the stored password.
           </p>
         ) : null}
 
@@ -754,15 +847,4 @@ function DeviceForm({
 /** Less than an hour of headroom before a service is worth shouting about. */
 function lowOn(slot: { remainingMs?: number }): boolean {
   return slot.remainingMs !== undefined && slot.remainingMs < 3_600_000
-}
-
-function Fact({ label, value }: { label: string; value: string }): ReactNode {
-  return (
-    <div>
-      <div className="muted" style={{ fontSize: 12 }}>
-        {label}
-      </div>
-      <div>{value}</div>
-    </div>
-  )
 }

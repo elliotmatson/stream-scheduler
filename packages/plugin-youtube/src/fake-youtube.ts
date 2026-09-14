@@ -93,7 +93,11 @@ export class FakeYouTube {
 
     if (this.failuresLeft > 0 && this.options.failWith) {
       this.failuresLeft--
-      return this.error(this.options.failWith.status, this.options.failWith.reason, 'simulated failure')
+      return this.error(
+        this.options.failWith.status,
+        this.options.failWith.reason,
+        'simulated failure',
+      )
     }
 
     if (path === '/liveBroadcasts' && verb === 'POST') return this.insertBroadcast(body)
@@ -114,7 +118,10 @@ export class FakeYouTube {
   /** What a channel has to file videos in. Named like a church's would be. */
   private listPlaylists(): ReturnType<Fetch> {
     return this.ok({
-      items: this.playlists.map((playlist) => ({ id: playlist.id, snippet: { title: playlist.title } })),
+      items: this.playlists.map((playlist) => ({
+        id: playlist.id,
+        snippet: { title: playlist.title },
+      })),
     })
   }
 
@@ -167,7 +174,9 @@ export class FakeYouTube {
 
     const id = query.get('id')
     const all = [...this.broadcasts.values()].filter((b) => !b.deleted)
-    const items = id ? all.filter((b) => b.id === id) : all.filter((b) => b.lifeCycleStatus !== 'complete')
+    const items = id
+      ? all.filter((b) => b.id === id)
+      : all.filter((b) => b.lifeCycleStatus !== 'complete')
     return this.ok({ items: items.map((b) => this.broadcastJson(b)) })
   }
 
@@ -194,7 +203,8 @@ export class FakeYouTube {
     const broadcast = this.broadcasts.get(query.get('id') ?? '')
     if (!broadcast) return this.error(404, 'notFound', 'no such broadcast')
     const streamId = query.get('streamId')
-    if (streamId && !this.streams.has(streamId)) return this.error(404, 'notFound', 'no such stream')
+    if (streamId && !this.streams.has(streamId))
+      return this.error(404, 'notFound', 'no such stream')
     broadcast.boundStreamId = streamId ?? undefined
     return this.ok(this.broadcastJson(broadcast))
   }

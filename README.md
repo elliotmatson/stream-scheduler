@@ -70,7 +70,7 @@ records, stops and tidies up — without anyone touching it.
 
 **Not built yet**
 
-- Fanning one encoder out to several services *at once*, which needs a relay in
+- Fanning one encoder out to several services _at once_, which needs a relay in
   front of it. Several services one after another across a morning does work
 - Week and day calendar views, and dragging an occurrence to reschedule it
 - Backup and restore, and signed installers
@@ -135,7 +135,7 @@ read the schedule, add devices. Stream keys and OAuth tokens are never
 returned by the API, so those stay encrypted at rest either way, but
 everything else is wide open.
 
-So the address you publish to *is* the access control:
+So the address you publish to _is_ the access control:
 
 - `-p 127.0.0.1:8500:8500` — only the machine running it. This is the default
   above, and the right one unless you have decided otherwise.
@@ -154,13 +154,13 @@ archive of it is the entire backup.
 
 ## Configuration
 
-| Variable | Default | Meaning |
-|---|---|---|
-| `SCHEDULER_CONFIG_DIR` | per-platform | Database, logs, master key |
-| `SCHEDULER_SECRET` | — | Derives the master key when no keychain or key file is available |
-| `SCHEDULER_HOST` | `127.0.0.1` | Listen address. Anything but loopback logs a warning, because there is no login yet |
-| `SCHEDULER_PORT` | `8500` | Listen port |
-| `SCHEDULER_LOG_LEVEL` | `info` | `debug`, `info`, `warn`, `error` |
+| Variable               | Default      | Meaning                                                                             |
+| ---------------------- | ------------ | ----------------------------------------------------------------------------------- |
+| `SCHEDULER_CONFIG_DIR` | per-platform | Database, logs, master key                                                          |
+| `SCHEDULER_SECRET`     | —            | Derives the master key when no keychain or key file is available                    |
+| `SCHEDULER_HOST`       | `127.0.0.1`  | Listen address. Anything but loopback logs a warning, because there is no login yet |
+| `SCHEDULER_PORT`       | `8500`       | Listen port                                                                         |
+| `SCHEDULER_LOG_LEVEL`  | `info`       | `debug`, `info`, `warn`, `error`                                                    |
 
 ## Connecting YouTube
 
@@ -229,16 +229,16 @@ appear in the shipped output under native ESM. Run it before trusting a build.
 
 Start with [`docs/plan/README.md`](./docs/plan/README.md).
 
-| Document | Covers |
-|---|---|
-| [01 Architecture](./docs/plan/01-architecture.md) | Process model, runtime topology, what's borrowed from Companion |
-| [02 Domain model](./docs/plan/02-domain-model.md) | Events and their outputs, entities, database schema |
-| [03 Scheduling engine](./docs/plan/03-scheduling-engine.md) | Recurrence, run state machine, crash recovery |
-| [04 Plugin SDK](./docs/plan/04-plugin-sdk.md) | The extension contract and the Phase 1 device adapters |
-| [05 YouTube](./docs/plan/05-youtube.md) | OAuth, broadcast lifecycle, quota budget |
-| [06 Templating & secrets](./docs/plan/06-templating-and-secrets.md) | Name templates, key management, encryption at rest |
-| [07 Packaging](./docs/plan/07-packaging.md) | Monorepo, Electron, Docker, signing, CI |
-| [08 Roadmap & risks](./docs/plan/08-roadmap-and-risks.md) | What shipped, and the risks worth keeping in view |
+| Document                                                            | Covers                                                          |
+| ------------------------------------------------------------------- | --------------------------------------------------------------- |
+| [01 Architecture](./docs/plan/01-architecture.md)                   | Process model, runtime topology, what's borrowed from Companion |
+| [02 Domain model](./docs/plan/02-domain-model.md)                   | Events and their outputs, entities, database schema             |
+| [03 Scheduling engine](./docs/plan/03-scheduling-engine.md)         | Recurrence, run state machine, crash recovery                   |
+| [04 Plugin SDK](./docs/plan/04-plugin-sdk.md)                       | The extension contract and the Phase 1 device adapters          |
+| [05 YouTube](./docs/plan/05-youtube.md)                             | OAuth, broadcast lifecycle, quota budget                        |
+| [06 Templating & secrets](./docs/plan/06-templating-and-secrets.md) | Name templates, key management, encryption at rest              |
+| [07 Packaging](./docs/plan/07-packaging.md)                         | Monorepo, Electron, Docker, signing, CI                         |
+| [08 Roadmap & risks](./docs/plan/08-roadmap-and-risks.md)           | What shipped, and the risks worth keeping in view               |
 
 ## Alerts
 

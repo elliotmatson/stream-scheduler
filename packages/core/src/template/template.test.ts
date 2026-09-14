@@ -27,7 +27,10 @@ describe('renderTemplate', () => {
     // The bug this prevents: the app in a UTC container putting yesterday's
     // date on every evening event in the Americas.
     const evening = Date.parse('2026-03-09T01:30:00Z') // 8:30pm Sunday in Chicago
-    const result = renderTemplate('{{date "yyyy-MM-dd"}} {{time "h:mm a"}}', ctx({ occurrenceStart: evening }))
+    const result = renderTemplate(
+      '{{date "yyyy-MM-dd"}} {{time "h:mm a"}}',
+      ctx({ occurrenceStart: evening }),
+    )
     expect(result.text).toBe('2026-03-08 8:30 PM')
   })
 
@@ -61,26 +64,37 @@ describe('renderTemplate', () => {
 
   it('reports unknown tokens instead of quietly publishing them', () => {
     const result = renderTemplate('{{event.name}} {{speaker.name}}', ctx())
-    expect(result.issues).toEqual([{ token: '{{speaker.name}}', message: 'unknown token "speaker.name"' }])
+    expect(result.issues).toEqual([
+      { token: '{{speaker.name}}', message: 'unknown token "speaker.name"' },
+    ])
     expect(result.text).toContain('{{speaker.name}}')
   })
 
   it('renders counters with padding', () => {
-    const result = renderTemplate('Week {{counter "sermons" pad=3}}', ctx({ counters: { sermons: 7 } }))
+    const result = renderTemplate(
+      'Week {{counter "sermons" pad=3}}',
+      ctx({ counters: { sermons: 7 } }),
+    )
     expect(result.text).toBe('Week 007')
   })
 
   it('reports a counter that does not exist', () => {
-    expect(renderTemplate('{{counter "nope"}}', ctx()).issues[0]?.message).toMatch(/no counter named/)
+    expect(renderTemplate('{{counter "nope"}}', ctx()).issues[0]?.message).toMatch(
+      /no counter named/,
+    )
   })
 
   it('reports a malformed offset', () => {
-    expect(renderTemplate('{{date offset="tomorrow"}}', ctx()).issues[0]?.message).toMatch(/must look like/)
+    expect(renderTemplate('{{date offset="tomorrow"}}', ctx()).issues[0]?.message).toMatch(
+      /must look like/,
+    )
   })
 
   it('reports a missing encoder rather than rendering "undefined"', () => {
     expect(renderTemplate('{{encoder.label}}', ctx()).issues[0]?.message).toMatch(/no encoder/)
-    expect(renderTemplate('{{encoder.label}}', ctx({ encoder: { label: 'ATEM Mini Pro' } })).text).toBe('ATEM Mini Pro')
+    expect(
+      renderTemplate('{{encoder.label}}', ctx({ encoder: { label: 'ATEM Mini Pro' } })).text,
+    ).toBe('ATEM Mini Pro')
   })
 
   it('leaves text without tokens untouched', () => {

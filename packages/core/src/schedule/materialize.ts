@@ -58,7 +58,8 @@ export function materializeSeries(
   seriesId: string,
   options: { clock: Clock; horizonMs?: number },
 ): MaterializeResult {
-  const series = db.prepare('SELECT * FROM event_series WHERE id = ?').get(seriesId) as SeriesRow | undefined
+  const series = db.prepare('SELECT * FROM event_series WHERE id = ?').get(seriesId) as
+    SeriesRow | undefined
   if (!series) throw new Error(`No series with id "${seriesId}".`)
 
   const now = options.clock.now()
@@ -70,9 +71,7 @@ export function materializeSeries(
   const byStart = new Map(existing.map((row) => [row.scheduled_start, row]))
   const detached = existing.filter((row) => row.overrides !== null)
 
-  const wanted = series.enabled
-    ? expandOccurrences(scheduleOf(series), now, horizonEnd)
-    : []
+  const wanted = series.enabled ? expandOccurrences(scheduleOf(series), now, horizonEnd) : []
   const wantedStarts = new Set(wanted.map((o) => o.start))
 
   const insert = db.prepare(
@@ -85,13 +84,25 @@ export function materializeSeries(
   )
   const remove = db.prepare('DELETE FROM occurrence WHERE id = ?')
 
-  const result: MaterializeResult = { created: 0, updated: 0, removed: 0, detached: detached.length }
+  const result: MaterializeResult = {
+    created: 0,
+    updated: 0,
+    removed: 0,
+    detached: detached.length,
+  }
 
   db.transaction(() => {
     for (const occurrence of wanted) {
       const current = byStart.get(occurrence.start)
       if (!current) {
-        insert.run(randomUUID(), seriesId, occurrence.start, occurrence.end, occurrence.localDate, series.version)
+        insert.run(
+          randomUUID(),
+          seriesId,
+          occurrence.start,
+          occurrence.end,
+          occurrence.localDate,
+          series.version,
+        )
         result.created++
         continue
       }
@@ -152,7 +163,9 @@ function parseExdates(raw: string): number[] {
  *  can tell which occurrences predate the edit. */
 export function bumpSeriesVersion(db: Db, seriesId: string, clock: Clock): number {
   const row = db
-    .prepare('UPDATE event_series SET version = version + 1, updated_at = ? WHERE id = ? RETURNING version')
+    .prepare(
+      'UPDATE event_series SET version = version + 1, updated_at = ? WHERE id = ? RETURNING version',
+    )
     .get(clock.now(), seriesId) as { version: number } | undefined
   if (!row) throw new Error(`No series with id "${seriesId}".`)
   return row.version

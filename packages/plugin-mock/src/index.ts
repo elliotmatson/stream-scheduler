@@ -145,7 +145,15 @@ class MockDevice {
         id: 'record',
         label: 'Mock recorder',
         roles: ['sink'],
-        ports: [{ id: 'in', direction: 'in', label: 'Record input', transport: ['sdi', 'hdmi'], maxLinks: 1 }],
+        ports: [
+          {
+            id: 'in',
+            direction: 'in',
+            label: 'Record input',
+            transport: ['sdi', 'hdmi'],
+            maxLinks: 1,
+          },
+        ],
         supports: ['startRecording', 'stopRecording', 'selectSlot', 'formatStorage'],
       })
     }
@@ -211,9 +219,13 @@ class MockDevice {
             return { confirm: this.formatToken.token }
           }
           if (this.formatToken?.token !== confirm || this.formatToken.slot !== slot) {
-            throw new DeviceError('invalid-token', 'That is not the confirmation this device handed out.', {
-              remediation: 'Start the format again: the token is good for one erase of one slot.',
-            })
+            throw new DeviceError(
+              'invalid-token',
+              'That is not the confirmation this device handed out.',
+              {
+                remediation: 'Start the format again: the token is good for one erase of one slot.',
+              },
+            )
           }
           this.formatToken = undefined
           if (this.fault !== 'ignores-writes') this.blanked.add(slot)
@@ -275,9 +287,13 @@ class MockDevice {
    *  a mistake, not a new profile. */
   private setQuality(quality: string): void {
     if (!QUALITIES.includes(quality)) {
-      throw new DeviceError('unknown-quality', `This device has no quality profile called "${quality}".`, {
-        remediation: `It offers: ${QUALITIES.join(', ')}.`,
-      })
+      throw new DeviceError(
+        'unknown-quality',
+        `This device has no quality profile called "${quality}".`,
+        {
+          remediation: `It offers: ${QUALITIES.join(', ')}.`,
+        },
+      )
     }
     if (this.fault !== 'ignores-writes' && this.fault !== 'ignores-quality') this.quality = quality
   }
@@ -331,8 +347,14 @@ export function mockPlugin(options: MockPluginOptions = {}): PluginDefinition {
     configSchema,
     async discover() {
       return [
-        { label: 'Mock encoder', config: { host: 'mock-encoder.local', kind: 'encoder', fault: 'none' } },
-        { label: 'Mock recorder', config: { host: 'mock-recorder.local', kind: 'recorder', fault: 'none' } },
+        {
+          label: 'Mock encoder',
+          config: { host: 'mock-encoder.local', kind: 'encoder', fault: 'none' },
+        },
+        {
+          label: 'Mock recorder',
+          config: { host: 'mock-recorder.local', kind: 'recorder', fault: 'none' },
+        },
       ]
     },
     async createDevice(ctx: DeviceContext): Promise<DeviceInstance> {
@@ -357,4 +379,3 @@ export function mockPlugin(options: MockPluginOptions = {}): PluginDefinition {
     },
   }
 }
-

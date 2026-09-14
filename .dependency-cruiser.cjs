@@ -4,7 +4,8 @@ module.exports = {
     {
       name: 'plugins-must-not-import-core',
       severity: 'error',
-      comment: 'Plugins depend on @scheduler/plugin-sdk only. Importing core makes them unswappable.',
+      comment:
+        'Plugins depend on @scheduler/plugin-sdk only. Importing core makes them unswappable.',
       from: { path: '^packages/plugin-(?!sdk)' },
       to: { path: '^packages/core' },
     },
@@ -28,6 +29,9 @@ module.exports = {
   options: {
     doNotFollow: { path: 'node_modules' },
     tsConfig: { fileName: 'tsconfig.base.json' },
-    enhancedResolveOptions: { exportsFields: ['exports'], conditionNames: ['import', 'require', 'node'] },
+    enhancedResolveOptions: {
+      exportsFields: ['exports'],
+      conditionNames: ['import', 'require', 'node'],
+    },
   },
 }

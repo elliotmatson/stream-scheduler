@@ -53,7 +53,11 @@ export const googleChatChannel: NotificationChannel = {
   // One request per second per space, shared across webhooks.
   minIntervalMs: 1_100,
 
-  async send(notification: Notification, config: ConfigValues, deps: ChannelSendDeps): Promise<void> {
+  async send(
+    notification: Notification,
+    config: ConfigValues,
+    deps: ChannelSendDeps,
+  ): Promise<void> {
     const webhookUrl = String(config.webhookUrl ?? '')
     if (!webhookUrl) throw new Error('This Google Chat channel has no webhook URL.')
 
@@ -87,7 +91,10 @@ function buildUrl(webhookUrl: string, threaded: boolean): string {
   return url.toString()
 }
 
-function textBody(notification: Notification, threadKey: string | undefined): Record<string, unknown> {
+function textBody(
+  notification: Notification,
+  threadKey: string | undefined,
+): Record<string, unknown> {
   // Chat's text formatting: *bold*, and <url|label> for links.
   const lines = [`*${notification.title}*`, notification.summary, '']
   for (const fact of notification.facts) lines.push(`*${fact.label}:* ${fact.value}`)
@@ -100,7 +107,10 @@ function textBody(notification: Notification, threadKey: string | undefined): Re
   }
 }
 
-function cardBody(notification: Notification, threadKey: string | undefined): Record<string, unknown> {
+function cardBody(
+  notification: Notification,
+  threadKey: string | undefined,
+): Record<string, unknown> {
   const widgets: Record<string, unknown>[] = [
     { decoratedText: { text: notification.summary, wrapText: true } },
     ...notification.facts.map((fact) => ({
@@ -109,12 +119,16 @@ function cardBody(notification: Notification, threadKey: string | undefined): Re
   ]
 
   if (notification.remediation) {
-    widgets.push({ decoratedText: { topLabel: 'What to do', text: notification.remediation, wrapText: true } })
+    widgets.push({
+      decoratedText: { topLabel: 'What to do', text: notification.remediation, wrapText: true },
+    })
   }
   if (notification.link) {
     widgets.push({
       buttonList: {
-        buttons: [{ text: notification.link.label, onClick: { openLink: { url: notification.link.url } } }],
+        buttons: [
+          { text: notification.link.label, onClick: { openLink: { url: notification.link.url } } },
+        ],
       },
     })
   }
@@ -152,7 +166,9 @@ async function post(url: string, body: unknown, deps: ChannelSendDeps): Promise<
   }
   if (!response.ok) {
     // Deliberately not including the URL: it carries the key and token.
-    throw new Error(`Google Chat rejected the message (${response.status}): ${truncate(await response.text())}`)
+    throw new Error(
+      `Google Chat rejected the message (${response.status}): ${truncate(await response.text())}`,
+    )
   }
 }
 

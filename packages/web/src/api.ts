@@ -19,6 +19,8 @@ export interface Series {
   label: string
   timezone: string
   rrule: string | null
+  /** The rule in plain language, as the server describes it. */
+  describes: string
   dtstart: number
   durationMs: number
   prepareLeadMs: number
@@ -86,6 +88,8 @@ export interface NodeState {
   options?: {
     quality?: {
       current?: string
+      /** Other spellings of `current` that mean the same setting. */
+      aliases?: string[]
       choices: string[]
       bitrate?: { minMbps: number; maxMbps: number; note?: string }
       freeform?: { note?: string; examples?: string[] }
@@ -102,11 +106,7 @@ export interface StorageSlot {
 }
 
 export type ManualAction =
-  | 'startStreaming'
-  | 'stopStreaming'
-  | 'startRecording'
-  | 'stopRecording'
-  | 'selectSlot'
+  'startStreaming' | 'stopStreaming' | 'startRecording' | 'stopRecording' | 'selectSlot'
 
 export interface RunStep {
   seq: number
@@ -175,8 +175,24 @@ export interface Preview {
 
 /** Mirrors `ConfigField` in the SDK: the host renders whatever a plugin declares. */
 export type ConfigField =
-  | { type: 'textinput'; id: string; label: string; default?: string; required?: boolean; tooltip?: string }
-  | { type: 'number'; id: string; label: string; default?: number; min?: number; max?: number; required?: boolean; tooltip?: string }
+  | {
+      type: 'textinput'
+      id: string
+      label: string
+      default?: string
+      required?: boolean
+      tooltip?: string
+    }
+  | {
+      type: 'number'
+      id: string
+      label: string
+      default?: number
+      min?: number
+      max?: number
+      required?: boolean
+      tooltip?: string
+    }
   | { type: 'checkbox'; id: string; label: string; default?: boolean; tooltip?: string }
   | {
       type: 'dropdown'
@@ -363,7 +379,8 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export const api = {
-  occurrences: (from: number, to: number) => request<Occurrence[]>(`/api/occurrences?from=${from}&to=${to}`),
+  occurrences: (from: number, to: number) =>
+    request<Occurrence[]>(`/api/occurrences?from=${from}&to=${to}`),
   series: () => request<Series[]>('/api/series'),
   preview: (seriesId: string) => request<Preview[]>(`/api/series/${seriesId}/preview`),
   devices: () => request<Device[]>('/api/devices'),
@@ -383,7 +400,11 @@ export const api = {
   /** Point an encoder at a saved target by hand. The credential is named by
    *  id: the key is read out of the vault on the server and never travels
    *  through the browser. */
-  pointAtTarget: (deviceId: string, nodeId: string, body: { credentialId: string; quality?: string }) =>
+  pointAtTarget: (
+    deviceId: string,
+    nodeId: string,
+    body: { credentialId: string; quality?: string },
+  ) =>
     request<{ state: NodeState | null }>(`/api/devices/${deviceId}/nodes/${nodeId}/stream-target`, {
       method: 'POST',
       body: JSON.stringify(body),
@@ -398,12 +419,18 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(body),
     }),
+  dashboard: () => request<Dashboard>('/api/dashboard'),
   runs: () => request<Run[]>('/api/runs'),
   run: (id: string) => request<Run>(`/api/runs/${id}`),
   cancelRun: (id: string, reason: string) =>
-    request<{ state: string }>(`/api/runs/${id}/cancel`, { method: 'POST', body: JSON.stringify({ reason }) }),
+    request<{ state: string }>(`/api/runs/${id}/cancel`, {
+      method: 'POST',
+      body: JSON.stringify({ reason }),
+    }),
   startNow: (occurrenceId: string) =>
-    request<{ runId: string; state: string }>(`/api/occurrences/${occurrenceId}/start-now`, { method: 'POST' }),
+    request<{ runId: string; state: string }>(`/api/occurrences/${occurrenceId}/start-now`, {
+      method: 'POST',
+    }),
   /** Runs the prepare phase early, so an unlisted stream's link exists in
    *  time to be sent round. Every output still starts at its own time. */
   prepareNow: (occurrenceId: string) =>
@@ -411,15 +438,22 @@ export const api = {
       `/api/occurrences/${occurrenceId}/prepare-now`,
       { method: 'POST' },
     ),
-  skip: (occurrenceId: string) => request<unknown>(`/api/occurrences/${occurrenceId}/skip`, { method: 'POST' }),
+  skip: (occurrenceId: string) =>
+    request<unknown>(`/api/occurrences/${occurrenceId}/skip`, { method: 'POST' }),
   notificationKinds: () => request<ChannelKind[]>('/api/notifications/kinds'),
   notificationChannels: () =>
     request<{ channels: NotificationChannel[]; pending: number }>('/api/notifications/channels'),
   createChannel: (input: { kind: string; label: string; config: Record<string, unknown> }) =>
-    request<{ id: string }>('/api/notifications/channels', { method: 'POST', body: JSON.stringify(input) }),
-  testChannel: (id: string) => request<unknown>(`/api/notifications/channels/${id}/test`, { method: 'POST' }),
-  deleteChannel: (id: string) => request<unknown>(`/api/notifications/channels/${id}`, { method: 'DELETE' }),
-  unskip: (occurrenceId: string) => request<unknown>(`/api/occurrences/${occurrenceId}/unskip`, { method: 'POST' }),
+    request<{ id: string }>('/api/notifications/channels', {
+      method: 'POST',
+      body: JSON.stringify(input),
+    }),
+  testChannel: (id: string) =>
+    request<unknown>(`/api/notifications/channels/${id}/test`, { method: 'POST' }),
+  deleteChannel: (id: string) =>
+    request<unknown>(`/api/notifications/channels/${id}`, { method: 'DELETE' }),
+  unskip: (occurrenceId: string) =>
+    request<unknown>(`/api/occurrences/${occurrenceId}/unskip`, { method: 'POST' }),
 
   // -- setup --------------------------------------------------------------
 
@@ -428,18 +462,29 @@ export const api = {
     request<DiscoveredDevice[]>(`/api/plugins/${pluginId}/discover`, { method: 'POST' }),
   createDevice: (input: { pluginId: string; label: string; config: Record<string, unknown> }) =>
     request<{ id: string }>('/api/devices', { method: 'POST', body: JSON.stringify(input) }),
-  updateDevice: (id: string, input: { label?: string; config?: Record<string, unknown>; enabled?: boolean }) =>
-    request<unknown>(`/api/devices/${id}`, { method: 'PATCH', body: JSON.stringify(input) }),
+  updateDevice: (
+    id: string,
+    input: { label?: string; config?: Record<string, unknown>; enabled?: boolean },
+  ) => request<unknown>(`/api/devices/${id}`, { method: 'PATCH', body: JSON.stringify(input) }),
   deleteDevice: (id: string) => request<unknown>(`/api/devices/${id}`, { method: 'DELETE' }),
 
   destinationProviders: () => request<DestinationProvider[]>('/api/destination-providers'),
-  oauthInstructions: (provider: string) => request<OAuthInstructions>(`/api/oauth/${provider}/instructions`),
+  oauthInstructions: (provider: string) =>
+    request<OAuthInstructions>(`/api/oauth/${provider}/instructions`),
   oauthClients: () => request<OAuthClient[]>('/api/oauth/clients'),
-  createOAuthClient: (input: { provider: string; label: string; clientId: string; clientSecret: string }) =>
+  createOAuthClient: (input: {
+    provider: string
+    label: string
+    clientId: string
+    clientSecret: string
+  }) =>
     request<{ id: string }>('/api/oauth/clients', { method: 'POST', body: JSON.stringify(input) }),
   /** `clientRef` is the stored client's row id, not Google's client ID. */
   startOAuth: (provider: string, clientRef: string) =>
-    request<{ url: string }>(`/api/oauth/${provider}/start`, { method: 'POST', body: JSON.stringify({ clientRef }) }),
+    request<{ url: string }>(`/api/oauth/${provider}/start`, {
+      method: 'POST',
+      body: JSON.stringify({ clientRef }),
+    }),
   accounts: () => request<Account[]>('/api/accounts'),
   deleteAccount: (id: string) => request<unknown>(`/api/accounts/${id}`, { method: 'DELETE' }),
 
@@ -454,15 +499,21 @@ export const api = {
     label: string
     accountId: string
     config: Record<string, unknown>
-  }) => request<{ id: string }>('/api/destinations', { method: 'POST', body: JSON.stringify(input) }),
+  }) =>
+    request<{ id: string }>('/api/destinations', { method: 'POST', body: JSON.stringify(input) }),
   updateDestination: (id: string, input: { label?: string; config?: Record<string, unknown> }) =>
-    request<{ ok: true }>(`/api/destinations/${id}`, { method: 'PATCH', body: JSON.stringify(input) }),
-  deleteDestination: (id: string) => request<unknown>(`/api/destinations/${id}`, { method: 'DELETE' }),
+    request<{ ok: true }>(`/api/destinations/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify(input),
+    }),
+  deleteDestination: (id: string) =>
+    request<unknown>(`/api/destinations/${id}`, { method: 'DELETE' }),
 
   credentials: () => request<Credential[]>('/api/credentials'),
   createCredential: (input: { label: string; ingestUrl: string; key: string }) =>
     request<{ id: string }>('/api/credentials', { method: 'POST', body: JSON.stringify(input) }),
-  deleteCredential: (id: string) => request<unknown>(`/api/credentials/${id}`, { method: 'DELETE' }),
+  deleteCredential: (id: string) =>
+    request<unknown>(`/api/credentials/${id}`, { method: 'DELETE' }),
 
   outputs: (seriesId: string) => request<OutputsResponse>(`/api/series/${seriesId}/outputs`),
   createOutput: (seriesId: string, input: OutputInput) =>
@@ -471,8 +522,12 @@ export const api = {
       body: JSON.stringify(input),
     }),
   updateOutput: (id: string, input: Partial<OutputInput>) =>
-    request<OutputsResponse>(`/api/outputs/${id}`, { method: 'PATCH', body: JSON.stringify(input) }),
-  deleteOutput: (id: string) => request<OutputsResponse>(`/api/outputs/${id}`, { method: 'DELETE' }),
+    request<OutputsResponse>(`/api/outputs/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify(input),
+    }),
+  deleteOutput: (id: string) =>
+    request<OutputsResponse>(`/api/outputs/${id}`, { method: 'DELETE' }),
   reorderOutputs: (seriesId: string, order: string[]) =>
     request<OutputsResponse>(`/api/series/${seriesId}/outputs/order`, {
       method: 'POST',
@@ -487,7 +542,11 @@ export const api = {
     durationMs: number
     templates: Record<string, string>
     count?: number
-  }) => request<SchedulePreview>('/api/schedule/preview', { method: 'POST', body: JSON.stringify(input) }),
+  }) =>
+    request<SchedulePreview>('/api/schedule/preview', {
+      method: 'POST',
+      body: JSON.stringify(input),
+    }),
   createSeries: (input: SeriesInput) =>
     request<{ id: string }>('/api/series', { method: 'POST', body: JSON.stringify(input) }),
   updateSeries: (id: string, input: Partial<SeriesInput>) =>
@@ -496,7 +555,10 @@ export const api = {
 }
 
 /** Loads once, then again whenever `deps` change or `reload` is called. */
-export function useResource<T>(load: () => Promise<T>, deps: unknown[] = []): {
+export function useResource<T>(
+  load: () => Promise<T>,
+  deps: unknown[] = [],
+): {
   data: T | undefined
   error: string | undefined
   loading: boolean
@@ -534,9 +596,67 @@ export function useResource<T>(load: () => Promise<T>, deps: unknown[] = []): {
   return { data, error, loading, reload: useCallback(() => setNonce((n) => n + 1), []) }
 }
 
+export interface DashboardOutput {
+  id: string
+  label: string
+  kind: 'stream' | 'recording'
+  state: 'waiting' | 'live' | 'done' | 'failed'
+  startsAt: number
+  endsAt: number
+  deviceLabel: string | null
+  watchUrl?: string
+  telemetry?: { at: number; bitrateBps?: number; remainingMs?: number; inputPresent?: boolean }
+}
+
+export interface Dashboard {
+  /** The server's clock: a countdown must not inherit a wrong one from the
+   *  browser. */
+  now: number
+  onAir: {
+    runId: string
+    occurrenceId: string
+    seriesLabel: string
+    state: string
+    windowStart: number
+    windowEnd: number
+    timezone: string
+    outputs: DashboardOutput[]
+  }[]
+  next: {
+    occurrenceId: string
+    seriesLabel: string
+    timezone: string
+    scheduledStart: number
+    scheduledEnd: number
+    status: string
+    runId: string | null
+    runState: string | null
+    outputs: number
+  }[]
+  devices: {
+    id: string
+    label: string
+    health: string
+    lastError: string | null
+    detail: string | null
+  }[]
+  attention: { kind: string; message: string; href: string }[]
+}
+
 export interface LiveState {
   runs: { id: string; state: string }[]
   devices: { id: string; health: string }[]
+  /**
+   * Counts the server's ticks.
+   *
+   * A number rather than the arrays above, because those are rebuilt on
+   * every message and a screen that depended on their identity would
+   * re-render whether or not anything changed.
+   */
+  tick: number
+  /** The last state each node pushed, keyed `deviceId/nodeId`. Devices send
+   *  these as they change, so a panel can follow one without polling it. */
+  nodeStates: Record<string, NodeState>
   connected: boolean
 }
 
@@ -547,41 +667,83 @@ export interface LiveState {
  * loads from the API, so a dropped connection degrades to stale-but-correct
  * rather than blank.
  */
+/**
+ * One socket for the whole app, shared by every screen that wants it.
+ *
+ * Each `useLive` used to open its own, so a page that both read the tick
+ * and refreshed on it held two connections and did its work twice. The
+ * socket is a single subscription now: components come and go, and the
+ * last one to leave closes it.
+ */
+let socket: WebSocket | undefined
+let retry: ReturnType<typeof setTimeout> | undefined
+let shared: LiveState = { runs: [], devices: [], tick: 0, nodeStates: {}, connected: false }
+const subscribers = new Set<(state: LiveState) => void>()
+
+function publish(next: (current: LiveState) => LiveState): void {
+  shared = next(shared)
+  for (const subscriber of subscribers) subscriber(shared)
+}
+
+function openSocket(): void {
+  const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws'
+  socket = new WebSocket(`${protocol}://${window.location.host}/ws`)
+  socket.onopen = () => publish((s) => ({ ...s, connected: true }))
+  socket.onclose = () => {
+    publish((s) => ({ ...s, connected: false }))
+    // Only while somebody is still listening: a closed tab must not keep
+    // reconnecting in the background.
+    if (subscribers.size > 0) retry = setTimeout(openSocket, 2000)
+  }
+  socket.onmessage = (event) => {
+    const payload = JSON.parse(String(event.data)) as Record<string, unknown>
+    if (payload.channel === 'runs') {
+      publish((s) => ({
+        ...s,
+        runs: (payload.runs as LiveState['runs']) ?? s.runs,
+        devices: (payload.devices as LiveState['devices']) ?? s.devices,
+        tick: s.tick + 1,
+      }))
+    }
+    if (payload.channel === 'device' && payload.type === 'state') {
+      const key = `${String(payload.deviceId)}/${String(payload.nodeId)}`
+      publish((s) => ({ ...s, nodeStates: { ...s.nodeStates, [key]: payload.state as NodeState } }))
+    }
+  }
+}
+
+function subscribe(listener: (state: LiveState) => void): () => void {
+  subscribers.add(listener)
+  if (subscribers.size === 1) openSocket()
+  return () => {
+    subscribers.delete(listener)
+    if (subscribers.size > 0) return
+    if (retry) clearTimeout(retry)
+    retry = undefined
+    socket?.close()
+    socket = undefined
+  }
+}
+
 export function useLive(): LiveState {
-  const [state, setState] = useState<LiveState>({ runs: [], devices: [], connected: false })
-
-  useEffect(() => {
-    let socket: WebSocket | undefined
-    let retry: ReturnType<typeof setTimeout> | undefined
-    let closed = false
-
-    const connect = (): void => {
-      const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws'
-      socket = new WebSocket(`${protocol}://${window.location.host}/ws`)
-      socket.onopen = () => setState((s) => ({ ...s, connected: true }))
-      socket.onclose = () => {
-        setState((s) => ({ ...s, connected: false }))
-        if (!closed) retry = setTimeout(connect, 2000)
-      }
-      socket.onmessage = (event) => {
-        const payload = JSON.parse(String(event.data)) as Record<string, unknown>
-        if (payload.channel === 'runs') {
-          setState((s) => ({
-            ...s,
-            runs: (payload.runs as LiveState['runs']) ?? s.runs,
-            devices: (payload.devices as LiveState['devices']) ?? s.devices,
-          }))
-        }
-      }
-    }
-
-    connect()
-    return () => {
-      closed = true
-      if (retry) clearTimeout(retry)
-      socket?.close()
-    }
-  }, [])
-
+  const [state, setState] = useState<LiveState>(shared)
+  useEffect(() => subscribe(setState), [])
   return state
+}
+
+/**
+ * Re-reads a screen whenever the server says something happened.
+ *
+ * The socket is the pulse, not the data: every screen still loads from the
+ * API, so a dropped connection leaves it stale-but-correct rather than
+ * blank, and reconnecting catches it up on the next tick.
+ */
+export function useLiveRefresh(reload: () => void, when = true): void {
+  const { tick } = useLive()
+  useEffect(() => {
+    if (when) reload()
+    // Keyed on the tick alone: `reload` is rebuilt by its own hook and
+    // depending on it would fire this on every render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tick, when])
 }

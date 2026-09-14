@@ -47,7 +47,8 @@ export class Scrubber {
     if (Array.isArray(value)) return value.map((item) => this.walk(item, seen))
     const out: Record<string, unknown> = {}
     for (const [key, item] of Object.entries(value as Record<string, unknown>)) {
-      out[key] = isSensitiveKey(key) && typeof item === 'string' ? '[redacted]' : this.walk(item, seen)
+      out[key] =
+        isSensitiveKey(key) && typeof item === 'string' ? '[redacted]' : this.walk(item, seen)
     }
     return out
   }

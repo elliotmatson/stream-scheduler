@@ -35,12 +35,12 @@ shifts together rather than the 11:00 service landing an hour out from the
 Every device is provided by a plugin and exposes **nodes**, each declaring a
 **role** and **capabilities**:
 
-| Role | Means | Examples |
-|---|---|---|
-| `source` | produces video, and may itself push a stream | ATEM Mini Pro, Web Presenter, Streaming Bridge |
-| `router` | selects or routes an existing signal | ATEM aux output, Videohub, ATEM macro. Implemented by the ATEM adapter; nothing schedules it, and [04](./04-plugin-sdk.md#routing) says why |
-| `relay` | ingests a stream and re-emits one or more | built-in ffmpeg/SRT relay, external restreamer |
-| `sink` | terminates the chain | YouTube, generic RTMP/RTMPS/SRT, HyperDeck recording |
+| Role     | Means                                        | Examples                                                                                                                                    |
+| -------- | -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| `source` | produces video, and may itself push a stream | ATEM Mini Pro, Web Presenter, Streaming Bridge                                                                                              |
+| `router` | selects or routes an existing signal         | ATEM aux output, Videohub, ATEM macro. Implemented by the ATEM adapter; nothing schedules it, and [04](./04-plugin-sdk.md#routing) says why |
+| `relay`  | ingests a stream and re-emits one or more    | built-in ffmpeg/SRT relay, external restreamer                                                                                              |
+| `sink`   | terminates the chain                         | YouTube, generic RTMP/RTMPS/SRT, HyperDeck recording                                                                                        |
 
 A node can hold more than one role — an ATEM Mini Pro is both a `source` (it has
 a hardware H.264 streamer) and a `router` (its aux output). Roles are a set, not
@@ -63,12 +63,12 @@ Two consequences run right through the design:
   T-30; it is retargeted at 09:00 and again at 11:00.
 - **Two outputs wanting the same device at the same time is a real clash**, and
   it is reported when the event is saved and again at pre-flight rather than
-  discovered live. Two YouTube channels *simultaneously* needs a relay in front
+  discovered live. Two YouTube channels _simultaneously_ needs a relay in front
   of the encoder, which is
   [issue #5](https://github.com/elliotmatson/stream-scheduler/issues/5).
 
 A recording and a stream can share one device — a Web Presenter records to USB
-while it streams — so the check is per device *and* per kind, not per device.
+while it streams — so the check is per device _and_ per kind, not per device.
 
 ## Entities
 
@@ -285,7 +285,7 @@ CREATE INDEX quota_day ON quota_ledger (provider, client_ref, day);
   Whichever form, the device reports `current` in the same words it accepts,
   which is what lets a write be verified at all.
 
-  On an ATEM that bitrate is *one* setting for two users, because one H.264
+  On an ATEM that bitrate is _one_ setting for two users, because one H.264
   encoder feeds both the stream and the recording. Setting it is therefore
   how an ATEM recording's quality gets set — there is no separate recording
   quality to write — and two outputs on one ATEM asking for different
@@ -296,6 +296,7 @@ CREATE INDEX quota_day ON quota_ledger (provider, client_ref, day);
   does not have it: a HyperDeck's rollover is not persistent state — the
   deck spills onto the next mounted card on its own — so it is reported,
   never offered as a toggle.
+
 - **Clashes are reported, never silently resolved.** Three kinds: two outputs
   wanting one device's transport at once, two wanting one device configured
   two ways at once, and two pushing one destination's single ingestion stream
@@ -303,7 +304,7 @@ CREATE INDEX quota_day ON quota_ledger (provider, client_ref, day);
   what to change. Saving is not blocked — somebody rearranging a morning is
   mid-way through fixing it — but the clash follows them to pre-flight.
 - **`occurrence.local_date`** is stored, not derived at read time. Template
-  rendering and the calendar both need the date *in the series' timezone*, and
+  rendering and the calendar both need the date _in the series' timezone_, and
   recomputing it from a UTC instant in a container running UTC is exactly where
   off-by-one-day bugs come from.
 - **`occurrence.overrides`** being non-NULL marks the occurrence as detached.

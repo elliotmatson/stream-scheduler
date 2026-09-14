@@ -9,7 +9,11 @@
  */
 
 export function timeIn(instant: number, timeZone: string): string {
-  return new Intl.DateTimeFormat(undefined, { timeZone, hour: 'numeric', minute: '2-digit' }).format(instant)
+  return new Intl.DateTimeFormat(undefined, {
+    timeZone,
+    hour: 'numeric',
+    minute: '2-digit',
+  }).format(instant)
 }
 
 export function dateIn(instant: number, timeZone: string): string {
@@ -31,7 +35,9 @@ export function isForeignZone(timeZone: string): boolean {
 }
 
 export function shortZone(instant: number, timeZone: string): string {
-  const parts = new Intl.DateTimeFormat('en-US', { timeZone, timeZoneName: 'short' }).formatToParts(instant)
+  const parts = new Intl.DateTimeFormat('en-US', { timeZone, timeZoneName: 'short' }).formatToParts(
+    instant,
+  )
   return parts.find((p) => p.type === 'timeZoneName')?.value ?? timeZone
 }
 
@@ -85,7 +91,11 @@ export function minutesOfDayIn(instant: number, timeZone: string): number {
 
 /** `Sun 8 Mar`, for a week heading. */
 export function dayLabel(date: Date): string {
-  return new Intl.DateTimeFormat(undefined, { weekday: 'short', day: 'numeric', month: 'short' }).format(date)
+  return new Intl.DateTimeFormat(undefined, {
+    weekday: 'short',
+    day: 'numeric',
+    month: 'short',
+  }).format(date)
 }
 
 /** The span a week view is looking at, e.g. `8 – 14 March 2026`. */
@@ -105,5 +115,7 @@ export function weekLabel(start: Date): string {
 }
 
 export function monthLabel(year: number, month: number): string {
-  return new Intl.DateTimeFormat(undefined, { month: 'long', year: 'numeric' }).format(new Date(year, month, 1))
+  return new Intl.DateTimeFormat(undefined, { month: 'long', year: 'numeric' }).format(
+    new Date(year, month, 1),
+  )
 }

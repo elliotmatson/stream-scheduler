@@ -12,16 +12,16 @@ tray app for Mac/PC, and shipped as the same image for Docker.
 
 ## Documents
 
-| # | Document | Covers |
-|---|---|---|
-| 01 | [Architecture](./01-architecture.md) | Process model, runtime topology, how Companion's patterns are and aren't borrowed |
-| 02 | [Domain model](./02-domain-model.md) | Events and their outputs, entities, database schema |
-| 03 | [Scheduling engine](./03-scheduling-engine.md) | Recurrence, materialization, the run state machine, crash recovery |
-| 04 | [Plugin SDK](./04-plugin-sdk.md) | The extension contract for encoders and destinations |
-| 05 | [YouTube integration](./05-youtube.md) | OAuth, broadcast lifecycle, quota budget, playlists |
-| 06 | [Templating & secrets](./06-templating-and-secrets.md) | Name templates, stream key management, encryption at rest |
-| 07 | [Packaging & distribution](./07-packaging.md) | Monorepo layout, Electron, Docker, signing, updates |
-| 08 | [Roadmap & risks](./08-roadmap-and-risks.md) | What shipped, open risks, decisions already made. Remaining work lives in issues |
+| #   | Document                                               | Covers                                                                            |
+| --- | ------------------------------------------------------ | --------------------------------------------------------------------------------- |
+| 01  | [Architecture](./01-architecture.md)                   | Process model, runtime topology, how Companion's patterns are and aren't borrowed |
+| 02  | [Domain model](./02-domain-model.md)                   | Events and their outputs, entities, database schema                               |
+| 03  | [Scheduling engine](./03-scheduling-engine.md)         | Recurrence, materialization, the run state machine, crash recovery                |
+| 04  | [Plugin SDK](./04-plugin-sdk.md)                       | The extension contract for encoders and destinations                              |
+| 05  | [YouTube integration](./05-youtube.md)                 | OAuth, broadcast lifecycle, quota budget, playlists                               |
+| 06  | [Templating & secrets](./06-templating-and-secrets.md) | Name templates, stream key management, encryption at rest                         |
+| 07  | [Packaging & distribution](./07-packaging.md)          | Monorepo layout, Electron, Docker, signing, updates                               |
+| 08  | [Roadmap & risks](./08-roadmap-and-risks.md)           | What shipped, open risks, decisions already made. Remaining work lives in issues  |
 
 ## Scope
 
@@ -49,9 +49,9 @@ tray app for Mac/PC, and shipped as the same image for Docker.
 
 ## Decisions already made
 
-| Decision | Choice | Why |
-|---|---|---|
-| Stack | TypeScript/Node + React, Electron shell | The Blackmagic protocol libraries (`atem-connection`, `hyperdeck-connection`) are already TypeScript, maintained by the Sofie project. Re-implementing the ATEM protocol in another language is the single largest avoidable risk. |
-| Phase 1 hardware | ATEM Mini Pro/Extreme, Web Presenter HD/4K, HyperDeck | Covers the stream path and the record path with commonly owned gear. |
-| YouTube auth | Bring-your-own OAuth client first, hosted client possible later | Avoids shipping a client secret in a desktop binary and avoids blocking v1 on Google's verification review. The credential layer is abstracted so a verified hosted client can be added without a schema change. |
-| Recurrence | RFC 5545 `RRULE` + IANA timezone | Cron has no timezone, DST or exception-date semantics. A weekly church service across a DST boundary is the core use case and cron gets it wrong. |
+| Decision         | Choice                                                          | Why                                                                                                                                                                                                                                |
+| ---------------- | --------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Stack            | TypeScript/Node + React, Electron shell                         | The Blackmagic protocol libraries (`atem-connection`, `hyperdeck-connection`) are already TypeScript, maintained by the Sofie project. Re-implementing the ATEM protocol in another language is the single largest avoidable risk. |
+| Phase 1 hardware | ATEM Mini Pro/Extreme, Web Presenter HD/4K, HyperDeck           | Covers the stream path and the record path with commonly owned gear.                                                                                                                                                               |
+| YouTube auth     | Bring-your-own OAuth client first, hosted client possible later | Avoids shipping a client secret in a desktop binary and avoids blocking v1 on Google's verification review. The credential layer is abstracted so a verified hosted client can be added without a schema change.                   |
+| Recurrence       | RFC 5545 `RRULE` + IANA timezone                                | Cron has no timezone, DST or exception-date semantics. A weekly church service across a DST boundary is the core use case and cron gets it wrong.                                                                                  |

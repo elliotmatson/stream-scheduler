@@ -25,9 +25,17 @@ export function withSerializingTransport(device: DeviceInstance): DeviceInstance
     health: () => guard('health() result', device.health()),
     listNodes: () => guard('listNodes() result', device.listNodes()),
     dispose: () => device.dispose(),
-    invoke(nodeId: string, action: InvokableAction, args: JsonObject = {}): Promise<NodeState | null> {
-      if (!isSerializable(args)) throw new SerializationViolation(`invoke(${nodeId}, ${action}) arguments`)
-      return guard(`invoke(${nodeId}, ${action}) result`, device.invoke(nodeId, action, clone(args)))
+    invoke(
+      nodeId: string,
+      action: InvokableAction,
+      args: JsonObject = {},
+    ): Promise<NodeState | null> {
+      if (!isSerializable(args))
+        throw new SerializationViolation(`invoke(${nodeId}, ${action}) arguments`)
+      return guard(
+        `invoke(${nodeId}, ${action}) result`,
+        device.invoke(nodeId, action, clone(args)),
+      )
     },
   }
 }

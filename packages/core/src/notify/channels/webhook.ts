@@ -28,7 +28,11 @@ export const webhookChannel: NotificationChannel = {
   displayName: 'Webhook',
   configSchema,
 
-  async send(notification: Notification, config: ConfigValues, deps: ChannelSendDeps): Promise<void> {
+  async send(
+    notification: Notification,
+    config: ConfigValues,
+    deps: ChannelSendDeps,
+  ): Promise<void> {
     const url = String(config.url ?? '')
     if (!url) throw new Error('This webhook channel has no URL.')
     const token = typeof config.bearerToken === 'string' ? config.bearerToken : undefined
@@ -45,7 +49,9 @@ export const webhookChannel: NotificationChannel = {
         title: notification.title,
         summary: notification.summary,
         facts: Object.fromEntries(notification.facts.map((fact) => [fact.label, fact.value])),
-        ...(notification.remediation === undefined ? {} : { remediation: notification.remediation }),
+        ...(notification.remediation === undefined
+          ? {}
+          : { remediation: notification.remediation }),
         ...(notification.link === undefined ? {} : { link: notification.link }),
         sentAt: new Date(deps.now()).toISOString(),
       }),

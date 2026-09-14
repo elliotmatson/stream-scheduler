@@ -59,16 +59,30 @@ beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), 'scheduler-preflight-'))
   db = openTestDatabase()
   clock = new ManualClock(SATURDAY_AFTERNOON)
-  vault = new SecretVault(db, resolveMasterKey([keyFileSource(join(dir, 'k'), { create: true })]), new Scrubber())
+  vault = new SecretVault(
+    db,
+    resolveMasterKey([keyFileSource(join(dir, 'k'), { create: true })]),
+    new Scrubber(),
+  )
   sent = []
   destinationState = { state: 'ok' }
 
   const plugins = new PluginRegistry().register(mockPlugin({ now: () => clock.now() }))
-  connections = new ConnectionManager({ db, registry: plugins, clock, random: () => 0.5, sleep: async () => {} })
+  connections = new ConnectionManager({
+    db,
+    registry: plugins,
+    clock,
+    random: () => 0.5,
+    sleep: async () => {},
+  })
   destinations = new DestinationRegistry({ db, clock, vault })
   destinations.register(fakeProvider)
   notifier = new Notifier({ db, clock, vault, fetchImpl })
-  notifier.create({ kind: 'webhook', label: 'Tech team', config: { url: 'https://example.invalid/hook' } })
+  notifier.create({
+    kind: 'webhook',
+    label: 'Tech team',
+    config: { url: 'https://example.invalid/hook' },
+  })
 })
 
 afterEach(async () => {
@@ -79,25 +93,17 @@ afterEach(async () => {
 
 function addDevice(config: Record<string, unknown>): string {
   const id = randomUUID()
-  db.prepare('INSERT INTO device (id, plugin_id, label, config, enabled, created_at) VALUES (?, ?, ?, ?, 1, ?)').run(
-    id,
-    'mock',
-    'Sanctuary encoder',
-    JSON.stringify(config),
-    clock.now(),
-  )
+  db.prepare(
+    'INSERT INTO device (id, plugin_id, label, config, enabled, created_at) VALUES (?, ?, ?, ?, 1, ?)',
+  ).run(id, 'mock', 'Sanctuary encoder', JSON.stringify(config), clock.now())
   return id
 }
 
 function addDestination(): string {
   const id = randomUUID()
-  db.prepare('INSERT INTO destination (id, plugin_id, label, account_id, config, created_at) VALUES (?, ?, ?, NULL, ?, ?)').run(
-    id,
-    'fake',
-    'Church YouTube',
-    '{}',
-    clock.now(),
-  )
+  db.prepare(
+    'INSERT INTO destination (id, plugin_id, label, account_id, config, created_at) VALUES (?, ?, ?, NULL, ?, ?)',
+  ).run(id, 'fake', 'Church YouTube', '{}', clock.now())
   return id
 }
 
@@ -151,7 +157,15 @@ function addCredential(): string {
 }
 
 const checker = (over: Partial<ConstructorParameters<typeof PreflightChecker>[0]> = {}) =>
-  new PreflightChecker({ db, clock, planner: new EventPlanner({ db, connections, vault, clock, destinations }), connections, destinations, notifier, ...over })
+  new PreflightChecker({
+    db,
+    clock,
+    planner: new EventPlanner({ db, connections, vault, clock, destinations }),
+    connections,
+    destinations,
+    notifier,
+    ...over,
+  })
 
 describe('pre-flight', () => {
   it('says nothing when everything is in order', async () => {
@@ -196,13 +210,17 @@ describe('pre-flight', () => {
   it('catches a template someone broke on Tuesday', async () => {
     const encoder = addDevice({ kind: 'encoder' })
     await connections.open(encoder)
-    seed({ source: encoder, credentialId: addCredential(), templates: { title: '{{speaker.nmae}}' } })
+    seed({
+      source: encoder,
+      credentialId: addCredential(),
+      templates: { title: '{{speaker.nmae}}' },
+    })
 
     const [result] = await checker().run()
     expect(result?.problems.some((p) => p.what === 'Name templates')).toBe(true)
   })
 
-  it('warns when the day\'s API budget is nearly gone', async () => {
+  it("warns when the day's API budget is nearly gone", async () => {
     const encoder = addDevice({ kind: 'encoder' })
     await connections.open(encoder)
     seed({ source: encoder, destinationId: addDestination() })
@@ -272,7 +290,7 @@ describe('pre-flight', () => {
     expect(sent[0]!.body.event).toBe('preflight.ready')
   })
 
-  it('names the time in the event\'s own timezone', async () => {
+  it("names the time in the event's own timezone", async () => {
     const encoder = addDevice({ kind: 'encoder', fault: 'unreachable' })
     seed({ source: encoder, credentialId: addCredential() })
 

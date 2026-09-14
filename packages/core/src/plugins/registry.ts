@@ -3,7 +3,9 @@ import type { ConfigField, ConfigValues, PluginDefinition } from '@scheduler/plu
 
 export class UnknownPluginError extends Error {
   constructor(id: string, known: string[]) {
-    super(`No plugin with id "${id}". Loaded plugins: ${known.length > 0 ? known.join(', ') : 'none'}.`)
+    super(
+      `No plugin with id "${id}". Loaded plugins: ${known.length > 0 ? known.join(', ') : 'none'}.`,
+    )
     this.name = 'UnknownPluginError'
   }
 }
@@ -21,7 +23,9 @@ export class IncompatiblePluginError extends Error {
 export class ConfigInvalidError extends Error {
   readonly issues: { field: string; message: string }[]
   constructor(pluginId: string, issues: { field: string; message: string }[]) {
-    super(`Configuration for "${pluginId}" is not valid: ${issues.map((i) => i.message).join('; ')}`)
+    super(
+      `Configuration for "${pluginId}" is not valid: ${issues.map((i) => i.message).join('; ')}`,
+    )
     this.name = 'ConfigInvalidError'
     this.issues = issues
   }
@@ -38,7 +42,8 @@ export class PluginRegistry {
   private readonly plugins = new Map<string, PluginDefinition>()
 
   register(plugin: PluginDefinition): this {
-    if (plugin.apiVersion !== SDK_API_VERSION) throw new IncompatiblePluginError(plugin.id, plugin.apiVersion)
+    if (plugin.apiVersion !== SDK_API_VERSION)
+      throw new IncompatiblePluginError(plugin.id, plugin.apiVersion)
     if (this.plugins.has(plugin.id)) throw new Error(`Plugin "${plugin.id}" is already registered.`)
     this.plugins.set(plugin.id, plugin)
     return this

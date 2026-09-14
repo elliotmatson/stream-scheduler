@@ -15,7 +15,9 @@ export async function startHost(): Promise<{ stop: () => Promise<void>; url: str
 
   const app = Application.create({
     plugins: bundledPlugins(),
-    ...(process.env.SCHEDULER_LOG_LEVEL ? { logLevel: process.env.SCHEDULER_LOG_LEVEL as LogLevel } : {}),
+    ...(process.env.SCHEDULER_LOG_LEVEL
+      ? { logLevel: process.env.SCHEDULER_LOG_LEVEL as LogLevel }
+      : {}),
   })
 
   // Registered after construction so the credential lookup can close over a

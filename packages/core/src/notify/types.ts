@@ -51,7 +51,12 @@ export interface ChannelSendDeps {
 export type Fetch = (
   url: string,
   init?: { method?: string; headers?: Record<string, string>; body?: string },
-) => Promise<{ ok: boolean; status: number; text(): Promise<string>; headers?: { get(name: string): string | null } }>
+) => Promise<{
+  ok: boolean
+  status: number
+  text(): Promise<string>
+  headers?: { get(name: string): string | null }
+}>
 
 /**
  * Thrown when the remote asked us to slow down or had a blip. The outbox

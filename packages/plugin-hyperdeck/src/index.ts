@@ -10,7 +10,13 @@ import type {
   NodeState,
   PluginDefinition,
 } from '@scheduler/plugin-sdk'
-import { Commands, FilesystemFormat, Hyperdeck, SlotStatus, TransportStatus } from 'hyperdeck-connection'
+import {
+  Commands,
+  FilesystemFormat,
+  Hyperdeck,
+  SlotStatus,
+  TransportStatus,
+} from 'hyperdeck-connection'
 
 /**
  * Blackmagic HyperDeck Studio / Extreme / Shuttle.
@@ -48,7 +54,6 @@ const KNOWN_FILE_FORMATS = [
   'DNxHR220',
   'QuickTimeUncompressed',
 ]
-
 
 const configSchema: ConfigField[] = [
   {
@@ -101,10 +106,15 @@ class HyperdeckDevice {
       const timer = setTimeout(() => {
         cleanup()
         reject(
-          new DeviceError('connect-timeout', `${this.host}:${this.port} did not answer within 10 seconds.`, {
-            retryable: true,
-            remediation: 'Check the address, that the deck is powered on, and that TCP 9993 is reachable.',
-          }),
+          new DeviceError(
+            'connect-timeout',
+            `${this.host}:${this.port} did not answer within 10 seconds.`,
+            {
+              retryable: true,
+              remediation:
+                'Check the address, that the deck is powered on, and that TCP 9993 is reachable.',
+            },
+          ),
         )
       }, CONNECT_TIMEOUT_MS)
 
@@ -118,10 +128,14 @@ class HyperdeckDevice {
       const onError = (message: string, error: unknown): void => {
         cleanup()
         reject(
-          new DeviceError('connect-failed', `Could not reach ${this.host}:${this.port}: ${message}`, {
-            retryable: true,
-            cause: error,
-          }),
+          new DeviceError(
+            'connect-failed',
+            `Could not reach ${this.host}:${this.port}: ${message}`,
+            {
+              retryable: true,
+              cause: error,
+            },
+          ),
         )
       }
 
@@ -204,7 +218,13 @@ class HyperdeckDevice {
         label: `${this.model} recorder`,
         roles: ['sink'],
         ports: [
-          { id: 'in', direction: 'in', label: 'Record input', transport: ['sdi', 'hdmi'], maxLinks: 1 },
+          {
+            id: 'in',
+            direction: 'in',
+            label: 'Record input',
+            transport: ['sdi', 'hdmi'],
+            maxLinks: 1,
+          },
         ],
         supports: ['startRecording', 'stopRecording', 'selectSlot', 'formatStorage'],
       },
@@ -318,10 +338,16 @@ class HyperdeckDevice {
         protocolVersion: this.protocolVersion,
         ...(transport.clipId === null ? {} : { clipId: transport.clipId }),
         ...(transport.videoFormat === null ? {} : { videoFormat: transport.videoFormat }),
-        ...(transport.inputVideoFormat == null ? {} : { inputVideoFormat: transport.inputVideoFormat }),
+        ...(transport.inputVideoFormat == null
+          ? {}
+          : { inputVideoFormat: transport.inputVideoFormat }),
         ...(config === undefined
           ? {}
-          : { videoInput: config.videoInput, audioInput: config.audioInput, fileFormat: config.fileFormat }),
+          : {
+              videoInput: config.videoInput,
+              audioInput: config.audioInput,
+              fileFormat: config.fileFormat,
+            }),
         ...(slot === undefined
           ? {}
           : { slotId: slot.slotId, slotStatus: slot.status, volumeName: slot.volumeName }),
@@ -345,7 +371,9 @@ class HyperdeckDevice {
 
   private async slotInfo(
     transport: Commands.TransportInfoCommandResponse,
-  ): Promise<{ slotId: number; status: SlotStatus; volumeName: string; recordingTime: number } | undefined> {
+  ): Promise<
+    { slotId: number; status: SlotStatus; volumeName: string; recordingTime: number } | undefined
+  > {
     const slotId = transport.slotId ?? undefined
     if (slotId === undefined) return undefined
     try {
@@ -377,7 +405,9 @@ class HyperdeckDevice {
     try {
       const transport = await this.send(new Commands.TransportInfoCommand())
       const config = await this.configuration()
-      const source = config?.videoInput ? `set to record from ${config.videoInput}` : 'input setting unknown'
+      const source = config?.videoInput
+        ? `set to record from ${config.videoInput}`
+        : 'input setting unknown'
       seen = transport.inputVideoFormat
         ? // The interesting case: the deck refuses and yet reports a signal.
           `${source}, and reports ${transport.inputVideoFormat} on its input`
@@ -399,8 +429,16 @@ class HyperdeckDevice {
   /** Every slot the deck has, so the UI can show the card it would roll onto. */
   private async allSlots(
     transport: Commands.TransportInfoCommandResponse,
-  ): Promise<{ id: number; status: string; volumeName?: string; remainingMs?: number; active?: boolean }[]> {
-    const out: { id: number; status: string; volumeName?: string; remainingMs?: number; active?: boolean }[] = []
+  ): Promise<
+    { id: number; status: string; volumeName?: string; remainingMs?: number; active?: boolean }[]
+  > {
+    const out: {
+      id: number
+      status: string
+      volumeName?: string
+      remainingMs?: number
+      active?: boolean
+    }[] = []
     for (let id = 1; id <= this.slots; id++) {
       try {
         const info = await this.send(new Commands.SlotInfoCommand(id))
@@ -481,7 +519,9 @@ class HyperdeckDevice {
     try {
       this.ctx.emitState('record', await this.readState())
     } catch (error) {
-      this.ctx.log('debug', 'could not read deck state after a notification', { error: describe(error) })
+      this.ctx.log('debug', 'could not read deck state after a notification', {
+        error: describe(error),
+      })
     } finally {
       this.emitting = false
     }
@@ -506,7 +546,8 @@ function toDeviceError(error: unknown): DeviceError {
       })
     case 106:
       return new DeviceError('disk-error', 'The HyperDeck reported a media error.', {
-        remediation: 'Reformat the card in the deck; a card that errors mid-service loses the recording.',
+        remediation:
+          'Reformat the card in the deck; a card that errors mid-service loses the recording.',
       })
     case 110:
       return new DeviceError('no-input', 'The HyperDeck has no video input.', {
@@ -518,9 +559,13 @@ function toDeviceError(error: unknown): DeviceError {
         remediation: 'Enable remote on the deck (the REM button, or Setup > Remote).',
       })
     case 150:
-      return new DeviceError('invalid-state', 'The HyperDeck cannot do that in its current state.', {
-        retryable: true,
-      })
+      return new DeviceError(
+        'invalid-state',
+        'The HyperDeck cannot do that in its current state.',
+        {
+          retryable: true,
+        },
+      )
     default:
       return new DeviceError('hyperdeck-error', describe(error), { retryable: true })
   }

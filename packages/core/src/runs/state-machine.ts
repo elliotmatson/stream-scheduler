@@ -25,7 +25,11 @@ export const RUN_STATES = [
 
 export type RunState = (typeof RUN_STATES)[number]
 
-export const TERMINAL_STATES = ['completed', 'failed', 'cancelled'] as const satisfies readonly RunState[]
+export const TERMINAL_STATES = [
+  'completed',
+  'failed',
+  'cancelled',
+] as const satisfies readonly RunState[]
 
 export function isTerminal(state: RunState): boolean {
   return (TERMINAL_STATES as readonly RunState[]).includes(state)

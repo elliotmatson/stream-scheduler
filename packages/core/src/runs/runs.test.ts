@@ -5,7 +5,13 @@ import { openTestDatabase, type Db } from '../db/index.js'
 import { Scrubber } from '../secrets/scrubber.js'
 import { RunEngine } from './engine.js'
 import { compensateRun, executePhase, reconcileRun } from './executor.js'
-import { assertTransition, canTransition, InvalidTransitionError, isOnAir, isTerminal } from './state-machine.js'
+import {
+  assertTransition,
+  canTransition,
+  InvalidTransitionError,
+  isOnAir,
+  isTerminal,
+} from './state-machine.js'
 import { idempotencyKey, RunStore } from './store.js'
 import { immediateSleeper, type RunPlan, type RunPlanner, type StepDefinition } from './steps.js'
 import { timelineFor } from './timeline.js'
@@ -55,16 +61,29 @@ const SUNDAY: OutputSpec[] = [
 function seedOccurrence(over: SeedOptions = {}): string {
   const seriesId = randomUUID()
   const occurrenceId = randomUUID()
-  db.prepare("INSERT INTO device (id, plugin_id, label, config, created_at) VALUES ('enc', 'mock', 'Encoder', '{}', 0)").run()
-  db.prepare("INSERT INTO device (id, plugin_id, label, config, created_at) VALUES ('deck', 'mock', 'HyperDeck', '{}', 0)").run()
-  db.prepare("INSERT INTO destination (id, plugin_id, label, config, created_at) VALUES ('svc', 'mock', 'Service', '{}', 0)").run()
+  db.prepare(
+    "INSERT INTO device (id, plugin_id, label, config, created_at) VALUES ('enc', 'mock', 'Encoder', '{}', 0)",
+  ).run()
+  db.prepare(
+    "INSERT INTO device (id, plugin_id, label, config, created_at) VALUES ('deck', 'mock', 'HyperDeck', '{}', 0)",
+  ).run()
+  db.prepare(
+    "INSERT INTO destination (id, plugin_id, label, config, created_at) VALUES ('svc', 'mock', 'Service', '{}', 0)",
+  ).run()
 
   db.prepare(
     `INSERT INTO event_series
        (id, label, timezone, rrule, dtstart, duration_ms, prepare_lead_ms,
         preroll_ms, postroll_ms, late_start_grace_ms, created_at, updated_at)
      VALUES (?, 'Sunday // AND', 'America/Chicago', NULL, ?, ?, ?, 0, ?, ?, 0, 0)`,
-  ).run(seriesId, START, WINDOW, over.prepareLeadMs ?? 30 * MINUTE, over.postrollMs ?? 0, over.graceMs ?? 5 * MINUTE)
+  ).run(
+    seriesId,
+    START,
+    WINDOW,
+    over.prepareLeadMs ?? 30 * MINUTE,
+    over.postrollMs ?? 0,
+    over.graceMs ?? 5 * MINUTE,
+  )
 
   const insert = db.prepare(
     `INSERT INTO event_output
@@ -145,7 +164,8 @@ function plannerFor(world: FakeBroadcastService, options: PlanOptions = {}): Run
     if (options.failAt !== key) return
     const seen = (failures.get(key) ?? 0) + 1
     failures.set(key, seen)
-    if (options.failTimes === undefined || seen <= options.failTimes) throw new Error(`${key} blew up`)
+    if (options.failTimes === undefined || seen <= options.failTimes)
+      throw new Error(`${key} blew up`)
   }
 
   return {
@@ -775,7 +795,12 @@ describe('RunEngine', () => {
  */
 describe('crash recovery', () => {
   const crashPoints = [
-    { label: 'the first broadcast', at: START - 30 * MINUTE, state: 'scheduled' as const, kind: '.prepare' },
+    {
+      label: 'the first broadcast',
+      at: START - 30 * MINUTE,
+      state: 'scheduled' as const,
+      kind: '.prepare',
+    },
     { label: 'the recorder rolling', at: START, state: 'running' as const, kind: '.start' },
   ]
 
@@ -909,7 +934,9 @@ describe('operator start-now', () => {
 })
 
 function occurrenceStatus(occurrenceId: string): string {
-  return (db.prepare('SELECT status FROM occurrence WHERE id = ?').get(occurrenceId) as { status: string }).status
+  return (
+    db.prepare('SELECT status FROM occurrence WHERE id = ?').get(occurrenceId) as { status: string }
+  ).status
 }
 
 /**
@@ -919,7 +946,13 @@ function occurrenceStatus(occurrenceId: string): string {
  * past its late-start grace at once, which is a missed event, not a Sunday.
  */
 async function runTheMorning(engine: RunEngine): Promise<void> {
-  for (const at of [START, START + 2 * HOUR, START + 3 * HOUR + 15 * MINUTE, START + 4 * HOUR, START + WINDOW]) {
+  for (const at of [
+    START,
+    START + 2 * HOUR,
+    START + 3 * HOUR + 15 * MINUTE,
+    START + 4 * HOUR,
+    START + WINDOW,
+  ]) {
     clock.set(at)
     await engine.tick()
   }

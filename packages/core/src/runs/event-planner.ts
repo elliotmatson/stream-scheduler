@@ -1,9 +1,14 @@
 import { fingerprint } from '@scheduler/plugin-sdk'
-import type { Clock, DestinationMetadata, JsonObject } from '@scheduler/plugin-sdk'
+import type { Clock, DestinationMetadata, JsonObject, NodeState } from '@scheduler/plugin-sdk'
 import type { Db } from '../db/index.js'
 import type { ConnectionManager } from '../devices/connection-manager.js'
 import type { DestinationRegistry } from '../destinations/registry.js'
-import { deviceFor, effectiveTemplates, type EventOutput, type OutputTemplates } from '../events/outputs.js'
+import {
+  deviceFor,
+  effectiveTemplates,
+  type EventOutput,
+  type OutputTemplates,
+} from '../events/outputs.js'
 import type { SecretVault } from '../secrets/vault.js'
 import { renderTemplateOrThrow, sanitizeFilename } from '../template/index.js'
 import type { TemplateContext } from '../template/render.js'
@@ -46,6 +51,15 @@ export interface OutputPreview {
  * one target at a time, so the target has to be applied at the moment that
  * service goes on air and not before.
  */
+/** Whether a device is on the quality that was asked for, whichever of its
+ *  spellings the asking used — "Streaming High" and "6-9" are one bitrate
+ *  on an ATEM. */
+function qualityMatches(state: NodeState, asked: string): boolean {
+  const quality = state.options?.quality
+  if (!quality) return false
+  return quality.current === asked || (quality.aliases ?? []).includes(asked)
+}
+
 export class EventPlanner implements RunPlanner {
   constructor(private readonly deps: EventPlannerDeps) {}
 
@@ -117,7 +131,11 @@ export class EventPlanner implements RunPlanner {
           'applyStreamTarget',
           // The quality is the event's if it named one, and otherwise
           // absent, which leaves the device on whatever it is set to.
-          { url: target.url, key: target.key, ...(output.settings.quality ? { quality: output.settings.quality } : {}) },
+          {
+            url: target.url,
+            key: target.key,
+            ...(output.settings.quality ? { quality: output.settings.quality } : {}),
+          },
           {
             what: 'Stream target',
             expected:
@@ -126,9 +144,10 @@ export class EventPlanner implements RunPlanner {
             satisfiedBy: (state) =>
               state.streaming?.targetUrl === target.url &&
               state.streaming?.keyFingerprint === fingerprint(target.key) &&
-              // A device reports `current` in the same vocabulary it takes,
-              // so the quality that was asked for can be read straight back.
-              (!output.settings.quality || state.options?.quality?.current === output.settings.quality),
+              // A device reports `current` in the vocabulary it takes, and
+              // may take more than one for the same setting — "Streaming
+              // High" and "6-9" are one bitrate on an ATEM.
+              (!output.settings.quality || qualityMatches(state, output.settings.quality)),
           },
         )
       },
@@ -138,18 +157,24 @@ export class EventPlanner implements RunPlanner {
       kind: `${output.id}.startStreaming`,
       phase: 'start',
       outputId: output.id,
-      label: `${output.label}: go live`,
+      label: `${output.label}: start streaming`,
       execute: async () => {
-        await this.deps.connections.applyAndVerify(device.deviceId, device.nodeId, 'startStreaming', {}, {
-          what: 'Streaming',
-          expected: 'active',
-          satisfiedBy: (state) => state.streaming?.active === true,
-          // Going live is not a local setting: the encoder has to open an
-          // RTMP session across the internet before it will say it is
-          // streaming. An ATEM sits in Connecting for several seconds
-          // doing it, and that is a stream coming up, not a failure.
-          settleMs: 25_000,
-        })
+        await this.deps.connections.applyAndVerify(
+          device.deviceId,
+          device.nodeId,
+          'startStreaming',
+          {},
+          {
+            what: 'Streaming',
+            expected: 'active',
+            satisfiedBy: (state) => state.streaming?.active === true,
+            // Going live is not a local setting: the encoder has to open an
+            // RTMP session across the internet before it will say it is
+            // streaming. An ATEM sits in Connecting for several seconds
+            // doing it, and that is a stream coming up, not a failure.
+            settleMs: 25_000,
+          },
+        )
       },
     })
 
@@ -157,17 +182,24 @@ export class EventPlanner implements RunPlanner {
       kind: `${output.id}.stopStreaming`,
       phase: 'stop',
       outputId: output.id,
-      label: `${output.label}: stop`,
+      label: `${output.label}: stop streaming`,
       execute: async () => {
-        await this.deps.connections.applyAndVerify(device.deviceId, device.nodeId, 'stopStreaming', {}, {
-          what: 'Streaming',
-          expected: 'stopped',
-          satisfiedBy: (state) => state.streaming?.active === false,
-        })
+        await this.deps.connections.applyAndVerify(
+          device.deviceId,
+          device.nodeId,
+          'stopStreaming',
+          {},
+          {
+            what: 'Streaming',
+            expected: 'stopped',
+            satisfiedBy: (state) => state.streaming?.active === false,
+          },
+        )
       },
     })
 
-    if (output.destinationId) steps.push(this.destinationFinalizeStep(output, entry, context, templates))
+    if (output.destinationId)
+      steps.push(this.destinationFinalizeStep(output, entry, context, templates))
     return steps
   }
 
@@ -179,7 +211,8 @@ export class EventPlanner implements RunPlanner {
   ): StepDefinition {
     const registry = this.registryOrThrow(output)
     const destinationId = output.destinationId!
-    const metadata = (): DestinationMetadata => this.metadataFor(destinationId, entry, context, templates)
+    const metadata = (): DestinationMetadata =>
+      this.metadataFor(destinationId, entry, context, templates)
 
     return {
       kind: `${output.id}.prepare`,
@@ -190,7 +223,10 @@ export class EventPlanner implements RunPlanner {
       execute: async (ctx) => {
         const destination = await registry.open(destinationId, { runId: ctx.runId })
         try {
-          const result = await destination.prepare({ idempotencyKey: ctx.idempotencyKey, metadata: metadata() })
+          const result = await destination.prepare({
+            idempotencyKey: ctx.idempotencyKey,
+            metadata: metadata(),
+          })
           return this.recordIngest(result, keyRef(ctx.runId, output.id))
         } finally {
           await destination.dispose()
@@ -298,7 +334,7 @@ export class EventPlanner implements RunPlanner {
               // transport status only once it has.
               satisfiedBy: (state) =>
                 state.recording?.active === true &&
-                (!output.settings.quality || state.options?.quality?.current === output.settings.quality),
+                (!output.settings.quality || qualityMatches(state, output.settings.quality)),
               settleMs: 10_000,
             },
           )
@@ -311,11 +347,17 @@ export class EventPlanner implements RunPlanner {
         outputId: output.id,
         label: `${output.label}: stop recording`,
         execute: async () => {
-          await this.deps.connections.applyAndVerify(device.deviceId, device.nodeId, 'stopRecording', {}, {
-            what: 'Recording',
-            expected: 'stopped',
-            satisfiedBy: (state) => state.recording?.active === false,
-          })
+          await this.deps.connections.applyAndVerify(
+            device.deviceId,
+            device.nodeId,
+            'stopRecording',
+            {},
+            {
+              what: 'Recording',
+              expected: 'stopped',
+              satisfiedBy: (state) => state.recording?.active === false,
+            },
+          )
         },
       },
     ]
@@ -358,7 +400,8 @@ export class EventPlanner implements RunPlanner {
     const timeline = timelineFor(this.deps.db, occurrenceId)
     const context = this.contextFor(timeline)
     const out: { title?: string; description?: string; filename?: string } = {}
-    if (timeline.templates.title) out.title = renderTemplateOrThrow(timeline.templates.title, context)
+    if (timeline.templates.title)
+      out.title = renderTemplateOrThrow(timeline.templates.title, context)
     if (timeline.templates.description) {
       out.description = renderTemplateOrThrow(timeline.templates.description, context)
     }
@@ -418,16 +461,18 @@ export class EventPlanner implements RunPlanner {
     context: TemplateContext,
     templates: OutputTemplates,
   ): DestinationMetadata {
-    const row = this.deps.db.prepare('SELECT config FROM destination WHERE id = ?').get(destinationId) as
-      | { config: string }
-      | undefined
+    const row = this.deps.db
+      .prepare('SELECT config FROM destination WHERE id = ?')
+      .get(destinationId) as { config: string } | undefined
     const config = (row ? JSON.parse(row.config) : {}) as { privacy?: string }
 
     return {
       // Rendered here rather than in the provider so every destination gets
       // the same names, and so a template mistake fails once, in prepare.
       title: templates.title ? renderTemplateOrThrow(templates.title, context) : context.event.name,
-      description: templates.description ? renderTemplateOrThrow(templates.description, context) : '',
+      description: templates.description
+        ? renderTemplateOrThrow(templates.description, context)
+        : '',
       // The output's own window, not the event's: a broadcast scheduled for
       // 7:00 when it actually airs at 11:00 is wrong on the channel page and
       // wrong in every subscriber's notification.
@@ -437,7 +482,10 @@ export class EventPlanner implements RunPlanner {
     }
   }
 
-  private deviceOrThrow(timeline: EventTimeline, output: EventOutput): { deviceId: string; nodeId: string } {
+  private deviceOrThrow(
+    timeline: EventTimeline,
+    output: EventOutput,
+  ): { deviceId: string; nodeId: string } {
     const device = deviceFor(output)
     if (device) return device
     throw new Error(`"${output.label}" in "${timeline.label}" has no device to run on.`)
@@ -446,7 +494,9 @@ export class EventPlanner implements RunPlanner {
   private registryOrThrow(output: EventOutput): DestinationRegistry {
     const registry = this.deps.destinations
     if (!registry) {
-      throw new Error(`"${output.label}" streams to a service, but no streaming services are configured.`)
+      throw new Error(
+        `"${output.label}" streams to a service, but no streaming services are configured.`,
+      )
     }
     return registry
   }
@@ -454,7 +504,9 @@ export class EventPlanner implements RunPlanner {
   private contextFor(timeline: EventTimeline): TemplateContext {
     const index = (
       this.deps.db
-        .prepare('SELECT COUNT(*) AS n FROM occurrence WHERE series_id = ? AND scheduled_start <= ?')
+        .prepare(
+          'SELECT COUNT(*) AS n FROM occurrence WHERE series_id = ? AND scheduled_start <= ?',
+        )
         .get(timeline.seriesId, timeline.windowStart) as { n: number }
     ).n
 

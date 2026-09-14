@@ -1,6 +1,11 @@
 import { createServer } from 'node:http'
 import type { Server, ServerResponse } from 'node:http'
-import { API_PREFIX, type ActivePlatform, type LivestreamStatus, type PlatformConfig } from './api.js'
+import {
+  API_PREFIX,
+  type ActivePlatform,
+  type LivestreamStatus,
+  type PlatformConfig,
+} from './api.js'
 
 /**
  * A Streaming Encoder, implemented from the REST API document and served
@@ -38,8 +43,16 @@ export class FakeStreamingEncoder {
         { server: 'Backup', url: 'rtmp://b.rtmp.youtube.com/live2?backup=1', group: 'Backup' },
       ],
       profiles: [
-        { profile: 'Streaming High', lowLatency: false, configs: [{ resolution: '1080p', fps: '30', bitrate: 9_000_000 }] },
-        { profile: 'Streaming Medium', lowLatency: false, configs: [{ resolution: '720p', fps: '30', bitrate: 4_500_000 }] },
+        {
+          profile: 'Streaming High',
+          lowLatency: false,
+          configs: [{ resolution: '1080p', fps: '30', bitrate: 9_000_000 }],
+        },
+        {
+          profile: 'Streaming Medium',
+          lowLatency: false,
+          configs: [{ resolution: '720p', fps: '30', bitrate: 4_500_000 }],
+        },
       ],
       defaultProfile: 'Streaming High',
       customizableUrlEnabled: false,
@@ -47,7 +60,13 @@ export class FakeStreamingEncoder {
     {
       platform: 'Custom RTMP',
       servers: [{ server: 'Custom', url: '' }],
-      profiles: [{ profile: 'Streaming High', lowLatency: false, configs: [{ resolution: '1080p', fps: '30', bitrate: 9_000_000 }] }],
+      profiles: [
+        {
+          profile: 'Streaming High',
+          lowLatency: false,
+          configs: [{ resolution: '1080p', fps: '30', bitrate: 9_000_000 }],
+        },
+      ],
       defaultProfile: 'Streaming High',
       customizableUrlEnabled: true,
     },
@@ -75,7 +94,9 @@ export class FakeStreamingEncoder {
   async listen(): Promise<void> {
     this.server = createServer((request, response) => {
       const url = new URL(request.url ?? '/', 'http://127.0.0.1')
-      const path = url.pathname.startsWith(API_PREFIX) ? url.pathname.slice(API_PREFIX.length) : url.pathname
+      const path = url.pathname.startsWith(API_PREFIX)
+        ? url.pathname.slice(API_PREFIX.length)
+        : url.pathname
       this.requests.push(`${request.method} ${path}`)
 
       if (this.options.failWith) {
@@ -86,7 +107,8 @@ export class FakeStreamingEncoder {
       const chunks: Buffer[] = []
       request.on('data', (chunk: Buffer) => chunks.push(chunk))
       request.on('end', () => {
-        const body = chunks.length > 0 ? (JSON.parse(Buffer.concat(chunks).toString()) as unknown) : undefined
+        const body =
+          chunks.length > 0 ? (JSON.parse(Buffer.concat(chunks).toString()) as unknown) : undefined
         this.route(request.method ?? 'GET', path, body, response)
       })
     })
@@ -178,7 +200,10 @@ export class FakeStreamingEncoder {
     }
 
     if (method === 'GET' && path === '/livestreams/platforms') {
-      return json(200, this.visiblePlatforms().map((p) => p.platform))
+      return json(
+        200,
+        this.visiblePlatforms().map((p) => p.platform),
+      )
     }
 
     if (method === 'GET' && path.startsWith('/livestreams/platforms/')) {
@@ -188,7 +213,13 @@ export class FakeStreamingEncoder {
     }
 
     if (method === 'GET' && path === '/system/videoFormat') {
-      return json(200, { name: '1920x1080p30', width: 1920, height: 1080, frameRate: '30', interlaced: false })
+      return json(200, {
+        name: '1920x1080p30',
+        width: 1920,
+        height: 1080,
+        frameRate: '30',
+        interlaced: false,
+      })
     }
 
     json(404, { error: `the fake does not implement ${method} ${path}` })

@@ -79,7 +79,9 @@ export class Notifier {
   kind(name: string): NotificationChannel {
     const channel = this.channels.get(name)
     if (!channel) {
-      throw new Error(`No notification channel of kind "${name}". Known kinds: ${[...this.channels.keys()].join(', ')}.`)
+      throw new Error(
+        `No notification channel of kind "${name}". Known kinds: ${[...this.channels.keys()].join(', ')}.`,
+      )
     }
     return channel
   }
@@ -88,7 +90,9 @@ export class Notifier {
   assertValidConfig(kind: string, config: ConfigValues): void {
     const issues = validateConfig(this.kind(kind).configSchema, config)
     if (issues.length > 0) {
-      throw new Error(`That ${this.kind(kind).displayName} channel is not configured correctly: ${issues.map((i) => i.message).join('; ')}`)
+      throw new Error(
+        `That ${this.kind(kind).displayName} channel is not configured correctly: ${issues.map((i) => i.message).join('; ')}`,
+      )
     }
   }
 
@@ -114,7 +118,14 @@ export class Notifier {
 
     for (const row of rows) {
       if (!this.wants(row, notification.event)) continue
-      const result = insert.run(row.id, notification.dedupeKey, notification.event, JSON.stringify(notification), now, now)
+      const result = insert.run(
+        row.id,
+        notification.dedupeKey,
+        notification.event,
+        JSON.stringify(notification),
+        now,
+        now,
+      )
       // Zero changes means the unique key already held it: this exact thing
       // has been announced, and the five-second tick must not repeat it.
       if (result.changes > 0) queued++
@@ -188,7 +199,7 @@ export class Notifier {
         event: 'test',
         severity: 'info',
         title: 'Stream Scheduler is connected',
-        summary: 'If you can read this, alerts about failed runs will reach you here.',
+        summary: 'If you can read this, notifications about failed runs will reach you here.',
         facts: [{ label: 'Channel', value: channel.label }],
         dedupeKey: `test:${this.deps.clock.now()}`,
         threadKey: `test-${channelId}`,
@@ -202,7 +213,12 @@ export class Notifier {
       .run(this.deps.clock.now(), channelId)
   }
 
-  create(input: { kind: string; label: string; config: ConfigValues; events?: NotificationEvent[] }): string {
+  create(input: {
+    kind: string
+    label: string
+    config: ConfigValues
+    events?: NotificationEvent[]
+  }): string {
     const definition = this.kind(input.kind)
     const config = this.storeSecrets(definition, input.config, {})
     this.assertValidConfig(input.kind, config)
@@ -213,7 +229,14 @@ export class Notifier {
         `INSERT INTO notification_channel (id, kind, label, config, events, enabled, created_at)
          VALUES (?, ?, ?, ?, ?, 1, ?)`,
       )
-      .run(id, input.kind, input.label, JSON.stringify(config), JSON.stringify(input.events ?? []), this.deps.clock.now())
+      .run(
+        id,
+        input.kind,
+        input.label,
+        JSON.stringify(config),
+        JSON.stringify(input.events ?? []),
+        this.deps.clock.now(),
+      )
     return id
   }
 
@@ -221,24 +244,36 @@ export class Notifier {
     this.deps.db.prepare('DELETE FROM notification_channel WHERE id = ?').run(channelId)
   }
 
-  list(): { id: string; kind: string; label: string; events: string[]; enabled: boolean; lastError: string | null; lastSentAt: number | null }[] {
-    return (this.deps.db.prepare('SELECT * FROM notification_channel ORDER BY label').all() as ChannelRow[]).map(
-      (row) => ({
-        id: row.id,
-        kind: row.kind,
-        label: row.label,
-        events: JSON.parse(row.events) as string[],
-        enabled: row.enabled === 1,
-        lastError: row.last_error,
-        lastSentAt: row.last_sent_at,
-      }),
-    )
+  list(): {
+    id: string
+    kind: string
+    label: string
+    events: string[]
+    enabled: boolean
+    lastError: string | null
+    lastSentAt: number | null
+  }[] {
+    return (
+      this.deps.db
+        .prepare('SELECT * FROM notification_channel ORDER BY label')
+        .all() as ChannelRow[]
+    ).map((row) => ({
+      id: row.id,
+      kind: row.kind,
+      label: row.label,
+      events: JSON.parse(row.events) as string[],
+      enabled: row.enabled === 1,
+      lastError: row.last_error,
+      lastSentAt: row.last_sent_at,
+    }))
   }
 
   /** Queue depth, for the settings screen. */
   pending(): number {
     return (
-      this.deps.db.prepare("SELECT COUNT(*) AS n FROM notification_outbox WHERE status = 'pending'").get() as {
+      this.deps.db
+        .prepare("SELECT COUNT(*) AS n FROM notification_outbox WHERE status = 'pending'")
+        .get() as {
         n: number
       }
     ).n
@@ -253,10 +288,12 @@ export class Notifier {
 
   private channelFor(
     channelId: string,
-  ): { id: string; label: string; definition: NotificationChannel; config: ConfigValues } | undefined {
-    const row = this.deps.db.prepare('SELECT * FROM notification_channel WHERE id = ?').get(channelId) as
-      | ChannelRow
-      | undefined
+  ):
+    | { id: string; label: string; definition: NotificationChannel; config: ConfigValues }
+    | undefined {
+    const row = this.deps.db
+      .prepare('SELECT * FROM notification_channel WHERE id = ?')
+      .get(channelId) as ChannelRow | undefined
     if (!row) return undefined
 
     const definition = this.channels.get(row.kind)
@@ -299,9 +336,9 @@ export class Notifier {
     const interval = channel.definition.minIntervalMs
     if (!interval || this.deps.respectPacing === false) return true
 
-    const row = this.deps.db.prepare('SELECT last_sent_at FROM notification_channel WHERE id = ?').get(channel.id) as
-      | { last_sent_at: number | null }
-      | undefined
+    const row = this.deps.db
+      .prepare('SELECT last_sent_at FROM notification_channel WHERE id = ?')
+      .get(channel.id) as { last_sent_at: number | null } | undefined
     if (!row?.last_sent_at) return true
     return this.deps.clock.now() - row.last_sent_at >= interval
   }
@@ -310,7 +347,9 @@ export class Notifier {
     const now = this.deps.clock.now()
     this.deps.db.transaction(() => {
       this.deps.db
-        .prepare("UPDATE notification_outbox SET status = 'sent', sent_at = ?, last_error = NULL WHERE id = ?")
+        .prepare(
+          "UPDATE notification_outbox SET status = 'sent', sent_at = ?, last_error = NULL WHERE id = ?",
+        )
         .run(now, row.id)
       this.deps.db
         .prepare('UPDATE notification_channel SET last_sent_at = ?, last_error = NULL WHERE id = ?')
@@ -327,9 +366,10 @@ export class Notifier {
     // exponentially. A misconfigured channel gives up quickly rather than
     // retrying a rejected message for half an hour.
     const cap = transient ? MAX_ATTEMPTS : 2
-    const delay = transient && error.retryAfterMs !== undefined
-      ? error.retryAfterMs
-      : Math.min(BASE_BACKOFF_MS * 2 ** (attempts - 1), MAX_BACKOFF_MS)
+    const delay =
+      transient && error.retryAfterMs !== undefined
+        ? error.retryAfterMs
+        : Math.min(BASE_BACKOFF_MS * 2 ** (attempts - 1), MAX_BACKOFF_MS)
 
     const giveUp = attempts >= cap
     this.deps.db.transaction(() => {
@@ -339,8 +379,16 @@ export class Notifier {
               SET attempts = ?, last_error = ?, status = ?, next_attempt_at = ?
             WHERE id = ?`,
         )
-        .run(attempts, message, giveUp ? 'failed' : 'pending', this.deps.clock.now() + delay, row.id)
-      this.deps.db.prepare('UPDATE notification_channel SET last_error = ? WHERE id = ?').run(message, channelId)
+        .run(
+          attempts,
+          message,
+          giveUp ? 'failed' : 'pending',
+          this.deps.clock.now() + delay,
+          row.id,
+        )
+      this.deps.db
+        .prepare('UPDATE notification_channel SET last_error = ? WHERE id = ?')
+        .run(message, channelId)
     })()
 
     this.logger[giveUp ? 'error' : 'warn']('could not deliver a notification', {

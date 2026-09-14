@@ -31,7 +31,11 @@ export function defineDevice(spec: DeviceSpec): DeviceInstance {
     health: () => spec.health(),
     listNodes: () => spec.listNodes(),
     dispose: () => spec.dispose(),
-    async invoke(nodeId: string, action: InvokableAction, args: JsonObject = {}): Promise<NodeState | null> {
+    async invoke(
+      nodeId: string,
+      action: InvokableAction,
+      args: JsonObject = {},
+    ): Promise<NodeState | null> {
       const actions = spec.actionsFor(nodeId)
       if (!actions) {
         throw new DeviceError('unknown-node', `This device has no node "${nodeId}".`)
@@ -59,9 +63,13 @@ export function defineDevice(spec: DeviceSpec): DeviceInstance {
 
       const handler = actions[action]
       if (!handler) {
-        throw new DeviceError('unsupported-action', `"${action}" is not supported by node "${nodeId}".`, {
-          remediation: 'The device model was probed as not having this capability.',
-        })
+        throw new DeviceError(
+          'unsupported-action',
+          `"${action}" is not supported by node "${nodeId}".`,
+          {
+            remediation: 'The device model was probed as not having this capability.',
+          },
+        )
       }
 
       switch (action) {
@@ -87,7 +95,10 @@ export function defineDevice(spec: DeviceSpec): DeviceInstance {
           break
         }
         case 'route':
-          await actions.route!({ input: readString(args, 'input'), output: readString(args, 'output') })
+          await actions.route!({
+            input: readString(args, 'input'),
+            output: readString(args, 'output'),
+          })
           break
         case 'startStreaming':
         case 'stopStreaming':

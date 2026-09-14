@@ -3,22 +3,24 @@ import type { ReactNode } from 'react'
 import { useLive } from './api.ts'
 import { useTheme, type ThemePreference } from './theme.ts'
 import {
-  IconAlerts,
   IconBrand,
   IconDevices,
   IconEvents,
   IconMoon,
   IconRuns,
+  IconNotifications,
+  IconNow,
   IconSchedule,
   IconServices,
   IconSun,
   IconSystem,
 } from './icons.tsx'
+import { Dashboard } from './views/Dashboard.tsx'
 import { Schedule } from './views/Schedule.tsx'
 import { Devices } from './views/Devices.tsx'
 import { SeriesList } from './views/SeriesList.tsx'
 import { RunDetail, Runs } from './views/RunDetail.tsx'
-import { Alerts } from './views/Alerts.tsx'
+import { Notifications } from './views/Notifications.tsx'
 import { Services } from './views/Services.tsx'
 
 /**
@@ -42,12 +44,15 @@ function useHashRoute(): [string, (path: string) => void] {
 }
 
 const NAV = [
-  { to: '/', label: 'Schedule', icon: <IconSchedule /> },
+  // What is on air now comes before what is planned: this is the screen a
+  // booth leaves open, and everything else is for setting up.
+  { to: '/', label: 'Now', icon: <IconNow /> },
+  { to: '/schedule', label: 'Schedule', icon: <IconSchedule /> },
   { to: '/events', label: 'Events', icon: <IconEvents /> },
   { to: '/devices', label: 'Devices', icon: <IconDevices /> },
   { to: '/services', label: 'Services', icon: <IconServices /> },
   { to: '/runs', label: 'Runs', icon: <IconRuns /> },
-  { to: '/alerts', label: 'Alerts', icon: <IconAlerts /> },
+  { to: '/notifications', label: 'Notifications', icon: <IconNotifications /> },
 ]
 
 export function App(): ReactNode {
@@ -70,15 +75,34 @@ export function App(): ReactNode {
           </div>
 
           {NAV.map((item) => (
-            <NavLink key={item.to} path={path} to={item.to} label={item.label} icon={item.icon} navigate={navigate} />
+            <NavLink
+              key={item.to}
+              path={path}
+              to={item.to}
+              label={item.label}
+              icon={item.icon}
+              navigate={navigate}
+            />
           ))}
 
           <div className="sidebar-foot">
             {liveRuns > 0 ? (
-              <span className="pill live">{liveRuns} live</span>
+              <span
+                className="pill live"
+                title={`${liveRuns === 1 ? 'One event is' : `${liveRuns} events are`} on air.`}
+              >
+                {liveRuns} live
+              </span>
             ) : (
               // Says plainly whether what you are looking at is current.
-              <span className={`pill ${live.connected ? 'ok' : 'bad'}`}>
+              <span
+                className={`pill ${live.connected ? 'ok' : 'bad'}`}
+                title={
+                  live.connected
+                    ? 'These screens are following the server. They update themselves.'
+                    : 'Not following the server, so what you see may be out of date. Trying again.'
+                }
+              >
                 {live.connected ? 'connected' : 'reconnecting'}
               </span>
             )}
@@ -128,12 +152,13 @@ function ThemeToggle({
 function Route({ path, navigate }: { path: string; navigate: (path: string) => void }): ReactNode {
   const run = /^\/runs\/(.+)$/.exec(path)
   if (run) return <RunDetail runId={run[1]!} navigate={navigate} />
+  if (path === '/schedule') return <Schedule navigate={navigate} />
   if (path === '/devices') return <Devices />
   if (path === '/services') return <Services />
   if (path === '/events') return <SeriesList />
   if (path === '/runs') return <Runs navigate={navigate} />
-  if (path === '/alerts') return <Alerts />
-  return <Schedule navigate={navigate} />
+  if (path === '/notifications') return <Notifications />
+  return <Dashboard navigate={navigate} />
 }
 
 function NavLink({

@@ -9,7 +9,15 @@ import {
   type DestinationProvider,
   type OAuthClient,
 } from '../api.ts'
-import { Card, ConfigFields, ConfirmButton, Empty, ErrorBanner, Field, StatusPill } from '../components.tsx'
+import {
+  Card,
+  ConfigFields,
+  ConfirmButton,
+  Empty,
+  ErrorBanner,
+  Field,
+  StatusPill,
+} from '../components.tsx'
 
 /**
  * Where streams go.
@@ -49,10 +57,23 @@ export function Services(): ReactNode {
   return (
     <>
       <div className="page-head">
-        <h1>Streaming services</h1>
+        <div>
+          <h1>Services</h1>
+          <p className="muted" style={{ margin: '4px 0 0' }}>
+            Where streams go: the accounts that make their own broadcasts, and keys for everything
+            else.
+          </p>
+        </div>
       </div>
       <ErrorBanner
-        error={error ?? providers.error ?? clients.error ?? accounts.error ?? destinations.error ?? credentials.error}
+        error={
+          error ??
+          providers.error ??
+          clients.error ??
+          accounts.error ??
+          destinations.error ??
+          credentials.error
+        }
       />
 
       <div className="stack">
@@ -62,7 +83,9 @@ export function Services(): ReactNode {
             provider={provider}
             clients={(clients.data ?? []).filter((client) => client.provider === provider.id)}
             accounts={(accounts.data ?? []).filter((account) => account.provider === provider.id)}
-            destinations={(destinations.data ?? []).filter((destination) => destination.providerId === provider.id)}
+            destinations={(destinations.data ?? []).filter(
+              (destination) => destination.providerId === provider.id,
+            )}
             onChanged={reloadAll}
             onError={setError}
           />
@@ -123,18 +146,21 @@ function ProviderSection({
     <Card>
       <div className="page-head" style={{ marginBottom: 8 }}>
         <h2 style={{ margin: 0 }}>{provider.displayName}</h2>
-        <button onClick={() => setShowSetup((open) => !open)}>
+        <button
+          title="What to do in the provider's own console before any of this will connect."
+          onClick={() => setShowSetup((open) => !open)}
+        >
           {showSetup ? 'Hide setup steps' : 'Setup steps'}
         </button>
       </div>
 
       {showSetup ? <Instructions provider={provider.id} /> : null}
 
-      <h3>1. This install's Google client</h3>
+      <h3>1. This install's OAuth client</h3>
       {clients.length === 0 ? (
         <p className="muted">
-          None yet. Each install brings its own OAuth client, so nothing is shared and your channel's API budget is
-          your own. The setup steps above walk through making one.
+          None yet. Each install brings its own OAuth client, so nothing is shared and your
+          channel's API budget is your own. The setup steps above walk through making one.
         </p>
       ) : (
         <ul className="plain">
@@ -143,7 +169,11 @@ function ProviderSection({
               <span>
                 {client.label} <span className="muted">{client.clientId}</span>
               </span>
-              <button disabled={busy} onClick={() => void act(() => connect(client.id))}>
+              <button
+                disabled={busy}
+                title={`Opens ${provider.displayName} in a new tab to sign in. Nothing is scheduled until an account is connected.`}
+                onClick={() => void act(() => connect(client.id))}
+              >
                 Connect an account
               </button>
             </li>
@@ -154,7 +184,9 @@ function ProviderSection({
 
       <h3>2. Connected accounts</h3>
       {accounts.length === 0 ? (
-        <p className="muted">No account is connected, so nothing can be scheduled to {provider.displayName} yet.</p>
+        <p className="muted">
+          No account is connected, so nothing can be scheduled to {provider.displayName} yet.
+        </p>
       ) : (
         <ul className="plain">
           {accounts.map((account) => (
@@ -162,7 +194,7 @@ function ProviderSection({
               <span>
                 {account.displayName} <StatusPill status={account.status} />
                 {account.status === 'reauth_required' ? (
-                  <span className="muted"> — sign in again; the token expired.</span>
+                  <span className="muted"> — connect it again; its sign-in expired.</span>
                 ) : null}
               </span>
               <ConfirmButton
@@ -177,8 +209,8 @@ function ProviderSection({
 
       <h3>3. Destinations</h3>
       <p className="muted" style={{ marginTop: 0 }}>
-        A destination is an account plus the settings every broadcast gets — privacy, and the playlist to file it
-        under. An event's outputs point at one of these.
+        A destination is one account plus the settings every broadcast made through it gets — who
+        can watch, and which playlist it is filed under. An event's streams point at one of these.
       </p>
       {destinations.length === 0 ? null : (
         <ul className="plain">
@@ -201,8 +233,15 @@ function ProviderSection({
                 <span>
                   {destination.label}{' '}
                   <span className="muted">
+                    {/* The provider's own labels, not the stored keys: nobody
+                        outside this codebase calls it a playlistId. */}
                     {Object.entries(destination.config)
-                      .map(([key, value]) => `${key}: ${String(value)}`)
+                      .map(([key, value]) => {
+                        const field = provider.configSchema.find(
+                          (candidate) => candidate.id === key,
+                        )
+                        return `${field && 'label' in field ? field.label : key}: ${String(value)}`
+                      })
                       .join(' · ')}
                   </span>
                 </span>
@@ -282,7 +321,12 @@ function AddOAuthClient({
     setSaving(true)
     onError(undefined)
     try {
-      await api.createOAuthClient({ provider, label: label || 'OAuth client', clientId, clientSecret })
+      await api.createOAuthClient({
+        provider,
+        label: label || 'OAuth client',
+        clientId,
+        clientSecret,
+      })
       setOpen(false)
       setLabel('')
       setClientId('')
@@ -298,7 +342,11 @@ function AddOAuthClient({
   return (
     <div className="stack" style={{ maxWidth: 560 }}>
       <Field label="Name">
-        <input value={label} placeholder="OAuth client" onChange={(event) => setLabel(event.target.value)} />
+        <input
+          value={label}
+          placeholder="OAuth client"
+          onChange={(event) => setLabel(event.target.value)}
+        />
       </Field>
       <Field label="Client ID">
         <input value={clientId} onChange={(event) => setClientId(event.target.value)} />
@@ -312,7 +360,11 @@ function AddOAuthClient({
         />
       </Field>
       <div className="row">
-        <button className="primary" disabled={saving || !clientId || !clientSecret} onClick={() => void save()}>
+        <button
+          className="primary"
+          disabled={saving || !clientId || !clientSecret}
+          onClick={() => void save()}
+        >
           {saving ? 'Saving…' : 'Save'}
         </button>
         <button onClick={() => setOpen(false)}>Cancel</button>
@@ -370,7 +422,10 @@ function DestinationForm({
       if (destination) {
         // Not the account: a destination is settings for *that* channel, and
         // repointing it would move every event already using it.
-        await api.updateDestination(destination.id, { label: label || provider.displayName, config })
+        await api.updateDestination(destination.id, {
+          label: label || provider.displayName,
+          config,
+        })
       } else {
         await api.createDestination({
           providerId: provider.id,
@@ -389,12 +444,20 @@ function DestinationForm({
 
   return (
     <div className="stack" style={{ maxWidth: 560 }}>
-      <Field label="Name">
-        <input value={label} placeholder={provider.displayName} onChange={(event) => setLabel(event.target.value)} />
+      <Field label="Name" hint="What you will call it here, e.g. “Main channel, unlisted”.">
+        <input
+          value={label}
+          placeholder={provider.displayName}
+          onChange={(event) => setLabel(event.target.value)}
+        />
       </Field>
       <Field
         label="Account"
-        hint={destination ? 'Fixed once set: moving it would move every event pointing here.' : undefined}
+        hint={
+          destination
+            ? 'Fixed once set: changing it would move every event pointing here.'
+            : 'The connected account these broadcasts are made on.'
+        }
       >
         <select
           value={accountId}
@@ -447,12 +510,12 @@ function StreamKeys({
         <button onClick={() => setOpen((value) => !value)}>{open ? 'Cancel' : 'Add a key'}</button>
       </div>
       <p className="muted" style={{ marginTop: 0 }}>
-        For a service with no integration here: an ingest URL and key, typed in once. Anything that issues its own
-        key per broadcast — YouTube, for one — belongs above instead.
+        For a service with no integration here: an ingest URL and key, typed in once. Anything that
+        issues a key per broadcast — YouTube, for one — belongs above instead.
       </p>
 
       {credentials.length === 0 ? (
-        <Empty>Nothing saved.</Empty>
+        <Empty>No keys saved.</Empty>
       ) : (
         <ul className="plain">
           {credentials.map((credential) => (
@@ -473,13 +536,19 @@ function StreamKeys({
 
       {open ? (
         <div className="stack" style={{ maxWidth: 560, marginTop: 12 }}>
-          <Field label="Name">
+          <Field label="Name" hint="What you will call it here, e.g. “Facebook, main page”.">
             <input value={label} onChange={(event) => setLabel(event.target.value)} />
           </Field>
-          <Field label="Ingest URL" hint="e.g. rtmps://a.rtmp.youtube.com/live2">
+          <Field
+            label="Ingest URL"
+            hint="Where the encoder sends to, e.g. rtmps://a.rtmp.youtube.com/live2"
+          >
             <input value={ingestUrl} onChange={(event) => setIngestUrl(event.target.value)} />
           </Field>
-          <Field label="Stream key">
+          <Field
+            label="Stream key"
+            hint="Stored encrypted. There is no screen that shows it again."
+          >
             <input
               type="password"
               autoComplete="new-password"
@@ -492,13 +561,16 @@ function StreamKeys({
               className="primary"
               disabled={!label || !ingestUrl || !key}
               onClick={() =>
-                void guard(() => api.createCredential({ label, ingestUrl, key }), () => {
-                  setOpen(false)
-                  setLabel('')
-                  setIngestUrl('')
-                  setKey('')
-                  reload()
-                })
+                void guard(
+                  () => api.createCredential({ label, ingestUrl, key }),
+                  () => {
+                    setOpen(false)
+                    setLabel('')
+                    setIngestUrl('')
+                    setKey('')
+                    reload()
+                  },
+                )
               }
             >
               Save

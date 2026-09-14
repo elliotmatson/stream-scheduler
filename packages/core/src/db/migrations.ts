@@ -406,9 +406,13 @@ function convertPipelinesToOutputs(db: MigrationDb): void {
         device_id, node_id, templates, enabled, created_at)
      VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, 1, ?)`,
   )
-  const labelOf = (table: 'device' | 'destination' | 'stream_credential', id: string | undefined): string | undefined => {
+  const labelOf = (
+    table: 'device' | 'destination' | 'stream_credential',
+    id: string | undefined,
+  ): string | undefined => {
     if (!id) return undefined
-    const row = db.prepare(`SELECT label FROM ${table} WHERE id = ?`).get(id) as { label: string } | undefined
+    const row = db.prepare(`SELECT label FROM ${table} WHERE id = ?`).get(id) as
+      { label: string } | undefined
     return row?.label
   }
 
@@ -514,6 +518,8 @@ function parseGraph(raw: string): { nodes: GraphNode[]; destinations: GraphDesti
   const graph = (parsed ?? {}) as { nodes?: unknown; destinations?: unknown }
   return {
     nodes: Array.isArray(graph.nodes) ? (graph.nodes as GraphNode[]) : [],
-    destinations: Array.isArray(graph.destinations) ? (graph.destinations as GraphDestination[]) : [],
+    destinations: Array.isArray(graph.destinations)
+      ? (graph.destinations as GraphDestination[])
+      : [],
   }
 }

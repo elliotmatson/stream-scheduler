@@ -86,7 +86,8 @@ export class StreamingEncoderApi {
 
   async livestream(): Promise<LivestreamState> {
     const state = await this.get<LivestreamState>('/livestreams/0')
-    if (!state) throw new DeviceError('no-livestream', 'The encoder did not report a livestream state.')
+    if (!state)
+      throw new DeviceError('no-livestream', 'The encoder did not report a livestream state.')
     return state
   }
 
@@ -140,11 +141,16 @@ export class StreamingEncoderApi {
       })
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error)
-      throw new DeviceError('unreachable', `Could not reach the encoder at ${this.baseUrl}: ${detail}`, {
-        retryable: true,
-        remediation: 'Check the address, that the encoder is powered on, and that port 80 is reachable.',
-        cause: error,
-      })
+      throw new DeviceError(
+        'unreachable',
+        `Could not reach the encoder at ${this.baseUrl}: ${detail}`,
+        {
+          retryable: true,
+          remediation:
+            'Check the address, that the encoder is powered on, and that port 80 is reachable.',
+          cause: error,
+        },
+      )
     }
   }
 

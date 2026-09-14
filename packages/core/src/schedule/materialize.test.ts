@@ -53,7 +53,11 @@ describe('materializeSeries', () => {
     const id = createSeries()
     const result = materializeSeries(db, id, { clock, horizonMs: 21 * 86_400_000 })
     expect(result.created).toBe(3)
-    expect(occurrences(id).map((o) => o.local_date)).toEqual(['2026-03-01', '2026-03-08', '2026-03-15'])
+    expect(occurrences(id).map((o) => o.local_date)).toEqual([
+      '2026-03-01',
+      '2026-03-08',
+      '2026-03-15',
+    ])
   })
 
   it('is idempotent', () => {
@@ -86,14 +90,18 @@ describe('materializeSeries', () => {
     expect(result.created).toBe(3)
     // The clock reads Wednesday 12:00Z and the service is at 09:00 local
     // (15:00Z), so today's own occurrence is still ahead and gets created.
-    expect(occurrences(id).map((o) => o.local_date)).toEqual(['2026-02-25', '2026-03-04', '2026-03-11'])
+    expect(occurrences(id).map((o) => o.local_date)).toEqual([
+      '2026-02-25',
+      '2026-03-04',
+      '2026-03-11',
+    ])
   })
 
   it('leaves an occurrence the user edited alone and reports it as detached', () => {
     const id = createSeries()
     materializeSeries(db, id, { clock, horizonMs: 21 * 86_400_000 })
     const [first] = occurrences(id)
-    db.prepare("UPDATE occurrence SET overrides = ? WHERE id = ?").run(
+    db.prepare('UPDATE occurrence SET overrides = ? WHERE id = ?').run(
       JSON.stringify({ title: 'Guest speaker' }),
       first!.id,
     )
@@ -148,7 +156,10 @@ describe('materializeSeries', () => {
   it('stores the local date in the series timezone, not the process timezone', () => {
     // 20:30 Chicago on Saturday is 02:30 UTC on Sunday. The stored date must
     // say Saturday, or the calendar shows the event on the wrong day.
-    const id = createSeries({ rrule: 'FREQ=WEEKLY;BYDAY=SA', dtstart: Date.parse('2026-02-08T02:30:00Z') })
+    const id = createSeries({
+      rrule: 'FREQ=WEEKLY;BYDAY=SA',
+      dtstart: Date.parse('2026-02-08T02:30:00Z'),
+    })
     materializeSeries(db, id, { clock, horizonMs: 10 * 86_400_000 })
     expect(occurrences(id)[0]?.local_date).toBe('2026-02-28')
   })

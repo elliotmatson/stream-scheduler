@@ -27,6 +27,23 @@ function Glyph({ children }: { children: ReactNode }): ReactNode {
   )
 }
 
+/** A gauge: what is happening right now, at a glance. */
+export function IconNow(): ReactNode {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      width="18"
+      height="18"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+    >
+      <path d="M4 18a8 8 0 1 1 16 0" strokeLinecap="round" />
+      <path d="M12 18 15.5 11" strokeLinecap="round" />
+    </svg>
+  )
+}
+
 export function IconSchedule(): ReactNode {
   return (
     <Glyph>
@@ -74,7 +91,7 @@ export function IconRuns(): ReactNode {
   )
 }
 
-export function IconAlerts(): ReactNode {
+export function IconNotifications(): ReactNode {
   return (
     <Glyph>
       <path d="M4 6.5a4 4 0 0 1 8 0c0 2.6.8 3.8 1.3 4.4.2.3 0 .6-.3.6H3c-.3 0-.5-.3-.3-.6.5-.6 1.3-1.8 1.3-4.4Z" />
@@ -112,7 +129,14 @@ export function IconMoon(): ReactNode {
 /** The brand mark: a play triangle inside the sidebar's rounded square. */
 export function IconBrand(): ReactNode {
   return (
-    <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true" focusable="false">
+    <svg
+      width="14"
+      height="14"
+      viewBox="0 0 16 16"
+      fill="currentColor"
+      aria-hidden="true"
+      focusable="false"
+    >
       <path d="M5.4 3.3a.8.8 0 0 1 1.2-.7l5.6 4.1a.8.8 0 0 1 0 1.3l-5.6 4.1a.8.8 0 0 1-1.2-.7V3.3Z" />
     </svg>
   )

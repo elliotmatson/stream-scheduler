@@ -34,7 +34,11 @@ export function sanitizeFilename(name: string, options: SanitizeOptions = {}): s
  * Returns a name not already in `taken`, suffixing `-2`, `-3` and so on.
  * Never returns an existing name: overwriting a recording loses it for good.
  */
-export function uniqueFilename(name: string, taken: Iterable<string>, options: SanitizeOptions = {}): string {
+export function uniqueFilename(
+  name: string,
+  taken: Iterable<string>,
+  options: SanitizeOptions = {},
+): string {
   const existing = new Set(taken)
   const base = sanitizeFilename(name, options)
   if (!existing.has(base)) return base

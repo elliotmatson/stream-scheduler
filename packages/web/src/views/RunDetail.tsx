@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import type { ReactNode } from 'react'
-import { api, useResource, type RunStep } from '../api.ts'
-import { Card, CopyButton, ErrorBanner, StatusPill } from '../components.tsx'
+import { api, useLiveRefresh, useResource, type RunStep } from '../api.ts'
+import { Card, CopyButton, Empty, ErrorBanner, StatusPill } from '../components.tsx'
 import { relative } from '../format.ts'
 
 /**
@@ -12,10 +12,22 @@ import { relative } from '../format.ts'
  * request". Requests and responses were scrubbed before they were written,
  * so this page is safe to screenshot into a bug report.
  */
-export function RunDetail({ runId, navigate }: { runId: string; navigate: (path: string) => void }): ReactNode {
+export function RunDetail({
+  runId,
+  navigate,
+}: {
+  runId: string
+  navigate: (path: string) => void
+}): ReactNode {
   const { data: run, error, reload } = useResource(() => api.run(runId), [runId])
   const [busy, setBusy] = useState(false)
   const [actionError, setActionError] = useState<string>()
+
+  // Steps land one at a time while a run is going, and this is the screen
+  // somebody watches when they are worried. A finished run never changes
+  // again, so it stops asking.
+  const finished = run !== undefined && ['completed', 'failed', 'cancelled'].includes(run.state)
+  useLiveRefresh(reload, !finished)
 
   const cancel = async (): Promise<void> => {
     setBusy(true)
@@ -40,20 +52,34 @@ export function RunDetail({ runId, navigate }: { runId: string; navigate: (path:
       <div className="page-head">
         <div>
           <h1>{run.seriesLabel}</h1>
-          <p className="muted" style={{ margin: '4px 0 0' }}>
+          <p
+            className="muted"
+            style={{ margin: '4px 0 0' }}
+            title="A run is retried from the start if it fails early enough to be worth retrying."
+          >
             Attempt {run.attempt} · started {run.startedAt ? relative(run.startedAt) : 'not yet'}
           </p>
         </div>
         <div className="row">
           <StatusPill status={run.state} />
-          <button onClick={reload}>Refresh</button>
+          <button
+            onClick={reload}
+            title="This screen updates itself while a run is going; this asks again now."
+          >
+            Refresh
+          </button>
           {/* The scheduler must never be the only way to stop a stream. */}
           {stoppable ? (
-            <button className="danger solid" disabled={busy} onClick={() => void cancel()}>
+            <button
+              className="danger solid"
+              disabled={busy}
+              title="Ends every stream and recording in this run, now."
+              onClick={() => void cancel()}
+            >
               Stop now
             </button>
           ) : null}
-          <button onClick={() => navigate('/')}>Back</button>
+          <button onClick={() => navigate('/')}>Back to Now</button>
         </div>
       </div>
 
@@ -64,7 +90,9 @@ export function RunDetail({ runId, navigate }: { runId: string; navigate: (path:
           <div className="banner error">
             <strong>{run.failure.code}</strong>
             <div>{run.failure.message}</div>
-            {run.failure.remediation ? <div style={{ marginTop: 6 }}>{run.failure.remediation}</div> : null}
+            {run.failure.remediation ? (
+              <div style={{ marginTop: 6 }}>{run.failure.remediation}</div>
+            ) : null}
           </div>
         ) : null}
 
@@ -88,7 +116,7 @@ export function RunDetail({ runId, navigate }: { runId: string; navigate: (path:
 
         <Card title="Steps">
           {(run.steps ?? []).length === 0 ? (
-            <p className="muted">No steps recorded.</p>
+            <p className="muted">Nothing has been attempted yet.</p>
           ) : (
             (run.steps ?? []).map((step) => <Step key={step.seq} step={step} />)
           )}
@@ -108,12 +136,24 @@ function Step({ step }: { step: RunStep }): ReactNode {
       <div style={{ minWidth: 0 }}>
         <div className="row" style={{ gap: 8 }}>
           <span className="step-kind">{step.label ?? step.kind}</span>
-          {step.attempts > 1 ? <span className="muted">{step.attempts} attempts</span> : null}
-          {step.externalId ? <span className="muted">→ {step.externalId}</span> : null}
+          {step.attempts > 1 ? (
+            <span className="muted" title="It was retried this many times before it settled.">
+              {step.attempts} attempts
+            </span>
+          ) : null}
+          {step.externalId ? (
+            <span className="muted" title="What the service calls the thing this step made.">
+              → {step.externalId}
+            </span>
+          ) : null}
         </div>
         {step.error ? <div style={{ color: 'var(--bad)', marginTop: 4 }}>{step.error}</div> : null}
         {hasDetail ? (
-          <button style={{ marginTop: 6 }} onClick={() => setOpen((o) => !o)}>
+          <button
+            style={{ marginTop: 6 }}
+            title="What was sent and what came back. Keys and tokens were scrubbed before this was written."
+            onClick={() => setOpen((o) => !o)}
+          >
             {open ? 'Hide' : 'Show'} detail
           </button>
         ) : null}
@@ -124,7 +164,11 @@ function Step({ step }: { step: RunStep }): ReactNode {
           </>
         ) : null}
       </div>
-      <div className="muted" style={{ whiteSpace: 'nowrap' }}>
+      <div
+        className="muted"
+        style={{ whiteSpace: 'nowrap' }}
+        title="How long the device or service took to answer."
+      >
         {step.durationMs === null ? '—' : `${step.durationMs} ms`}
       </div>
     </div>
@@ -132,42 +176,59 @@ function Step({ step }: { step: RunStep }): ReactNode {
 }
 
 export function Runs({ navigate }: { navigate: (path: string) => void }): ReactNode {
-  const { data, error } = useResource(() => api.runs(), [])
+  const { data, error, reload } = useResource(() => api.runs(), [])
+  useLiveRefresh(reload)
 
   return (
     <>
       <div className="page-head">
-        <h1>Runs</h1>
+        <div>
+          <h1>Runs</h1>
+          <p className="muted" style={{ margin: '4px 0 0' }}>
+            Every event the scheduler has taken on, newest first.
+          </p>
+        </div>
+        <button onClick={reload} title="This screen updates itself; this asks again now.">
+          Refresh
+        </button>
       </div>
       <ErrorBanner error={error} />
       <Card>
-        <div className="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>Event</th>
-                <th>Started</th>
-                <th>State</th>
-                <th />
-              </tr>
-            </thead>
-            <tbody>
-              {(data ?? []).map((run) => (
-                <tr key={run.id}>
-                  <td>{run.seriesLabel}</td>
-                  <td className="muted">{run.startedAt ? relative(run.startedAt) : '—'}</td>
-                  <td>
-                    <StatusPill status={run.state} />
-                  </td>
-                  <td>
-                    <button onClick={() => navigate(`/runs/${run.id}`)}>Timeline</button>
-                  </td>
+        {(data ?? []).length === 0 ? (
+          <Empty>Nothing has run yet.</Empty>
+        ) : (
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Event</th>
+                  <th>Started</th>
+                  <th>Status</th>
+                  <th />
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-        {(data ?? []).length === 0 ? <p className="muted">Nothing has run yet.</p> : null}
+              </thead>
+              <tbody>
+                {(data ?? []).map((run) => (
+                  <tr key={run.id}>
+                    <td>{run.seriesLabel}</td>
+                    <td className="muted">{run.startedAt ? relative(run.startedAt) : '—'}</td>
+                    <td>
+                      <StatusPill status={run.state} />
+                    </td>
+                    <td>
+                      <button
+                        onClick={() => navigate(`/runs/${run.id}`)}
+                        title="Every step this run has taken, and what the device said back."
+                      >
+                        Timeline
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </Card>
     </>
   )

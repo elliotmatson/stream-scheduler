@@ -9,8 +9,25 @@ import type { JsonValue } from './json.js'
  * it cannot accidentally log or persist one.
  */
 export type ConfigField =
-  | { type: 'textinput'; id: string; label: string; default?: string; required?: boolean; regex?: string; tooltip?: string }
-  | { type: 'number'; id: string; label: string; default?: number; min?: number; max?: number; required?: boolean; tooltip?: string }
+  | {
+      type: 'textinput'
+      id: string
+      label: string
+      default?: string
+      required?: boolean
+      regex?: string
+      tooltip?: string
+    }
+  | {
+      type: 'number'
+      id: string
+      label: string
+      default?: number
+      min?: number
+      max?: number
+      required?: boolean
+      tooltip?: string
+    }
   | { type: 'checkbox'; id: string; label: string; default?: boolean; tooltip?: string }
   | {
       type: 'dropdown'
@@ -39,7 +56,10 @@ export interface ConfigValidationIssue {
 }
 
 /** Validates submitted config against a plugin's declared fields. */
-export function validateConfig(fields: ConfigField[], values: ConfigValues): ConfigValidationIssue[] {
+export function validateConfig(
+  fields: ConfigField[],
+  values: ConfigValues,
+): ConfigValidationIssue[] {
   const issues: ConfigValidationIssue[] = []
   for (const field of fields) {
     if (field.type === 'static-text') continue
@@ -53,7 +73,8 @@ export function validateConfig(fields: ConfigField[], values: ConfigValues): Con
     }
     switch (field.type) {
       case 'textinput':
-        if (typeof value !== 'string') issues.push({ field: field.id, message: `${field.label} must be text` })
+        if (typeof value !== 'string')
+          issues.push({ field: field.id, message: `${field.label} must be text` })
         else if (field.regex && !new RegExp(field.regex).test(value))
           issues.push({ field: field.id, message: `${field.label} is not in the expected format` })
         break
@@ -66,14 +87,19 @@ export function validateConfig(fields: ConfigField[], values: ConfigValues): Con
           issues.push({ field: field.id, message: `${field.label} must be at most ${field.max}` })
         break
       case 'checkbox':
-        if (typeof value !== 'boolean') issues.push({ field: field.id, message: `${field.label} must be true or false` })
+        if (typeof value !== 'boolean')
+          issues.push({ field: field.id, message: `${field.label} must be true or false` })
         break
       case 'dropdown':
         if (!field.choices.some((c) => c.id === value))
-          issues.push({ field: field.id, message: `${field.label} is not one of the available choices` })
+          issues.push({
+            field: field.id,
+            message: `${field.label} is not one of the available choices`,
+          })
         break
       case 'secret':
-        if (typeof value !== 'string') issues.push({ field: field.id, message: `${field.label} must be text` })
+        if (typeof value !== 'string')
+          issues.push({ field: field.id, message: `${field.label} must be text` })
         break
     }
   }

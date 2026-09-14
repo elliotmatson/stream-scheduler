@@ -9,7 +9,11 @@ export class DeviceError extends Error {
   readonly retryable: boolean
   readonly remediation: string | undefined
 
-  constructor(code: string, message: string, options: { retryable?: boolean; remediation?: string; cause?: unknown } = {}) {
+  constructor(
+    code: string,
+    message: string,
+    options: { retryable?: boolean; remediation?: string; cause?: unknown } = {},
+  ) {
     super(message, options.cause === undefined ? undefined : { cause: options.cause })
     this.name = 'DeviceError'
     this.code = code

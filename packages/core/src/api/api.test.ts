@@ -144,11 +144,17 @@ describe('devices', () => {
   })
 
   it('404s for an unknown plugin', async () => {
-    expect((await post('/api/devices', { pluginId: 'atem', label: 'x', config: {} })).status).toBe(404)
+    expect((await post('/api/devices', { pluginId: 'atem', label: 'x', config: {} })).status).toBe(
+      404,
+    )
   })
 
   it('reports probed capabilities on connect', async () => {
-    const created = await post('/api/devices', { pluginId: 'mock', label: 'Encoder', config: { kind: 'encoder' } })
+    const created = await post('/api/devices', {
+      pluginId: 'mock',
+      label: 'Encoder',
+      config: { kind: 'encoder' },
+    })
     const connected = await post(`/api/devices/${created.json.id}/connect`, {})
     expect(connected.json.capabilities.model).toBe('Mock encoder')
     expect(connected.json.nodes.map((n: { id: string }) => n.id)).toEqual(['stream'])
@@ -174,7 +180,11 @@ describe('devices', () => {
     expect(after.config.password).toBe('••••••••')
     // Still decryptable, i.e. the masked marker did not overwrite the secret.
     const ref = JSON.parse(
-      (app.db.prepare('SELECT config FROM device WHERE id = ?').get(created.json.id) as { config: string }).config,
+      (
+        app.db.prepare('SELECT config FROM device WHERE id = ?').get(created.json.id) as {
+          config: string
+        }
+      ).config,
     ).password as string
     expect(app.vault.reveal(ref)).toBe('device-password-value')
   })
@@ -183,7 +193,9 @@ describe('devices', () => {
 describe('series and occurrences', () => {
   it('materializes occurrences when a series is created', async () => {
     await seedEverything()
-    const occurrences = await get(`/api/occurrences?from=${START - MINUTE}&to=${START + 21 * 86_400_000}`)
+    const occurrences = await get(
+      `/api/occurrences?from=${START - MINUTE}&to=${START + 21 * 86_400_000}`,
+    )
     expect(occurrences.json.map((o: { localDate: string }) => o.localDate)).toEqual([
       '2026-03-08',
       '2026-03-15',
@@ -194,12 +206,18 @@ describe('series and occurrences', () => {
 
   it('rejects an invalid timezone and an invalid rule', async () => {
     const base = { label: 'S', dtstart: START, durationMs: 90 * MINUTE }
-    expect((await post('/api/series', { ...base, timezone: 'America/Chicgao', rrule: null })).status).toBe(400)
-    expect((await post('/api/series', { ...base, timezone: 'UTC', rrule: 'FREQ=NEVER' })).status).toBe(400)
+    expect(
+      (await post('/api/series', { ...base, timezone: 'America/Chicgao', rrule: null })).status,
+    ).toBe(400)
+    expect(
+      (await post('/api/series', { ...base, timezone: 'UTC', rrule: 'FREQ=NEVER' })).status,
+    ).toBe(400)
   })
 
   it('previews rendered names for the next occurrences', async () => {
-    const { seriesId } = await seedEverything({ title: '{{event.name}} - {{date "EEEE, MMMM d, yyyy"}}' })
+    const { seriesId } = await seedEverything({
+      title: '{{event.name}} - {{date "EEEE, MMMM d, yyyy"}}',
+    })
     const preview = await get(`/api/series/${seriesId}/preview`)
     expect(preview.json).toHaveLength(3)
     // Per output, because with several streams in a window the event-level
@@ -219,9 +237,13 @@ describe('series and occurrences', () => {
     await seedEverything()
     const [first] = (await get(`/api/occurrences?from=${START - MINUTE}&to=${START + MINUTE}`)).json
     await post(`/api/occurrences/${first.id}/skip`, {})
-    expect((await get(`/api/occurrences?from=${START - MINUTE}&to=${START + MINUTE}`)).json[0].status).toBe('skipped')
+    expect(
+      (await get(`/api/occurrences?from=${START - MINUTE}&to=${START + MINUTE}`)).json[0].status,
+    ).toBe('skipped')
     await post(`/api/occurrences/${first.id}/unskip`, {})
-    expect((await get(`/api/occurrences?from=${START - MINUTE}&to=${START + MINUTE}`)).json[0].status).toBe('pending')
+    expect(
+      (await get(`/api/occurrences?from=${START - MINUTE}&to=${START + MINUTE}`)).json[0].status,
+    ).toBe('pending')
   })
 
   it('reconciles occurrences when the rule changes', async () => {
@@ -233,7 +255,118 @@ describe('series and occurrences', () => {
     })
     expect(patched.statusCode).toBe(200)
     const occurrences = await get(`/api/occurrences?from=${START}&to=${START + 14 * 86_400_000}`)
-    expect(occurrences.json.every((o: { localDate: string }) => o.localDate !== '2026-03-15')).toBe(true)
+    expect(occurrences.json.every((o: { localDate: string }) => o.localDate !== '2026-03-15')).toBe(
+      true,
+    )
+  })
+})
+
+describe('the status screen', () => {
+  it('answers what is on air, what is next and what needs somebody, in one read', async () => {
+    const { deviceId } = await seedEverything()
+    const [first] = (await get(`/api/occurrences?from=${START - MINUTE}&to=${START + MINUTE}`)).json
+    clock.set(START)
+    await post(`/api/occurrences/${first.id}/start-now`, {})
+
+    const dashboard = (await get('/api/dashboard')).json
+    // Every number on the page comes from one instant, the server's.
+    expect(dashboard.now).toBe(START)
+
+    expect(dashboard.onAir).toHaveLength(1)
+    const [run] = dashboard.onAir
+    expect(run.seriesLabel).toBe('Sunday Service')
+    expect(run.outputs).toEqual([
+      expect.objectContaining({
+        label: 'Main',
+        kind: 'stream',
+        state: 'live',
+        deviceLabel: 'Sanctuary encoder',
+      }),
+    ])
+    // Read from what the device pushed, not from asking it again.
+    expect(run.outputs[0].telemetry.bitrateBps).toBe(6_000_000)
+
+    expect(dashboard.devices).toEqual([
+      expect.objectContaining({
+        id: deviceId,
+        health: 'connected',
+        detail: 'streaming at 6000 kbps',
+      }),
+    ])
+    expect(dashboard.attention).toEqual([])
+  })
+
+  it('shows what is coming, and says nothing is on air when nothing is', async () => {
+    await seedEverything()
+    clock.set(START - 2 * 60 * MINUTE)
+
+    const dashboard = (await get('/api/dashboard')).json
+    expect(dashboard.onAir).toEqual([])
+    expect(dashboard.next[0]).toMatchObject({
+      seriesLabel: 'Sunday Service',
+      outputs: 1,
+      runId: null,
+    })
+  })
+
+  it('names a failed output while the rest of the event carries on', async () => {
+    // The whole point of per-output isolation: one stream down is not the
+    // event down, and somebody has to be told which.
+    const { seriesId } = await seedEverything()
+    const deaf = await post('/api/devices', {
+      pluginId: 'mock',
+      label: 'Deaf encoder',
+      config: { kind: 'encoder', fault: 'ignores-writes' },
+    })
+    await post(`/api/devices/${deaf.json.id}/connect`, {})
+    await post(`/api/series/${seriesId}/outputs`, {
+      kind: 'stream',
+      label: 'Overflow',
+      durationMs: 90 * MINUTE,
+      credentialId: (
+        await post('/api/credentials', {
+          label: 'Overflow key',
+          ingestUrl: 'rtmps://b.rtmp.youtube.com/live2',
+          key: 'live_overflow-key',
+        })
+      ).json.id,
+      deviceId: deaf.json.id,
+      nodeId: 'stream',
+    })
+
+    const [first] = (await get(`/api/occurrences?from=${START - MINUTE}&to=${START + MINUTE}`)).json
+    clock.set(START)
+    await post(`/api/occurrences/${first.id}/start-now`, {})
+
+    const dashboard = (await get('/api/dashboard')).json
+    const outputs = dashboard.onAir[0].outputs
+    expect(outputs.find((o: { label: string }) => o.label === 'Main').state).toBe('live')
+    expect(outputs.find((o: { label: string }) => o.label === 'Overflow').state).toBe('failed')
+    expect(dashboard.attention[0].message).toMatch(/Overflow/)
+    expect(dashboard.attention[0].href).toBe(`/runs/${dashboard.onAir[0].runId}`)
+  })
+
+  it('warns about a card with less than a service left on it', async () => {
+    const deck = await post('/api/devices', {
+      pluginId: 'mock',
+      label: 'Deck',
+      config: { kind: 'recorder' },
+    })
+    await post(`/api/devices/${deck.json.id}/connect`, {})
+    // Slot 2 is the nearly-full one in the mock; recording onto it is what
+    // makes its headroom worth warning about.
+    await post(`/api/devices/${deck.json.id}/nodes/record/startRecording`, {
+      filename: 'service',
+      slot: 2,
+    })
+
+    const dashboard = (await get('/api/dashboard')).json
+    expect(dashboard.attention).toEqual([
+      expect.objectContaining({
+        kind: 'media',
+        message: expect.stringContaining('40 minutes left'),
+      }),
+    ])
   })
 })
 
@@ -248,10 +381,12 @@ describe('runs', () => {
     expect(started.json.state).toBe('running')
 
     const run = await get(`/api/runs/${started.json.runId}`)
-    expect(run.json.steps.map((s: { label: string; state: string }) => `${s.label}:${s.state}`)).toEqual([
+    expect(
+      run.json.steps.map((s: { label: string; state: string }) => `${s.label}:${s.state}`),
+    ).toEqual([
       'Main: point the encoder at it:done',
-      'Main: go live:done',
-      'Main: stop:pending',
+      'Main: start streaming:done',
+      'Main: stop streaming:pending',
     ])
     // The timeline is safe to screenshot and attach to a bug report.
     expect(JSON.stringify(run.json)).not.toContain('live_super-secret-key')
@@ -270,15 +405,17 @@ describe('runs', () => {
 
     const run = await get(`/api/runs/${prepared.json.runId}`)
     expect(run.json.state).toBe('ready')
-    const states = run.json.steps.map((step: { label: string; state: string }) => `${step.label}:${step.state}`)
+    const states = run.json.steps.map(
+      (step: { label: string; state: string }) => `${step.label}:${step.state}`,
+    )
     // Everything that puts it on air is still to come at its own time:
     // preparing is not starting. Pointing the encoder is part of going on
     // air rather than of preparing, so that one encoder can carry the 9:00
     // service and then the 11:00 one.
     expect(states).toEqual([
       'Main: point the encoder at it:pending',
-      'Main: go live:pending',
-      'Main: stop:pending',
+      'Main: start streaming:pending',
+      'Main: stop streaming:pending',
     ])
 
     const state = await get(`/api/devices/${deviceId}/nodes/stream/state`)
@@ -349,11 +486,15 @@ describe('runs', () => {
     clock.set(START)
     const started = await post(`/api/occurrences/${first.id}/start-now`, {})
 
-    const cancelled = await post(`/api/runs/${started.json.runId}/cancel`, { reason: 'Service ended early' })
+    const cancelled = await post(`/api/runs/${started.json.runId}/cancel`, {
+      reason: 'Service ended early',
+    })
     expect(cancelled.json.state).toBe('cancelled')
 
     const run = await get(`/api/runs/${started.json.runId}`)
-    expect(run.json.steps.find((s: { label: string }) => s.label === 'Main: stop').state).toBe('done')
+    expect(
+      run.json.steps.find((s: { label: string }) => s.label === 'Main: stop streaming').state,
+    ).toBe('done')
   })
 
   it('404s for an unknown run', async () => {
@@ -368,7 +509,9 @@ describe('driving a device by hand', () => {
     const before = await get(`/api/devices/${deviceId}/nodes/record/state`)
     expect(before.json.state.recording.active).toBe(false)
 
-    const started = await post(`/api/devices/${deviceId}/nodes/record/startRecording`, { filename: 'take 1' })
+    const started = await post(`/api/devices/${deviceId}/nodes/record/startRecording`, {
+      filename: 'take 1',
+    })
     expect(started.status).toBe(200)
     // The state comes back from a read, not from the command being accepted.
     expect(started.json.state.recording.active).toBe(true)
@@ -377,7 +520,7 @@ describe('driving a device by hand', () => {
     expect(stopped.json.state.recording.active).toBe(false)
   })
 
-  it('passes on the device\'s own refusal rather than calling it a server error', async () => {
+  it("passes on the device's own refusal rather than calling it a server error", async () => {
     // An encoder that has never been pointed anywhere cannot stream, and
     // saying so is the single most likely thing to happen on this screen.
     const { deviceId } = await seedEverything()
@@ -442,19 +585,24 @@ describe('driving a device by hand', () => {
     expect(refused.json.error).toMatch(/not connected/)
   })
 
-  it('offers no way to route signal, which is the desk\'s job and not the scheduler\'s', async () => {
+  it("offers no way to route signal, which is the desk's job and not the scheduler's", async () => {
     // The ATEM adapter implements `route` and nothing above the plugin
     // drives it. Pinned so that stays a decision rather than drifting back
     // in because the action happens to exist.
     const { deviceId } = await seedEverything()
-    const refused = await post(`/api/devices/${deviceId}/nodes/stream/route`, { input: '3', output: '0' })
+    const refused = await post(`/api/devices/${deviceId}/nodes/stream/route`, {
+      input: '3',
+      output: '0',
+    })
     expect(refused.status).toBe(400)
   })
 
   it('points an encoder at a saved target by id, so no key crosses this API', async () => {
     const { deviceId, credentialId } = await seedEverything()
 
-    const pointed = await post(`/api/devices/${deviceId}/nodes/stream/stream-target`, { credentialId })
+    const pointed = await post(`/api/devices/${deviceId}/nodes/stream/stream-target`, {
+      credentialId,
+    })
     expect(pointed.status).toBe(200)
     expect(pointed.json.state.streaming.targetUrl).toBe('rtmps://a.rtmp.youtube.com/live2')
     // Read back as a fingerprint: the key went to the device and nowhere else.
@@ -472,7 +620,9 @@ describe('driving a device by hand', () => {
     clock.set(START)
     await post(`/api/occurrences/${first.id}/start-now`, {})
 
-    const refused = await post(`/api/devices/${deviceId}/nodes/stream/stream-target`, { credentialId })
+    const refused = await post(`/api/devices/${deviceId}/nodes/stream/stream-target`, {
+      credentialId,
+    })
     expect(refused.status).toBe(409)
     expect(refused.json.error).toMatch(/Sunday Service/)
   })
@@ -506,13 +656,17 @@ describe('driving a device by hand', () => {
     clock.set(START)
     await post(`/api/occurrences/${first.id}/start-now`, {})
 
-    const device = (await get('/api/devices')).json.find((row: { id: string }) => row.id === deviceId)
+    const device = (await get('/api/devices')).json.find(
+      (row: { id: string }) => row.id === deviceId,
+    )
     expect(device.inUseBy).toEqual([{ runId: expect.any(String), label: 'Sunday Service' }])
   })
 
   it('says nothing is using a device when nothing is', async () => {
     const { deviceId } = await seedEverything()
-    const device = (await get('/api/devices')).json.find((row: { id: string }) => row.id === deviceId)
+    const device = (await get('/api/devices')).json.find(
+      (row: { id: string }) => row.id === deviceId,
+    )
     expect(device.inUseBy).toEqual([])
   })
 
@@ -549,7 +703,11 @@ describe('driving a device by hand', () => {
 
   it('will not erase a card an event is recording onto', async () => {
     const { seriesId } = await seedEverything()
-    const deck = await post('/api/devices', { pluginId: 'mock', label: 'Deck', config: { kind: 'recorder' } })
+    const deck = await post('/api/devices', {
+      pluginId: 'mock',
+      label: 'Deck',
+      config: { kind: 'recorder' },
+    })
     await post(`/api/devices/${deck.json.id}/connect`, {})
     await post(`/api/series/${seriesId}/outputs`, {
       kind: 'recording',
@@ -576,7 +734,11 @@ describe('driving a device by hand', () => {
 })
 
 async function connectRecorder(): Promise<string> {
-  const device = await post('/api/devices', { pluginId: 'mock', label: 'Deck', config: { kind: 'recorder' } })
+  const device = await post('/api/devices', {
+    pluginId: 'mock',
+    label: 'Deck',
+    config: { kind: 'recorder' },
+  })
   await post(`/api/devices/${device.json.id}/connect`, {})
   return device.json.id as string
 }
@@ -599,13 +761,19 @@ describe('the OAuth callback address', () => {
       configSchema: [],
       providesIngest: true,
       oauth: {
-        begin: () => ({ url: 'https://accounts.google.invalid/o/oauth2/v2/auth', state: 'state', verifier: 'v' }),
+        begin: () => ({
+          url: 'https://accounts.google.invalid/o/oauth2/v2/auth',
+          state: 'state',
+          verifier: 'v',
+        }),
         complete: async () => {
           throw new Error('not exercised here')
         },
       },
       createDestination: async (ctx) => ({
-        listPlaylists: async () => [{ id: `PL-${ctx.config.accountRef as string}`, title: 'Sunday Services' }],
+        listPlaylists: async () => [
+          { id: `PL-${ctx.config.accountRef as string}`, title: 'Sunday Services' },
+        ],
         prepare: async () => {
           throw new Error('not exercised here')
         },
@@ -623,7 +791,8 @@ describe('the OAuth callback address', () => {
   // to be what a browser actually reaches.
   const instructions = async (headers: Record<string, string>) =>
     JSON.parse(
-      (await server.inject({ method: 'GET', url: '/api/oauth/youtube/instructions', headers })).body,
+      (await server.inject({ method: 'GET', url: '/api/oauth/youtube/instructions', headers }))
+        .body,
     )
 
   it('points alert links at the address a browser actually used', async () => {
@@ -732,7 +901,6 @@ describe('the OAuth callback address', () => {
     const body = await instructions({ host: '127.0.0.1:8500' })
     expect(body.warnings.some((warning: string) => warning.includes('localhost'))).toBe(false)
   })
-
 })
 
 describe('credentials', () => {
@@ -795,7 +963,11 @@ describe('schedule preview', () => {
   })
 
   it('reports a bad token inline rather than failing the whole preview', async () => {
-    const preview = await post('/api/schedule/preview', { ...base, count: 1, templates: { title: '{{nonsense}}' } })
+    const preview = await post('/api/schedule/preview', {
+      ...base,
+      count: 1,
+      templates: { title: '{{nonsense}}' },
+    })
     expect(preview.status).toBe(200)
     expect(preview.json.occurrences[0].error).toMatch(/nonsense/)
     // Still shows when it would air, which is the other half of the answer.
@@ -808,7 +980,9 @@ describe('schedule preview', () => {
   })
 
   it('rejects a timezone that does not exist', async () => {
-    expect((await post('/api/schedule/preview', { ...base, timezone: 'America/Nowhere' })).status).toBe(400)
+    expect(
+      (await post('/api/schedule/preview', { ...base, timezone: 'America/Nowhere' })).status,
+    ).toBe(400)
   })
 })
 
@@ -908,7 +1082,9 @@ describe('outputs', () => {
       nodeId: 'stream',
     })
 
-    const conflict = clashing.json.conflicts.find((entry: { kind: string }) => entry.kind === 'destination')
+    const conflict = clashing.json.conflicts.find(
+      (entry: { kind: string }) => entry.kind === 'destination',
+    )
     expect(conflict.detail).toContain('Main channel')
     expect(conflict.detail).toContain('Reuse one ingestion stream')
   })
@@ -964,12 +1140,18 @@ describe('outputs', () => {
       nodeId: 'stream',
     })
 
-    expect(added.json.conflicts.filter((entry: { kind: string }) => entry.kind === 'destination')).toEqual([])
+    expect(
+      added.json.conflicts.filter((entry: { kind: string }) => entry.kind === 'destination'),
+    ).toEqual([])
   })
 
   it('does not call a recording and a stream on one device a clash', async () => {
     const { seriesId } = await seedEverything()
-    const deck = await post('/api/devices', { pluginId: 'mock', label: 'Deck', config: { kind: 'recorder' } })
+    const deck = await post('/api/devices', {
+      pluginId: 'mock',
+      label: 'Deck',
+      config: { kind: 'recorder' },
+    })
     await post(`/api/devices/${deck.json.id}/connect`, {})
     const added = await post(`/api/series/${seriesId}/outputs`, {
       kind: 'recording',
@@ -1014,7 +1196,11 @@ describe('outputs', () => {
 
   it('reorders in one call rather than one patch per row', async () => {
     const { seriesId, outputId } = await seedEverything()
-    const deck = await post('/api/devices', { pluginId: 'mock', label: 'Deck', config: { kind: 'recorder' } })
+    const deck = await post('/api/devices', {
+      pluginId: 'mock',
+      label: 'Deck',
+      config: { kind: 'recorder' },
+    })
     await post(`/api/devices/${deck.json.id}/connect`, {})
     const second = await post(`/api/series/${seriesId}/outputs`, {
       kind: 'recording',
@@ -1027,7 +1213,10 @@ describe('outputs', () => {
     const reordered = await post(`/api/series/${seriesId}/outputs/order`, {
       order: [second.json.id, outputId],
     })
-    expect(reordered.json.outputs.map((o: { label: string }) => o.label)).toEqual(['Archive', 'Main'])
+    expect(reordered.json.outputs.map((o: { label: string }) => o.label)).toEqual([
+      'Archive',
+      'Main',
+    ])
   })
 
   it('removes an output and leaves the event alone', async () => {
@@ -1039,7 +1228,7 @@ describe('outputs', () => {
 })
 
 describe('wall-clock start times', () => {
-  it('resolves the time an operator typed in the event\'s own zone', async () => {
+  it("resolves the time an operator typed in the event's own zone", async () => {
     const preview = await post('/api/schedule/preview', {
       label: 'Sunday Service',
       timezone: 'America/Chicago',
@@ -1090,7 +1279,10 @@ describe('wall-clock start times', () => {
     const patched = await server.inject({
       method: 'PATCH',
       url: `/api/series/${series.json.id}`,
-      payload: { timezone: 'America/New_York', dtstartLocal: { date: '2026-03-01', time: '09:00' } },
+      payload: {
+        timezone: 'America/New_York',
+        dtstartLocal: { date: '2026-03-01', time: '09:00' },
+      },
     })
     expect(patched.statusCode).toBe(200)
     expect((await get('/api/series')).json[0].dtstart).toBe(Date.parse('2026-03-01T14:00:00Z'))

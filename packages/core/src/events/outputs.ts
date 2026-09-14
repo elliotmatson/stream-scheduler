@@ -111,7 +111,10 @@ export function toOutput(row: OutputRow): EventOutput {
  * Per key rather than all-or-nothing: an output that only wants a different
  * title should not have to restate the description it was happy with.
  */
-export function effectiveTemplates(event: OutputTemplates, output: OutputTemplates): OutputTemplates {
+export function effectiveTemplates(
+  event: OutputTemplates,
+  output: OutputTemplates,
+): OutputTemplates {
   const merged: OutputTemplates = { ...event }
   for (const [key, value] of Object.entries(output)) {
     if (typeof value === 'string' && value.length > 0) merged[key as keyof OutputTemplates] = value

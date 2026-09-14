@@ -69,13 +69,13 @@ time — the steps are already the durable record of what was attempted and what
 landed, and a second copy of the same fact is a second thing that can be wrong
 after a crash.
 
-| Phase | At | Does |
-|---|---|---|
-| prepare | `window start − prepare_lead_ms` (default T−30m) | For **every** output at once: render templates, create the broadcast, ensure and bind the ingestion stream, resolve the key. |
-| ready | — | Everything staged. The UI shows a green "ready" and the resolved titles, so an operator can eyeball them before anything goes out. |
-| start | per output, at `window start + offset − preroll_ms` | Point the encoder at this output's key and read it back, then tell it to start. Or roll the recorder. |
-| stop | per output, at `... + duration + postroll_ms` | Stop that output, releasing the encoder for whatever comes next. |
-| complete | window end | Let each broadcast finish. Insert into playlists. Apply final metadata. |
+| Phase    | At                                                  | Does                                                                                                                               |
+| -------- | --------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| prepare  | `window start − prepare_lead_ms` (default T−30m)    | For **every** output at once: render templates, create the broadcast, ensure and bind the ingestion stream, resolve the key.       |
+| ready    | —                                                   | Everything staged. The UI shows a green "ready" and the resolved titles, so an operator can eyeball them before anything goes out. |
+| start    | per output, at `window start + offset − preroll_ms` | Point the encoder at this output's key and read it back, then tell it to start. Or roll the recorder.                              |
+| stop     | per output, at `... + duration + postroll_ms`       | Stop that output, releasing the encoder for whatever comes next.                                                                   |
+| complete | window end                                          | Let each broadcast finish. Insert into playlists. Apply final metadata.                                                            |
 
 Stops are serviced before starts on any given tick, so an encoder handing over
 from the 9:00 service to the 11:00 one is released before the next output
@@ -84,7 +84,7 @@ claims it.
 A long prepare lead is the single highest-value reliability feature: it moves
 every failure that can be detected in advance — expired token, unreachable
 encoder, quota exhausted, bad template — from 09:00:00 to 08:30:00, where a
-human can still fix it. Preparing *all* the outputs then, rather than each just
+human can still fix it. Preparing _all_ the outputs then, rather than each just
 before it airs, is the same argument: finding out at 08:30 that the 11:00
 broadcast cannot be created is worth something; finding out at 11:00 is not.
 
@@ -118,7 +118,7 @@ and the recording that runs to 12:45 are still perfectly deliverable. See
 The core invariant:
 
 > **A step writes its `idempotency_key` and intent to the database, in a committed
-> transaction, *before* making the external call. It writes `external_id` after.**
+> transaction, _before_ making the external call. It writes `external_id` after.**
 
 A crash can therefore leave a step in exactly one ambiguous state: `running`, with
 a key but no external id. Recovery is then well-defined rather than a guess. On

@@ -57,7 +57,8 @@ class FakeAtem implements AtemClient {
   }
 
   emit(event: string, ...args: unknown[]): void {
-    for (const handler of this.handlers.get(event) ?? []) (handler as (...a: unknown[]) => void)(...args)
+    for (const handler of this.handlers.get(event) ?? [])
+      (handler as (...a: unknown[]) => void)(...args)
   }
 
   async setStreamingService(props: {
@@ -117,7 +118,11 @@ class FakeAtem implements AtemClient {
 
   private setRecordingStatus(state: Enums.RecordingStatus): void {
     if (this.state?.recording?.status) {
-      this.state.recording.status = { ...this.state.recording.status, state, error: Enums.RecordingError.None }
+      this.state.recording.status = {
+        ...this.state.recording.status,
+        state,
+        error: Enums.RecordingError.None,
+      }
     }
   }
 }
@@ -147,7 +152,12 @@ function streamingBlock() {
   return {
     status: { state: Enums.StreamingStatus.Idle, error: Enums.StreamingError.None },
     stats: { cacheUsed: 0, encodingBitrate: 6_000_000 },
-    service: { serviceName: '', url: '', key: '', bitrates: [6_000_000, 3_000_000] as [number, number] },
+    service: {
+      serviceName: '',
+      url: '',
+      key: '',
+      bitrates: [6_000_000, 3_000_000] as [number, number],
+    },
   }
 }
 
@@ -158,7 +168,12 @@ function recordingBlock() {
       error: Enums.RecordingError.None,
       recordingTimeAvailable: 7200,
     },
-    properties: { filename: '', workingSet1DiskId: 7, workingSet2DiskId: 0, recordInAllCameras: false },
+    properties: {
+      filename: '',
+      workingSet1DiskId: 7,
+      workingSet2DiskId: 0,
+      recordInAllCameras: false,
+    },
     disks: {},
   }
 }
@@ -204,12 +219,17 @@ async function connect(
 
 describe('capability probing', () => {
   it('derives capabilities from what the switcher reports, not a model table', async () => {
-    const client = new FakeAtem({ streaming: streamingBlock(), recording: recordingBlock() } as Partial<AtemState>)
+    const client = new FakeAtem({
+      streaming: streamingBlock(),
+      recording: recordingBlock(),
+    } as Partial<AtemState>)
     const atem = await connect(client)
 
     const capabilities = await atem.probe()
     expect(capabilities.model).toBe('ATEM Mini Pro')
-    expect(capabilities.features).toEqual(expect.arrayContaining(['streaming', 'recording', 'aux:1']))
+    expect(capabilities.features).toEqual(
+      expect.arrayContaining(['streaming', 'recording', 'aux:1']),
+    )
   })
 
   it('offers no streaming node on a switcher that does not stream', async () => {
@@ -218,14 +238,14 @@ describe('capability probing', () => {
     const atem = await connect(client)
 
     const nodes = await atem.listNodes()
-    expect(nodes.map((n) => n.id)).toEqual(['aux'])
+    expect(nodes.map((n) => n.id)).toEqual([])
     expect((await atem.probe()).features).not.toContain('streaming')
   })
 
   it('offers a recorder only when the switcher reports one', async () => {
     const client = new FakeAtem({ recording: recordingBlock() } as Partial<AtemState>)
     const atem = await connect(client)
-    expect((await atem.listNodes()).map((n) => n.id)).toEqual(['record', 'aux'])
+    expect((await atem.listNodes()).map((n) => n.id)).toEqual(['record'])
   })
 
   it('declares the stream output as single-link, so fan-out needs a relay', async () => {
@@ -237,8 +257,25 @@ describe('capability probing', () => {
 })
 
 describe('recording media', () => {
+  it('offers the drive over FTP, which is how a recording gets off the box', async () => {
+    const client = new FakeAtem({ recording: recordingBlock() } as Partial<AtemState>)
+    const atem = await connect(client)
+
+    const ftp = (await atem.probe()).links?.find((link) => link.url.startsWith('ftp://'))
+    expect(ftp?.url).toBe('ftp://10.0.0.5/')
+    expect(ftp?.note).toMatch(/while recording/i)
+  })
+
+  it('offers no drive on a switcher that does not record', async () => {
+    const client = new FakeAtem({ streaming: streamingBlock() } as Partial<AtemState>)
+    const atem = await connect(client)
+    expect((await atem.probe()).links ?? []).toEqual([])
+  })
+
   it('reports the switcher\u2019s disks the way a deck reports its cards', async () => {
-    const client = new FakeAtem({ recording: { ...recordingBlock(), disks: disks() } } as Partial<AtemState>)
+    const client = new FakeAtem({
+      recording: { ...recordingBlock(), disks: disks() },
+    } as Partial<AtemState>)
     const atem = await connect(client)
 
     const state = await atem.invoke('record', 'readState')
@@ -269,7 +306,9 @@ describe('recording media', () => {
     // ATEM Software Control formats media over USB; the control protocol
     // this adapter speaks has no command for it, and a Format button that
     // did nothing would be worse than none.
-    const client = new FakeAtem({ recording: { ...recordingBlock(), disks: disks() } } as Partial<AtemState>)
+    const client = new FakeAtem({
+      recording: { ...recordingBlock(), disks: disks() },
+    } as Partial<AtemState>)
     const atem = await connect(client)
     const record = (await atem.listNodes()).find((node) => node.id === 'record')
     expect(record?.supports).not.toContain('formatStorage')
@@ -277,17 +316,60 @@ describe('recording media', () => {
 })
 
 describe('encoder quality', () => {
+  it('speaks the names ATEM Software Control uses, and says what they are in Mb/s', async () => {
+    // The names live in a Streaming.xml on the computer running that app,
+    // not in the switcher, so an operator who knows "Streaming High" would
+    // otherwise have to translate it into a pair of numbers every time.
+    const client = new FakeAtem({ streaming: streamingBlock() } as Partial<AtemState>)
+    const atem = await connect(client)
+
+    await atem.invoke('stream', 'applyStreamTarget', {
+      url: 'rtmps://x/live2',
+      key: 'live_k',
+      quality: 'Streaming High',
+    })
+    expect(client.state?.streaming?.service.bitrates).toEqual([6_000_000, 9_000_000])
+
+    const state = await atem.invoke('stream', 'readState')
+    // Reported by name, with the figures alongside, so a caller that asked
+    // either way recognises its own setting coming back.
+    expect(state?.options?.quality?.current).toBe('Streaming High')
+    expect(state?.options?.quality?.aliases).toEqual(['6-9'])
+  })
+
+  it('takes the recording presets too, since one encoder serves both', async () => {
+    const client = new FakeAtem({
+      streaming: streamingBlock(),
+      recording: recordingBlock(),
+    } as Partial<AtemState>)
+    const atem = await connect(client)
+
+    await atem.invoke('record', 'startRecording', {
+      filename: 'service',
+      quality: 'HyperDeck High',
+    })
+    expect(client.state?.streaming?.service.bitrates).toEqual([45_000_000, 70_000_000])
+    expect((await atem.invoke('record', 'readState'))?.options?.quality?.current).toBe(
+      'HyperDeck High',
+    )
+  })
+
   // One H.264 encoder feeds the stream and the recording, so the bitrate is
   // one setting with two users. The named qualities an operator knows from
   // ATEM Software Control are a file on that computer, not something the
   // switcher can be asked for, so this speaks in Mb/s.
   it('reports what the switcher is on, in the vocabulary it takes back', async () => {
-    const client = new FakeAtem({ streaming: streamingBlock(), recording: recordingBlock() } as Partial<AtemState>)
+    const client = new FakeAtem({
+      streaming: streamingBlock(),
+      recording: recordingBlock(),
+    } as Partial<AtemState>)
     client.state!.streaming!.service.bitrates = [7_000_000, 9_000_000]
     const atem = await connect(client)
 
     const stream = await atem.invoke('stream', 'readState')
-    expect(stream?.options?.quality).toMatchObject({ current: '7-9', choices: [] })
+    // A pair that is not one of the presets reads as the figures.
+    expect(stream?.options?.quality).toMatchObject({ current: '7-9', aliases: [] })
+    expect(stream?.options?.quality?.choices).toContain('Streaming High')
     expect(stream?.options?.quality?.bitrate).toMatchObject({ minMbps: 3, maxMbps: 70 })
 
     // Reported on the recorder too, because it is the recorder's quality
@@ -300,7 +382,11 @@ describe('encoder quality', () => {
     const client = new FakeAtem({ streaming: streamingBlock() } as Partial<AtemState>)
     const atem = await connect(client)
 
-    await atem.invoke('stream', 'applyStreamTarget', { url: 'rtmps://x/live2', key: 'live_k', quality: '9' })
+    await atem.invoke('stream', 'applyStreamTarget', {
+      url: 'rtmps://x/live2',
+      key: 'live_k',
+      quality: '9',
+    })
     expect(client.state?.streaming?.service.bitrates).toEqual([9_000_000, 9_000_000])
     expect((await atem.invoke('stream', 'readState'))?.options?.quality?.current).toBe('9')
 
@@ -309,7 +395,10 @@ describe('encoder quality', () => {
   })
 
   it('sets the bitrate for a recording, which has no stream target to carry it', async () => {
-    const client = new FakeAtem({ streaming: streamingBlock(), recording: recordingBlock() } as Partial<AtemState>)
+    const client = new FakeAtem({
+      streaming: streamingBlock(),
+      recording: recordingBlock(),
+    } as Partial<AtemState>)
     const atem = await connect(client)
 
     await atem.invoke('record', 'startRecording', { filename: 'service', quality: '20-25' })
@@ -323,10 +412,18 @@ describe('encoder quality', () => {
     const atem = await connect(client)
 
     await expect(
-      atem.invoke('stream', 'applyStreamTarget', { url: 'rtmps://x/live2', key: 'live_k', quality: '200' }),
+      atem.invoke('stream', 'applyStreamTarget', {
+        url: 'rtmps://x/live2',
+        key: 'live_k',
+        quality: '200',
+      }),
     ).rejects.toMatchObject({ code: 'quality-out-of-range' })
     await expect(
-      atem.invoke('stream', 'applyStreamTarget', { url: 'rtmps://x/live2', key: 'live_k', quality: 'High' }),
+      atem.invoke('stream', 'applyStreamTarget', {
+        url: 'rtmps://x/live2',
+        key: 'live_k',
+        quality: 'High',
+      }),
     ).rejects.toMatchObject({ code: 'bad-quality' })
     expect(client.calls).not.toContain('setStreamingService')
   })
@@ -349,7 +446,10 @@ describe('streaming', () => {
     const atem = await connect(client)
 
     const key = 'live_abcd-1234-efgh'
-    await atem.invoke('stream', 'applyStreamTarget', { url: 'rtmps://a.rtmp.youtube.com/live2', key })
+    await atem.invoke('stream', 'applyStreamTarget', {
+      url: 'rtmps://a.rtmp.youtube.com/live2',
+      key,
+    })
 
     const state = await atem.invoke('stream', 'readState')
     expect(state?.streaming?.targetUrl).toBe('rtmps://a.rtmp.youtube.com/live2')
@@ -363,7 +463,10 @@ describe('streaming', () => {
     // to be asked for at setup where it would go stale.
     const client = new FakeAtem({ streaming: streamingBlock() } as Partial<AtemState>)
     const atem = await connect(client)
-    await atem.invoke('stream', 'applyStreamTarget', { url: 'rtmps://x/live2', key: 'live_key-value' })
+    await atem.invoke('stream', 'applyStreamTarget', {
+      url: 'rtmps://x/live2',
+      key: 'live_key-value',
+    })
     expect(client.state?.streaming?.service.serviceName).toBe('Stream Scheduler')
   })
 
@@ -371,7 +474,10 @@ describe('streaming', () => {
     const client = new FakeAtem({ streaming: streamingBlock() } as Partial<AtemState>)
     const atem = await connect(client)
 
-    await atem.invoke('stream', 'applyStreamTarget', { url: 'rtmps://x/live2', key: 'live_key-value' })
+    await atem.invoke('stream', 'applyStreamTarget', {
+      url: 'rtmps://x/live2',
+      key: 'live_key-value',
+    })
     await atem.invoke('stream', 'startStreaming')
     expect((await atem.invoke('stream', 'readState'))?.streaming?.active).toBe(true)
 
@@ -382,7 +488,9 @@ describe('streaming', () => {
   it('refuses to start before a target has been pushed', async () => {
     const client = new FakeAtem({ streaming: streamingBlock() } as Partial<AtemState>)
     const atem = await connect(client)
-    await expect(atem.invoke('stream', 'startStreaming')).rejects.toMatchObject({ code: 'no-stream-target' })
+    await expect(atem.invoke('stream', 'startStreaming')).rejects.toMatchObject({
+      code: 'no-stream-target',
+    })
     expect(client.calls).not.toContain('startStreaming')
   })
 
@@ -422,20 +530,16 @@ describe('recording', () => {
 })
 
 describe('aux routing', () => {
-  it('routes a source to an aux bus and reports the mapping', async () => {
-    const client = new FakeAtem({})
+  it('is not offered at all, because the scheduler has no business routing signal', async () => {
+    // The adapter can drive an aux bus and nothing above the plugin does.
+    // A panel reporting a bus nobody can change from here is furniture, and
+    // the routing is the operator's job at the desk.
+    const client = new FakeAtem({ streaming: streamingBlock() } as Partial<AtemState>)
     const atem = await connect(client)
 
-    await atem.invoke('aux', 'route', { input: '3', output: '0' })
-    expect(client.state?.video.auxilliaries[0]).toBe(3)
-    expect((await atem.invoke('aux', 'readState'))?.routing).toEqual({ '0': '3' })
-  })
-
-  it('rejects non-numeric routing arguments rather than sending nonsense', async () => {
-    const client = new FakeAtem({})
-    const atem = await connect(client)
-    await expect(atem.invoke('aux', 'route', { input: 'camera one', output: '0' })).rejects.toMatchObject({
-      code: 'bad-argument',
+    expect((await atem.listNodes()).map((node) => node.id)).toEqual(['stream'])
+    await expect(atem.invoke('aux', 'route', { input: '3', output: '0' })).rejects.toMatchObject({
+      code: 'unknown-node',
     })
   })
 })
@@ -455,7 +559,9 @@ describe('failure handling', () => {
     const client = new FakeAtem({ streaming: streamingBlock() } as Partial<AtemState>)
     const atem = await connect(client)
     client.actionRejectsWith = 'switcher busy'
-    await expect(atem.invoke('stream', 'applyStreamTarget', { url: 'rtmps://x', key: 'k' })).rejects.toMatchObject({
+    await expect(
+      atem.invoke('stream', 'applyStreamTarget', { url: 'rtmps://x', key: 'k' }),
+    ).rejects.toMatchObject({
       code: 'atem-error',
       retryable: true,
     })
@@ -466,7 +572,9 @@ describe('failure handling', () => {
     const atem = await connect(client)
     client.status = AtemConnectionStatus.CLOSED
 
-    await expect(atem.invoke('stream', 'stopStreaming')).rejects.toMatchObject({ code: 'not-connected' })
+    await expect(atem.invoke('stream', 'stopStreaming')).rejects.toMatchObject({
+      code: 'not-connected',
+    })
     expect(client.calls).not.toContain('stopStreaming')
   })
 

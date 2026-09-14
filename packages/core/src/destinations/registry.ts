@@ -8,7 +8,11 @@ import type {
 import type { Clock } from '@scheduler/plugin-sdk'
 import type { Db } from '../db/index.js'
 import { silentLogger, type Logger } from '../log.js'
-import { ConfigInvalidError, IncompatiblePluginError, UnknownPluginError } from '../plugins/registry.js'
+import {
+  ConfigInvalidError,
+  IncompatiblePluginError,
+  UnknownPluginError,
+} from '../plugins/registry.js'
 import type { SecretVault } from '../secrets/vault.js'
 import { LedgerQuota } from './quota.js'
 
@@ -91,10 +95,13 @@ export class DestinationRegistry {
    * Created per use rather than held open: these are stateless HTTP clients,
    * and a long-lived one would just hold a stale access token.
    */
-  async open(destinationId: string, options: { runId?: string } = {}): Promise<DestinationInstance> {
-    const row = this.deps.db.prepare('SELECT * FROM destination WHERE id = ?').get(destinationId) as
-      | DestinationRow
-      | undefined
+  async open(
+    destinationId: string,
+    options: { runId?: string } = {},
+  ): Promise<DestinationInstance> {
+    const row = this.deps.db
+      .prepare('SELECT * FROM destination WHERE id = ?')
+      .get(destinationId) as DestinationRow | undefined
     if (!row) throw new Error(`No destination with id "${destinationId}".`)
 
     const provider = this.get(row.plugin_id)
@@ -118,7 +125,12 @@ export class DestinationRegistry {
   async openForAccount(providerId: string, accountRef: string): Promise<DestinationInstance> {
     const provider = this.get(providerId)
     return provider.createDestination(
-      this.contextFor({ destinationId: `account:${accountRef}`, providerId, accountRef, config: {} }),
+      this.contextFor({
+        destinationId: `account:${accountRef}`,
+        providerId,
+        accountRef,
+        config: {},
+      }),
     )
   }
 
@@ -156,10 +168,13 @@ export class DestinationRegistry {
   }
 
   /** The OAuth credentials a provider needs for an account. */
-  resolveOAuthClient(accountRef: string): { clientId: string; clientSecret: string; refreshToken: string } {
+  resolveOAuthClient(accountRef: string): {
+    clientId: string
+    clientSecret: string
+    refreshToken: string
+  } {
     const account = this.deps.db.prepare('SELECT * FROM account WHERE id = ?').get(accountRef) as
-      | AccountRow
-      | undefined
+      AccountRow | undefined
     if (!account) throw new Error(`No connected account with id "${accountRef}".`)
     if (!account.oauth_client_ref) {
       throw new Error(`Account "${account.display_name}" has no OAuth client; reconnect it.`)
@@ -179,9 +194,9 @@ export class DestinationRegistry {
 
   private clientRefFor(accountId: string | null): string {
     if (!accountId) return 'unattached'
-    const row = this.deps.db.prepare('SELECT oauth_client_ref FROM account WHERE id = ?').get(accountId) as
-      | { oauth_client_ref: string | null }
-      | undefined
+    const row = this.deps.db
+      .prepare('SELECT oauth_client_ref FROM account WHERE id = ?')
+      .get(accountId) as { oauth_client_ref: string | null } | undefined
     return row?.oauth_client_ref ?? accountId
   }
 }

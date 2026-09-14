@@ -20,12 +20,16 @@ const wall = (
 
 describe('wallTimeAt', () => {
   it('reads the local clock in the target zone', () => {
-    expect(wallTimeAt(Date.parse('2026-03-08T14:00:00Z'), 'America/Chicago')).toEqual(wall(2026, 3, 8, 9))
+    expect(wallTimeAt(Date.parse('2026-03-08T14:00:00Z'), 'America/Chicago')).toEqual(
+      wall(2026, 3, 8, 9),
+    )
     expect(wallTimeAt(Date.parse('2026-03-08T14:00:00Z'), 'UTC')).toEqual(wall(2026, 3, 8, 14))
   })
 
   it('handles midnight without rolling to hour 24', () => {
-    expect(wallTimeAt(Date.parse('2026-03-08T06:00:00Z'), 'America/Chicago')).toEqual(wall(2026, 3, 8, 0))
+    expect(wallTimeAt(Date.parse('2026-03-08T06:00:00Z'), 'America/Chicago')).toEqual(
+      wall(2026, 3, 8, 0),
+    )
   })
 })
 

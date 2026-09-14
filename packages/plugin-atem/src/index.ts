@@ -73,12 +73,16 @@ class AtemDevice {
       const timer = setTimeout(() => {
         cleanup()
         reject(
-          new DeviceError('connect-timeout', `${this.host}:${this.port} did not answer within 10 seconds.`, {
-            retryable: true,
-            remediation:
-              'Check the address and that the ATEM is on the control network. ' +
-              'The ATEM protocol is UDP, so a firewall that allows TCP may still block it.',
-          }),
+          new DeviceError(
+            'connect-timeout',
+            `${this.host}:${this.port} did not answer within 10 seconds.`,
+            {
+              retryable: true,
+              remediation:
+                'Check the address and that the ATEM is on the control network. ' +
+                'The ATEM protocol is UDP, so a firewall that allows TCP may still block it.',
+            },
+          ),
         )
       }, CONNECT_TIMEOUT_MS)
 
@@ -90,9 +94,13 @@ class AtemDevice {
       const onError = (message: string): void => {
         cleanup()
         reject(
-          new DeviceError('connect-failed', `Could not reach ${this.host}:${this.port}: ${message}`, {
-            retryable: true,
-          }),
+          new DeviceError(
+            'connect-failed',
+            `Could not reach ${this.host}:${this.port}: ${message}`,
+            {
+              retryable: true,
+            },
+          ),
         )
       }
       const cleanup = (): void => {
@@ -103,7 +111,9 @@ class AtemDevice {
 
       this.client.on('connected', onConnected)
       this.client.on('error', onError)
-      this.client.connect(this.host, this.port).catch(onError as unknown as (reason: unknown) => void)
+      this.client
+        .connect(this.host, this.port)
+        .catch(onError as unknown as (reason: unknown) => void)
     })
 
     this.client.on('error', (message: string) => {
@@ -136,6 +146,20 @@ class AtemDevice {
       model: state.info.productIdentifier ?? Enums.Model[state.info.model] ?? 'ATEM',
       firmware: `protocol ${protocolName(state.info.apiVersion)}`,
       features,
+      ...(state.recording === undefined
+        ? {}
+        : {
+            // A switcher that records serves the drive it records to over
+            // FTP, and will do it mid-recording, so a service can come off
+            // the box without unplugging anything.
+            links: [
+              {
+                label: 'Recordings (FTP)',
+                url: `ftp://${this.host}/`,
+                note: 'The drive plugged into the switcher. No password, and it works while recording.',
+              },
+            ],
+          }),
     }
   }
 
@@ -182,25 +206,22 @@ class AtemDevice {
         id: 'record',
         label: `${label} recorder`,
         roles: ['sink'],
-        ports: [{ id: 'in', direction: 'in', label: 'Record input', transport: ['sdi', 'hdmi'], maxLinks: 1 }],
+        ports: [
+          {
+            id: 'in',
+            direction: 'in',
+            label: 'Record input',
+            transport: ['sdi', 'hdmi'],
+            maxLinks: 1,
+          },
+        ],
         supports: ['startRecording', 'stopRecording'],
       })
     }
 
-    const auxes = state.info.capabilities?.auxilliaries ?? 0
-    if (auxes > 0) {
-      nodes.push({
-        id: 'aux',
-        label: `${label} aux routing`,
-        roles: ['router'],
-        ports: [
-          { id: 'in', direction: 'in', label: 'Any source', transport: ['sdi', 'hdmi'], maxLinks: auxes },
-          { id: 'out', direction: 'out', label: 'Aux outputs', transport: ['sdi', 'hdmi'], maxLinks: auxes },
-        ],
-        supports: ['route'],
-      })
-    }
-
+    // No aux node. The adapter can route, and nothing above the plugin
+    // drives it: signal routing is the operator's job at the desk, and a
+    // panel reporting an aux bus nobody can change from here is furniture.
     return nodes
   }
 
@@ -265,20 +286,6 @@ class AtemDevice {
       }
     }
 
-    if (nodeId === 'aux') {
-      return {
-        route: async ({ input, output }) => {
-          const source = Number(input)
-          const bus = Number(output)
-          if (!Number.isInteger(source) || !Number.isInteger(bus)) {
-            throw new DeviceError('bad-argument', 'ATEM routing takes numeric source and aux bus ids.')
-          }
-          await this.guard(() => this.client.setAuxSource(source, bus))
-        },
-        readState: async () => this.readState('aux'),
-      }
-    }
-
     return undefined
   }
 
@@ -309,7 +316,9 @@ class AtemDevice {
                     status: diskStatusName(disk.status),
                     ...(disk.volumeName ? { volumeName: disk.volumeName } : {}),
                     remainingMs: disk.recordingTimeAvailable * 1000,
-                    ...(disk.diskId === recording?.properties.workingSet1DiskId ? { active: true } : {}),
+                    ...(disk.diskId === recording?.properties.workingSet1DiskId
+                      ? { active: true }
+                      : {}),
                   }))
                   .sort((a, b) => a.id - b.id),
               }),
@@ -322,14 +331,6 @@ class AtemDevice {
         ...this.qualityOption(state),
         raw: { recordingError: recordingErrorName(recording?.status?.error) },
       }
-    }
-
-    if (nodeId === 'aux') {
-      const routing: Record<string, string> = {}
-      state.video.auxilliaries.forEach((source, bus) => {
-        if (source !== undefined) routing[String(bus)] = String(source)
-      })
-      return { routing }
     }
 
     const streaming = state.streaming
@@ -359,12 +360,14 @@ class AtemDevice {
    */
   private qualityOption(state: Readonly<AtemState>): Pick<NodeState, 'options'> {
     if (!state.streaming && !state.recording) return {}
-    const current = formatQuality(state.streaming?.service.bitrates)
+    const described = describeQuality(state.streaming?.service.bitrates)
     return {
       options: {
         quality: {
-          ...(current === undefined ? {} : { current }),
-          choices: [],
+          ...(described === undefined
+            ? {}
+            : { current: described.current, aliases: described.aliases }),
+          choices: PRESETS.map((preset) => preset.name),
           bitrate: {
             minMbps: MIN_MBPS,
             maxMbps: MAX_MBPS,
@@ -467,8 +470,34 @@ function recordingErrorName(error: number | undefined): string {
 const MIN_MBPS = 3
 const MAX_MBPS = 70
 
+/**
+ * The presets ATEM Software Control offers, as the pairs it writes.
+ *
+ * The names live in a Streaming.xml on the computer running that app, not
+ * in the switcher, so they are kept here to save an operator translating
+ * "Streaming High" into a pair of numbers every time. Both lists are
+ * offered whatever the output is: one H.264 encoder serves the stream and
+ * the recording, so the HyperDeck figures are as applicable to a stream as
+ * the streaming ones are to a recording — the names say what they were
+ * meant for, not what they may be used for.
+ */
+const PRESETS: { name: string; bitrates: [number, number] }[] = [
+  { name: 'HyperDeck High', bitrates: [45_000_000, 70_000_000] },
+  { name: 'HyperDeck Medium', bitrates: [25_000_000, 45_000_000] },
+  { name: 'HyperDeck Low', bitrates: [12_000_000, 20_000_000] },
+  { name: 'Streaming High', bitrates: [6_000_000, 9_000_000] },
+  { name: 'Streaming Medium', bitrates: [4_500_000, 7_000_000] },
+  { name: 'Streaming Low', bitrates: [3_000_000, 4_500_000] },
+]
+
 export function parseQuality(quality: string): [number, number] {
-  const cleaned = quality.trim().replace(/mb\/?s$/i, '').trim()
+  const preset = PRESETS.find((entry) => entry.name.toLowerCase() === quality.trim().toLowerCase())
+  if (preset) return preset.bitrates
+
+  const cleaned = quality
+    .trim()
+    .replace(/mb\/?s$/i, '')
+    .trim()
   const parts = cleaned.split(/\s*[-–]\s*/)
   if (parts.length > 2) throw badQuality(quality)
 
@@ -490,12 +519,26 @@ export function parseQuality(quality: string): [number, number] {
   return [Math.round(low * 1_000_000), Math.round(high * 1_000_000)]
 }
 
-/** The inverse, in the same vocabulary, so a caller can compare the two. */
+/**
+ * The inverse: the preset's name where the pair is one, the figures
+ * otherwise. Both spellings are reported, so a caller that asked in either
+ * one can recognise its own setting coming back.
+ */
 export function formatQuality(bitrates: readonly [number, number] | undefined): string | undefined {
+  return describeQuality(bitrates)?.current
+}
+
+export function describeQuality(
+  bitrates: readonly [number, number] | undefined,
+): { current: string; aliases: string[] } | undefined {
   if (!bitrates) return undefined
   const [low, high] = bitrates.map((bps) => Math.round(bps / 10_000) / 100) as [number, number]
   if (!low && !high) return undefined
-  return low === high ? String(low) : `${low}-${high}`
+  const figures = low === high ? String(low) : `${low}-${high}`
+  const preset = PRESETS.find(
+    (entry) => entry.bitrates[0] === bitrates[0] && entry.bitrates[1] === bitrates[1],
+  )
+  return preset ? { current: preset.name, aliases: [figures] } : { current: figures, aliases: [] }
 }
 
 function badQuality(quality: string): DeviceError {

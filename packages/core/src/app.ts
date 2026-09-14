@@ -6,7 +6,12 @@ import { createConsoleLogger, silentLogger, type Logger, type LogLevel } from '.
 import { ConnectionManager } from './devices/connection-manager.js'
 import { PluginRegistry } from './plugins/registry.js'
 import { DestinationRegistry } from './destinations/registry.js'
-import { envSecretSource, keyFileSource, resolveMasterKey, type MasterKeySource } from './secrets/master-key.js'
+import {
+  envSecretSource,
+  keyFileSource,
+  resolveMasterKey,
+  type MasterKeySource,
+} from './secrets/master-key.js'
 import { scrubber } from './secrets/scrubber.js'
 import { SecretVault } from './secrets/vault.js'
 import { DEFAULT_HORIZON_MS, materializeAll } from './schedule/materialize.js'
@@ -128,7 +133,9 @@ export class Application {
     if (this.links.configured || origin === this.links.origin) return
     this.links.origin = origin
     this.db
-      .prepare("INSERT INTO setting (key, value) VALUES ('public_origin', ?) ON CONFLICT(key) DO UPDATE SET value = ?")
+      .prepare(
+        "INSERT INTO setting (key, value) VALUES ('public_origin', ?) ON CONFLICT(key) DO UPDATE SET value = ?",
+      )
       .run(origin, origin)
     this.logger.info('links in alerts will point here', { origin })
   }
@@ -177,8 +184,7 @@ export class Application {
     // everyone else, so it is the last resort rather than the default.
     const remembered = (
       db.prepare("SELECT value FROM setting WHERE key = 'public_origin'").get() as
-        | { value: string }
-        | undefined
+        { value: string } | undefined
     )?.value
     const links = {
       origin: options.baseUrl ?? remembered ?? 'http://127.0.0.1:8500',

@@ -5,7 +5,13 @@ import rrulePkg from 'rrule'
 import type { RRule as RRuleInstance } from 'rrule'
 
 const { RRule } = rrulePkg
-import { asNaiveUtc, isValidTimeZone, localDateAt, wallTimeAt, zonedWallTimeToUtc } from './zoned.js'
+import {
+  asNaiveUtc,
+  isValidTimeZone,
+  localDateAt,
+  wallTimeAt,
+  zonedWallTimeToUtc,
+} from './zoned.js'
 import type { WallTime, WallTimeResolution, ZonedInstant } from './zoned.js'
 
 export interface SeriesSchedule {
@@ -116,7 +122,12 @@ function expandRule(
   // Stop the iterator at the cap rather than filtering afterwards: a rule like
   // FREQ=MINUTELY over a year is half a million dates, and generating them all
   // just to throw them away blocks the scheduler tick for seconds.
-  const naiveResults = rule.between(new Date(naiveFrom), new Date(naiveTo), true, (_date, index) => index < rawLimit)
+  const naiveResults = rule.between(
+    new Date(naiveFrom),
+    new Date(naiveTo),
+    true,
+    (_date, index) => index < rawLimit,
+  )
   return naiveResults.map((naive) => zonedWallTimeToUtc(wallOf(naive), schedule.timezone))
 }
 
@@ -145,7 +156,7 @@ function wallOf(naive: Date): WallTime {
 
 /** A plain-language summary of a rule, for the series list. */
 export function describeSchedule(schedule: SeriesSchedule): string {
-  if (schedule.rrule === null) return 'Once'
+  if (schedule.rrule === null) return 'Does not repeat'
   try {
     return buildRule(schedule).toText()
   } catch {

@@ -1,4 +1,8 @@
-import { applyConfigDefaults, VerificationError, withSerializingTransport } from '@scheduler/plugin-sdk'
+import {
+  applyConfigDefaults,
+  VerificationError,
+  withSerializingTransport,
+} from '@scheduler/plugin-sdk'
 import type {
   Clock,
   ConfigValues,
@@ -95,6 +99,9 @@ export class ConnectionManager {
   private readonly connections = new Map<string, Connection>()
   private readonly backoff = new Map<string, { attempts: number; nextAttemptAt: number }>()
   private readonly listeners = new Set<(event: ConnectionEvent) => void>()
+  /** Per device, per node: nested so no separator has to be invented for a
+   *  pair of ids whose alphabets belong to plugins. */
+  private readonly states = new Map<string, Map<string, { state: NodeState; at: number }>>()
   private readonly logger: Logger
 
   constructor(private readonly deps: ConnectionManagerDeps) {
@@ -294,7 +301,8 @@ export class ConnectionManager {
     const previous = this.backoff.get(deviceId)?.attempts ?? 0
     const attempts = previous + 1
     const jitter = (this.deps.random ?? Math.random)()
-    const delay = Math.min(BASE_BACKOFF_MS * 2 ** (attempts - 1), MAX_BACKOFF_MS) * (0.5 + jitter / 2)
+    const delay =
+      Math.min(BASE_BACKOFF_MS * 2 ** (attempts - 1), MAX_BACKOFF_MS) * (0.5 + jitter / 2)
     this.backoff.set(deviceId, { attempts, nextAttemptAt: now + delay })
 
     const message = error instanceof Error ? error.message : String(error)
@@ -322,7 +330,8 @@ export class ConnectionManager {
   }
 
   private deviceRow(deviceId: string): DeviceRow {
-    const row = this.deps.db.prepare('SELECT * FROM device WHERE id = ?').get(deviceId) as DeviceRow | undefined
+    const row = this.deps.db.prepare('SELECT * FROM device WHERE id = ?').get(deviceId) as
+      DeviceRow | undefined
     if (!row) throw new Error(`No device with id "${deviceId}".`)
     return row
   }
@@ -350,7 +359,33 @@ export class ConnectionManager {
     return resolved
   }
 
+  /**
+   * The last thing each node said about itself.
+   *
+   * Devices push their state as it changes — a deck notifies on transport
+   * and slot, an ATEM on every state change — so remembering the last one
+   * gives a live picture without anybody polling the rack. The status
+   * screen reads this rather than asking five boxes what they are doing
+   * every few seconds, which is traffic a device does not need while it is
+   * recording.
+   */
+  lastStates(deviceId: string): { nodeId: string; state: NodeState; at: number }[] {
+    return [...(this.states.get(deviceId) ?? new Map()).entries()].map(([nodeId, value]) => ({
+      nodeId,
+      ...(value as { state: NodeState; at: number }),
+    }))
+  }
+
+  private remember(deviceId: string, nodeId: string, state: NodeState): void {
+    const forDevice =
+      this.states.get(deviceId) ?? new Map<string, { state: NodeState; at: number }>()
+    forDevice.set(nodeId, { state, at: this.deps.clock.now() })
+    this.states.set(deviceId, forDevice)
+  }
+
   private emit(event: ConnectionEvent): void {
+    if (event.type === 'state') this.remember(event.deviceId, event.nodeId, event.state)
+
     for (const listener of this.listeners) {
       try {
         listener(event)

@@ -18,7 +18,7 @@ One codebase produces three deployment shapes, all running the same core:
 
 - **Headless** (`node packages/core/dist/main.js`) — what Docker runs, and what
   a Mac/PC user can run from a terminal if they prefer.
-- **Electron** — the *same* core imported in the main process, plus a tray icon,
+- **Electron** — the _same_ core imported in the main process, plus a tray icon,
   "Open UI", launch-at-login, and an update checker. Electron is a shell around
   the core, never a fork of it. Companion does this via an `ELECTRON=0` build
   flag; we use the same idea with separate entrypoints against a shared core.
@@ -31,7 +31,7 @@ window does not stop a running broadcast.
 
 ## What we borrow from Companion, and what we don't
 
-Companion is the reference for *packaging and extensibility*, not for *execution*.
+Companion is the reference for _packaging and extensibility_, not for _execution_.
 
 **Borrowed:**
 
@@ -45,13 +45,13 @@ Companion is the reference for *packaging and extensibility*, not for *execution
 
 **Deliberately not borrowed:**
 
-Companion's execution model is *button press → fire-and-forget action*. Ours is
-*scheduled, stateful, long-running job that must survive a crash*. A Companion
+Companion's execution model is _button press → fire-and-forget action_. Ours is
+_scheduled, stateful, long-running job that must survive a crash_. A Companion
 action that fails just doesn't happen; a run step that fails at 09:58 on a Sunday
 needs retry, compensation and an alert. So the core is built around a durable run
 engine (see [03](./03-scheduling-engine.md)), not an action dispatcher.
 
-Companion also has time-based *triggers*. They are intentionally simple — interval
+Companion also has time-based _triggers_. They are intentionally simple — interval
 and time-of-day — with no notion of an event that occupies a span of time, has a
 prepare phase, or can be individually skipped. That gap is this project.
 
@@ -60,7 +60,7 @@ prepare phase, or can be individually skipped. That gap is this project.
 Running every plugin in a child process from day one is real overhead for
 first-party in-tree adapters. But retrofitting it later is a rewrite.
 
-**The discipline:** the plugin API is defined as *message-passing shaped* from the
+**The discipline:** the plugin API is defined as _message-passing shaped_ from the
 first commit — every method is `async`, every argument and return value is
 structured-clone serializable, no shared object references across the boundary, no
 callbacks except through a typed event channel. Plugins are loaded in-process in

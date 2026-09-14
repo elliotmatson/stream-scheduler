@@ -14,6 +14,7 @@ import {
   type Series,
 } from '../api.ts'
 import { ConfirmButton, Empty, ErrorBanner, Field } from '../components.tsx'
+import { bitrateHint, CUSTOM_VALUE, freeformHint, LEAVE_AS_IS, PICK_ONE } from '../copy.ts'
 
 /**
  * What an event streams and records, and when inside its window.
@@ -55,7 +56,9 @@ export function Outputs({ series }: { series: Series }): ReactNode {
           </p>
         </div>
         <div className="row">
-          <button onClick={() => setAdding(adding === 'stream' ? undefined : 'stream')}>Add a stream</button>
+          <button onClick={() => setAdding(adding === 'stream' ? undefined : 'stream')}>
+            Add a stream
+          </button>
           <button onClick={() => setAdding(adding === 'recording' ? undefined : 'recording')}>
             Add a recording
           </button>
@@ -90,7 +93,10 @@ export function Outputs({ series }: { series: Series }): ReactNode {
       ) : null}
 
       {(current?.outputs ?? []).length === 0 && !adding ? (
-        <Empty>Nothing yet. This event would do nothing at all when its time comes.</Empty>
+        <Empty>
+          Nothing yet, so this event would do nothing when its time comes. Add a stream or a
+          recording.
+        </Empty>
       ) : null}
 
       <div className="stack">
@@ -162,7 +168,9 @@ function OutputRow(props: RowProps): ReactNode {
   const capable = props.devices.flatMap((device) =>
     device.nodes.filter((node) => node.supports.includes(needed)).map((node) => ({ device, node })),
   )
-  const chosen = capable.find((entry) => entry.device.id === draft.deviceId && entry.node.id === draft.nodeId)
+  const chosen = capable.find(
+    (entry) => entry.device.id === draft.deviceId && entry.node.id === draft.nodeId,
+  )
   const offset = offsetFrom(series, draft.startsAt)
 
   return (
@@ -176,7 +184,11 @@ function OutputRow(props: RowProps): ReactNode {
           />
         </Field>
         <Field label="Starts">
-          <input type="time" value={draft.startsAt} onChange={(event) => set('startsAt', event.target.value)} />
+          <input
+            type="time"
+            value={draft.startsAt}
+            onChange={(event) => set('startsAt', event.target.value)}
+          />
         </Field>
         <Field label="Runs for (min)">
           <input
@@ -195,12 +207,22 @@ function OutputRow(props: RowProps): ReactNode {
       ) : null}
       {offset + draft.minutes * 60_000 > series.durationMs ? (
         <div className="banner warn">
-          This runs past the end of the event's window. It will still run; the event just stays open for it.
+          This runs past the end of the event's window. It will still run; the event just stays open
+          for it.
         </div>
       ) : null}
 
       {kind === 'stream' ? (
-        <Field label="Streams to" hint="A connected service issues its own key. A stream key is one you pasted in.">
+        <Field
+          label="Streams to"
+          // Once one is picked the hint has done its job, and a page with
+          // four outputs on it would otherwise say this four times.
+          hint={
+            targetValue === ''
+              ? 'A connected service issues its own key. A stream key is one you pasted in.'
+              : undefined
+          }
+        >
           <select
             value={targetValue}
             onChange={(event) => {
@@ -212,7 +234,7 @@ function OutputRow(props: RowProps): ReactNode {
               }))
             }}
           >
-            <option value="">— pick one —</option>
+            <option value="">{PICK_ONE}</option>
             {props.destinations.map((destination) => (
               <option key={destination.id} value={`destination:${destination.id}`}>
                 {destination.label}
@@ -235,9 +257,11 @@ function OutputRow(props: RowProps): ReactNode {
         hint={
           capable.length === 0
             ? `No connected device offers ${kind === 'recording' ? 'recording' : 'streaming'}. Add or connect one first.`
-            : kind === 'recording'
-              ? 'The recorder this goes onto.'
-              : 'The encoder this comes off.'
+            : chosen
+              ? undefined
+              : kind === 'recording'
+                ? 'The recorder this goes onto.'
+                : 'The encoder this comes off.'
         }
       >
         <select
@@ -254,7 +278,7 @@ function OutputRow(props: RowProps): ReactNode {
             }))
           }}
         >
-          <option value="">— pick one —</option>
+          <option value="">{PICK_ONE}</option>
           {capable.map(({ device, node }) => (
             <option key={`${device.id}/${node.id}`} value={`${device.id}/${node.id}`}>
               {device.label} — {node.label}
@@ -269,7 +293,8 @@ function OutputRow(props: RowProps): ReactNode {
         <summary>Its own name{kind === 'stream' ? ' and description' : ''}</summary>
         <div className="stack" style={{ marginTop: 8 }}>
           <p className="muted" style={{ margin: 0 }}>
-            Left blank, this uses the event's. Two services from one morning usually want different titles.
+            Left blank, this uses the event's default. Two services on one morning usually want
+            different titles.
           </p>
           {kind === 'stream' ? (
             <>
@@ -289,7 +314,7 @@ function OutputRow(props: RowProps): ReactNode {
               </Field>
             </>
           ) : (
-            <Field label="Filename">
+            <Field label="Filename" hint="The device adds its own extension.">
               <input
                 value={draft.filename}
                 placeholder={series.templates.filename ?? '{{date "yyyy-MM-dd"}} {{event.name}}'}
@@ -304,8 +329,16 @@ function OutputRow(props: RowProps): ReactNode {
         <button className="primary" disabled={!draft.label || !draft.deviceId} onClick={save}>
           {output ? 'Save' : 'Add'}
         </button>
-        <label className="row" style={{ gap: 8 }}>
-          <input type="checkbox" checked={draft.enabled} onChange={(event) => set('enabled', event.target.checked)} />
+        <label
+          className="row"
+          style={{ gap: 8 }}
+          title="Off keeps it here but skips it when the event runs."
+        >
+          <input
+            type="checkbox"
+            checked={draft.enabled}
+            onChange={(event) => set('enabled', event.target.checked)}
+          />
           <span>On</span>
         </label>
         {props.onCancel ? <button onClick={props.onCancel}>Cancel</button> : null}
@@ -314,7 +347,6 @@ function OutputRow(props: RowProps): ReactNode {
     </div>
   )
 }
-
 
 /**
  * What this output wants set on its device before it runs.
@@ -340,6 +372,8 @@ function DeviceSettings({
   device: { device: Device; node: DeviceNode } | undefined
 }): ReactNode {
   const [state, setState] = useState<NodeState | null>()
+  // Set when the operator asks to type a figure the list does not offer.
+  const [custom, setCustom] = useState(false)
 
   useEffect(() => {
     if (!device) {
@@ -374,40 +408,63 @@ function DeviceSettings({
   const slots = state?.recording?.slots ?? []
   if (!quality && slots.length === 0) return null
   const listId = `quality-${device.device.id}-${device.node.id}`
+  // Also on when what is already stored is a figure rather than a preset —
+  // otherwise reopening an output would show "leave as it is" over a
+  // setting it is going to apply.
+  const showCustom =
+    custom || (draft.quality !== '' && qualities.length > 0 && !qualities.includes(draft.quality))
 
   return (
     <details>
       <summary>Device settings</summary>
       <div className="stack" style={{ marginTop: 8 }}>
         {qualities.length > 0 ? (
-          <Field label="Quality" hint="The profiles this encoder reports for the service it is on.">
-            <select value={draft.quality} onChange={(event) => set('quality', event.target.value)}>
-              <option value="">Leave as it is{current ? ` (${current})` : ''}</option>
+          <Field
+            label="Quality"
+            hint={
+              bitrate
+                ? 'The presets this device offers. Anything else goes in as a bitrate.'
+                : 'The profiles this encoder reports for the service it is on.'
+            }
+          >
+            <select
+              value={
+                showCustom ? CUSTOM_VALUE : qualities.includes(draft.quality) ? draft.quality : ''
+              }
+              onChange={(event) => {
+                setCustom(event.target.value === CUSTOM_VALUE)
+                set('quality', event.target.value === CUSTOM_VALUE ? '' : event.target.value)
+              }}
+            >
+              <option value="">
+                {LEAVE_AS_IS}
+                {current ? ` (${current})` : ''}
+              </option>
               {qualities.map((choice) => (
                 <option key={choice} value={choice}>
                   {choice}
                 </option>
               ))}
+              {/* Only where the device takes a figure as well as a name. */}
+              {bitrate ? <option value={CUSTOM_VALUE}>Custom…</option> : null}
             </select>
           </Field>
-        ) : bitrate ? (
-          /* Offered for a recording as well as a stream: on a box that takes
-             a bitrate, the two come out of the same encoder. */
-          <Field
-            label="Bitrate (Mb/s)"
-            hint={`${bitrate.note ? `${bitrate.note} ` : ''}Between ${bitrate.minMbps} and ${bitrate.maxMbps}, or a low-high range. Blank leaves it${current ? ` at ${current}` : ''}.`}
-          >
+        ) : null}
+
+        {/* The figure, when the operator asked for one the list does not
+            have, or the device only takes numbers. */}
+        {bitrate && (qualities.length === 0 || showCustom) ? (
+          <Field label="Bitrate (Mb/s)" hint={bitrateHint(bitrate, current)}>
             <input
               value={draft.quality}
               placeholder={current ?? `${bitrate.minMbps}-${bitrate.maxMbps}`}
               onChange={(event) => set('quality', event.target.value)}
             />
           </Field>
-        ) : freeform ? (
-          <Field
-            label="Quality"
-            hint={`${freeform.note ? `${freeform.note} ` : ''}The list is a suggestion — the device has its own set and refuses one it does not have. Blank leaves it${current ? ` on ${current}` : ''}.`}
-          >
+        ) : null}
+
+        {freeform && qualities.length === 0 && !bitrate ? (
+          <Field label="Quality" hint={freeformHint(freeform, current)}>
             <input
               list={listId}
               value={draft.quality}
@@ -424,9 +481,9 @@ function DeviceSettings({
 
         {kind === 'recording' && slots.length > 0 ? (
           <>
-            <Field label="Record to" hint="Which card this output writes to.">
+            <Field label="Record to" hint="The slot this recording is written to.">
               <select value={draft.slot} onChange={(event) => set('slot', event.target.value)}>
-                <option value="">Leave as it is</option>
+                <option value="">{LEAVE_AS_IS}</option>
                 {slots.map((slot) => (
                   <option key={slot.id} value={String(slot.id)}>
                     Slot {slot.id}
@@ -439,8 +496,8 @@ function DeviceSettings({
                 do anything: the protocol has no rollover setting to write. */}
             <p className="muted" style={{ margin: 0 }}>
               {state?.recording?.rollover
-                ? 'The deck rolls onto its other card by itself when this one fills. That is the deck\'s own behaviour and cannot be turned off from here.'
-                : 'There is no second mounted card, so recording stops when this one fills.'}
+                ? "When this slot fills, the deck rolls onto the other one by itself. That is the deck's own behaviour and cannot be turned off from here."
+                : 'There is no second slot mounted, so recording stops when this one fills.'}
             </p>
           </>
         ) : null}
@@ -467,7 +524,11 @@ interface RowDraft {
   enabled: boolean
 }
 
-function toDraft(output: EventOutput | undefined, kind: 'stream' | 'recording', series: Series): RowDraft {
+function toDraft(
+  output: EventOutput | undefined,
+  kind: 'stream' | 'recording',
+  series: Series,
+): RowDraft {
   return {
     label: output?.label ?? '',
     startsAt: clockAt(series, output?.offsetMs ?? 0),
@@ -527,7 +588,8 @@ function clockAt(series: Series, offsetMs: number): string {
  */
 function offsetFrom(series: Series, startsAt: string): number {
   const [hour, minute] = startsAt.split(':').map(Number)
-  if (hour === undefined || minute === undefined || Number.isNaN(hour) || Number.isNaN(minute)) return 0
+  if (hour === undefined || minute === undefined || Number.isNaN(hour) || Number.isNaN(minute))
+    return 0
   const [openHour, openMinute] = timeOf(series).split(':').map(Number) as [number, number]
   return (hour * 60 + minute - openHour * 60 - openMinute) * 60_000
 }
