@@ -35,6 +35,9 @@ records, stops and tidies up — without anyone touching it.
   saved and again the evening before, rather than found out live
 - Encrypted stream keys and device passwords, write-only over the API
 - Device connection management with capability probing and verify-after-write
+- Manual control from the Devices page — start and stop a stream or a
+  recording by hand, read what a device is actually doing, and see which
+  event is mid-run on it before you touch it
 - **HyperDeck** adapter (TCP 9993), tested against a protocol-level emulator
 - **ATEM** adapter, with capabilities read from what the switcher reports
   rather than a model table that goes stale on the next firmware release

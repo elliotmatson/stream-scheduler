@@ -42,8 +42,32 @@ export interface Device {
   lastError: string | null
   lastSeenAt: number | null
   enabled: boolean
-  nodes: { id: string; label: string; roles: string[]; supports: string[] }[]
+  nodes: DeviceNode[]
+  /** Events mid-run on this device right now. Empty almost always. */
+  inUseBy: { runId: string; label: string }[]
 }
+
+export interface DeviceNode {
+  id: string
+  label: string
+  roles: string[]
+  supports: string[]
+}
+
+/** What a node reports about itself. Never carries a key, only a fingerprint. */
+export interface NodeState {
+  streaming?: {
+    active: boolean
+    targetUrl?: string
+    keyFingerprint?: string
+    bitrateBps?: number
+    durationMs?: number
+  }
+  recording?: { active: boolean; filename?: string; remainingMs?: number }
+  routing?: Record<string, string>
+}
+
+export type ManualAction = 'startStreaming' | 'stopStreaming' | 'startRecording' | 'stopRecording'
 
 export interface RunStep {
   seq: number
@@ -283,6 +307,15 @@ export const api = {
   preview: (seriesId: string) => request<Preview[]>(`/api/series/${seriesId}/preview`),
   devices: () => request<Device[]>('/api/devices'),
   connectDevice: (id: string) => request<unknown>(`/api/devices/${id}/connect`, { method: 'POST' }),
+  nodeState: (deviceId: string, nodeId: string) =>
+    request<{ state: NodeState | null }>(`/api/devices/${deviceId}/nodes/${nodeId}/state`),
+  /** Drive a device by hand. The server reads the write back before it
+   *  answers, so a resolved promise means the device really did it. */
+  driveNode: (deviceId: string, nodeId: string, action: ManualAction, body: { filename?: string } = {}) =>
+    request<{ state: NodeState | null }>(`/api/devices/${deviceId}/nodes/${nodeId}/${action}`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
   runs: () => request<Run[]>('/api/runs'),
   run: (id: string) => request<Run>(`/api/runs/${id}`),
   cancelRun: (id: string, reason: string) =>

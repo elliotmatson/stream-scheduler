@@ -271,6 +271,121 @@ describe('runs', () => {
   })
 })
 
+describe('driving a device by hand', () => {
+  it('starts and stops, reading the device back each time', async () => {
+    const deviceId = await connectRecorder()
+
+    const before = await get(`/api/devices/${deviceId}/nodes/record/state`)
+    expect(before.json.state.recording.active).toBe(false)
+
+    const started = await post(`/api/devices/${deviceId}/nodes/record/startRecording`, { filename: 'take 1' })
+    expect(started.status).toBe(200)
+    // The state comes back from a read, not from the command being accepted.
+    expect(started.json.state.recording.active).toBe(true)
+
+    const stopped = await post(`/api/devices/${deviceId}/nodes/record/stopRecording`, {})
+    expect(stopped.json.state.recording.active).toBe(false)
+  })
+
+  it('passes on the device\'s own refusal rather than calling it a server error', async () => {
+    // An encoder that has never been pointed anywhere cannot stream, and
+    // saying so is the single most likely thing to happen on this screen.
+    const { deviceId } = await seedEverything()
+    const refused = await post(`/api/devices/${deviceId}/nodes/stream/startStreaming`, {})
+
+    expect(refused.status).toBe(409)
+    expect(refused.json.error).toMatch(/No stream target/)
+    expect(refused.json.code).toBe('no-stream-target')
+    expect(refused.json.remediation).toBeTruthy()
+  })
+
+  it('fails loudly when the device accepts the command and ignores it', async () => {
+    // A HyperDeck mid-reboot. The whole reason every write is read back: a
+    // button that goes green without the device doing anything is worse
+    // than no button.
+    const device = await post('/api/devices', {
+      pluginId: 'mock',
+      label: 'Deaf deck',
+      config: { kind: 'recorder', fault: 'ignores-writes' },
+    })
+    await post(`/api/devices/${device.json.id}/connect`, {})
+
+    const attempt = await post(`/api/devices/${device.json.id}/nodes/record/startRecording`, {
+      filename: 'take 1',
+    })
+    expect(attempt.status).toBe(502)
+    expect(attempt.json.error).toMatch(/did not take effect/)
+  })
+
+  it('will not start a recording with no name', async () => {
+    const deviceId = await connectRecorder()
+    const refused = await post(`/api/devices/${deviceId}/nodes/record/startRecording`, {})
+    expect(refused.status).toBe(409)
+    expect(refused.json.error).toMatch(/name/)
+  })
+
+  it('records under the name an operator typed, made safe for a filesystem', async () => {
+    const deviceId = await connectRecorder()
+    const started = await post(`/api/devices/${deviceId}/nodes/record/startRecording`, {
+      filename: 'rehearsal/2026: take 1',
+    })
+    expect(started.json.state.recording.active).toBe(true)
+    expect(started.json.state.recording.filename).not.toContain('/')
+    expect(started.json.state.recording.filename).toContain('rehearsal')
+  })
+
+  it('refuses an action the node does not have', async () => {
+    const deviceId = await connectRecorder()
+    const refused = await post(`/api/devices/${deviceId}/nodes/record/startStreaming`, {})
+    expect(refused.status).toBe(409)
+    expect(refused.json.error).toMatch(/does not do startStreaming/)
+  })
+
+  it('says to connect first rather than failing somewhere inside a plugin', async () => {
+    const device = await post('/api/devices', {
+      pluginId: 'mock',
+      label: 'Never connected',
+      config: { kind: 'encoder' },
+    })
+    const refused = await post(`/api/devices/${device.json.id}/nodes/stream/startStreaming`, {})
+    expect(refused.status).toBe(404)
+    expect(refused.json.error).toMatch(/not connected/)
+  })
+
+  it('offers no way to push a stream key at a device', async () => {
+    const { deviceId } = await seedEverything()
+    const attempt = await post(`/api/devices/${deviceId}/nodes/stream/applyStreamTarget`, {
+      url: 'rtmps://evil.invalid/live',
+      key: 'live_someone-elses-key',
+    })
+    // Not in the allow-list: a key would otherwise cross this endpoint in
+    // the clear, outside any run and with nothing to clean it up.
+    expect(attempt.status).toBe(400)
+  })
+
+  it('names the event mid-run on a device, so a manual stop is not a surprise', async () => {
+    const { deviceId } = await seedEverything()
+    const [first] = (await get(`/api/occurrences?from=${START - MINUTE}&to=${START + MINUTE}`)).json
+    clock.set(START)
+    await post(`/api/occurrences/${first.id}/start-now`, {})
+
+    const device = (await get('/api/devices')).json.find((row: { id: string }) => row.id === deviceId)
+    expect(device.inUseBy).toEqual([{ runId: expect.any(String), label: 'Sunday Service' }])
+  })
+
+  it('says nothing is using a device when nothing is', async () => {
+    const { deviceId } = await seedEverything()
+    const device = (await get('/api/devices')).json.find((row: { id: string }) => row.id === deviceId)
+    expect(device.inUseBy).toEqual([])
+  })
+})
+
+async function connectRecorder(): Promise<string> {
+  const device = await post('/api/devices', { pluginId: 'mock', label: 'Deck', config: { kind: 'recorder' } })
+  await post(`/api/devices/${device.json.id}/connect`, {})
+  return device.json.id as string
+}
+
 describe('credentials', () => {
   it('never exposes a stored stream key', async () => {
     await post('/api/credentials', {

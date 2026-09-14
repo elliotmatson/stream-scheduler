@@ -194,6 +194,18 @@ manually-stopped run records that a human stopped it rather than treating it as 
 failure. An operator standing in a control room at 09:02 needs a stop button, not
 a support ticket.
 
+Below the runs, the Devices page drives a node directly: read its state, start
+and stop a stream, start and stop a recording. Each of those goes through the
+same verify-after-write as a scheduled step, because a button that goes green
+without the device doing anything is worse than no button. The page names any
+event mid-run on that device before you touch it, and points at the run's own
+stop button as the thing that ends it properly.
+
+`applyStreamTarget` is deliberately not on that surface. It takes a stream key,
+so offering it would mean posting a key in the clear to be pushed at a device
+outside any run, with nothing to clean it up afterwards. Getting a key onto an
+encoder is what stream credentials and the prepare phase are for.
+
 ## Observability
 
 The run detail view is a timeline of steps: what ran, when, how long it took, the

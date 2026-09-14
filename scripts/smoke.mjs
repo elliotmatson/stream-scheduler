@@ -173,6 +173,58 @@ async function main() {
   const stopStep = afterCancel.steps.find((s) => s.label === 'Main: stop')
   check('cancelling really told the encoder to stop', stopStep?.state === 'done', JSON.stringify(stopStep))
 
+  // -- driving a device by hand ---------------------------------------------
+
+  const deck = await api('POST', '/api/devices', {
+    pluginId: 'mock',
+    label: 'Smoke deck',
+    config: { kind: 'recorder' },
+  })
+  await api('POST', `/api/devices/${deck.id}/connect`)
+
+  const idle = await api('GET', `/api/devices/${deck.id}/nodes/record/state`)
+  check('a node reports its state on demand', idle.state.recording.active === false, JSON.stringify(idle))
+
+  const rolling = await api('POST', `/api/devices/${deck.id}/nodes/record/startRecording`, {
+    filename: 'smoke/rehearsal: take 1',
+  })
+  check('an operator can start a recording by hand', rolling.state.recording.active === true)
+  check(
+    '...under a name made safe for a filesystem',
+    !rolling.state.recording.filename.includes('/') && rolling.state.recording.filename.includes('rehearsal'),
+    rolling.state.recording.filename,
+  )
+
+  const halted = await api('POST', `/api/devices/${deck.id}/nodes/record/stopRecording`)
+  check('...and stop it again', halted.state.recording.active === false)
+
+  let ignoredReported = false
+  const deafDeck = await api('POST', '/api/devices', {
+    pluginId: 'mock',
+    label: 'Smoke deaf deck',
+    config: { kind: 'recorder', fault: 'ignores-writes' },
+  })
+  await api('POST', `/api/devices/${deafDeck.id}/connect`)
+  try {
+    await api('POST', `/api/devices/${deafDeck.id}/nodes/record/startRecording`, { filename: 'take 1' })
+  } catch (error) {
+    ignoredReported = String(error).includes('did not take effect')
+  }
+  // A button that goes green without the device doing anything is worse than
+  // no button at all.
+  check('a device that accepts a manual command and ignores it is caught', ignoredReported)
+
+  let keyRefused = false
+  try {
+    await api('POST', `/api/devices/${device.id}/nodes/stream/applyStreamTarget`, {
+      url: 'rtmps://elsewhere.invalid/live',
+      key: 'live_not-going-through-here',
+    })
+  } catch (error) {
+    keyRefused = String(error).includes('400')
+  }
+  check('a stream key cannot be pushed at a device through the manual controls', keyRefused)
+
   const index = await fetch(`${BASE}/`)
   check('the web UI is served', index.ok && (await index.text()).includes('<div id="root">'))
 

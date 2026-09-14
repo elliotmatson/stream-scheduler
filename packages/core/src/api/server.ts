@@ -5,7 +5,8 @@ import type { FastifyInstance } from 'fastify'
 import websocket from '@fastify/websocket'
 import fastifyStatic from '@fastify/static'
 import { z } from 'zod'
-import type { ConfigValues } from '@scheduler/plugin-sdk'
+import { DeviceError, VerificationError } from '@scheduler/plugin-sdk'
+import type { ConfigValues, JsonObject, NodeDefinition, NodeState } from '@scheduler/plugin-sdk'
 import type { Application } from '../app.js'
 import type { Db } from '../db/index.js'
 import {
@@ -113,9 +114,33 @@ function registerRoutes(fastify: FastifyInstance, app: Application): void {
 
   fastify.get('/api/devices', async () => {
     const rows = db.prepare('SELECT * FROM device ORDER BY label').all() as DeviceRowShape[]
+    // Which events are mid-run on each device, so the manual controls can
+    // say whose stream they are about to interfere with.
+    const busy = db.prepare(
+      `SELECT DISTINCT r.id AS run_id, s.label AS label, s.source_device_id AS source_device_id,
+              o.id AS occurrence_id
+         FROM run r
+         JOIN occurrence o ON o.id = r.occurrence_id
+         JOIN event_series s ON s.id = o.series_id
+        WHERE r.state NOT IN ('completed', 'failed', 'cancelled')`,
+    ).all() as { run_id: string; label: string; source_device_id: string | null; occurrence_id: string }[]
+    const usesDevice = db.prepare(
+      `SELECT 1 FROM event_output eo
+         JOIN occurrence o ON o.series_id = eo.series_id
+        WHERE o.id = ? AND eo.device_id = ? AND eo.enabled = 1
+        LIMIT 1`,
+    )
+
     return rows.map((row) => {
       const connection = app.connections.get(row.id)
       return {
+        inUseBy: busy
+          .filter(
+            (run) =>
+              run.source_device_id === row.id ||
+              usesDevice.get(run.occurrence_id, row.id) !== undefined,
+          )
+          .map((run) => ({ runId: run.run_id, label: run.label })),
         id: row.id,
         pluginId: row.plugin_id,
         label: row.label,
@@ -185,6 +210,84 @@ function registerRoutes(fastify: FastifyInstance, app: Application): void {
     const { id } = z.object({ id: z.string() }).parse(request.params)
     const connection = await app.connections.open(id)
     return { capabilities: connection.capabilities, nodes: connection.nodes, health: connection.health }
+  })
+
+
+  /**
+   * Drive a device by hand.
+   *
+   * The scheduler must never be the only way to control the hardware: an
+   * operator standing in a control room at 09:02 needs a stop button, not a
+   * support ticket.
+   *
+   * Every action here is one the node declared it supports, and every write
+   * is read back and checked, for the same reason the run engine does it — a
+   * Blackmagic device will accept a command and quietly ignore it, and a
+   * button that lies is worse than no button.
+   *
+   * `applyStreamTarget` is deliberately not offered. It takes a stream key,
+   * so exposing it here would mean posting a key in the clear to be pushed
+   * at a device outside any run, with nothing to clean it up afterwards.
+   * Getting a key onto an encoder is what stream credentials and the prepare
+   * phase are for.
+   */
+  const MANUAL_ACTIONS = {
+    startStreaming: {
+      what: 'Streaming',
+      expected: 'active',
+      satisfiedBy: (state: NodeState) => state.streaming?.active === true,
+    },
+    stopStreaming: {
+      what: 'Streaming',
+      expected: 'stopped',
+      satisfiedBy: (state: NodeState) => state.streaming?.active === false,
+    },
+    startRecording: {
+      what: 'Recording',
+      expected: 'active',
+      satisfiedBy: (state: NodeState) => state.recording?.active === true,
+    },
+    stopRecording: {
+      what: 'Recording',
+      expected: 'stopped',
+      satisfiedBy: (state: NodeState) => state.recording?.active === false,
+    },
+  } as const
+
+  fastify.get('/api/devices/:id/nodes/:nodeId/state', async (request) => {
+    const { id, nodeId } = z.object({ id: z.string(), nodeId: z.string() }).parse(request.params)
+    nodeOr404(app, id, nodeId)
+    return { state: await app.connections.invoke(id, nodeId, 'readState') }
+  })
+
+  fastify.post('/api/devices/:id/nodes/:nodeId/:action', async (request) => {
+    const { id, nodeId, action } = z
+      .object({
+        id: z.string(),
+        nodeId: z.string(),
+        action: z.enum(['startStreaming', 'stopStreaming', 'startRecording', 'stopRecording']),
+      })
+      .parse(request.params)
+    const body = z.object({ filename: z.string().min(1).max(200).optional() }).parse(request.body ?? {})
+
+    const node = nodeOr404(app, id, nodeId)
+    if (!node.supports.includes(action)) {
+      throw new ConflictError(`"${node.label}" does not do ${action}.`)
+    }
+
+    const check = MANUAL_ACTIONS[action]
+    // A recording has to be called something: the node contract takes a
+    // filename, and the device would otherwise refuse with a message about
+    // arguments rather than about what the operator left blank.
+    if (action === 'startRecording' && !body.filename) {
+      throw new ConflictError('Give the recording a name before starting it.')
+    }
+    const args: JsonObject =
+      action === 'startRecording' ? { filename: sanitizeFilename(body.filename!) } : {}
+    const state = await app.connections.applyAndVerify(id, nodeId, action, args, check)
+
+    app.logger.info('an operator drove a device by hand', { deviceId: id, nodeId, action })
+    return { state }
   })
 
   // -- credentials --------------------------------------------------------
@@ -736,6 +839,13 @@ function isLoopback(host: string): boolean {
 function statusFor(error: Error): number {
   if (error instanceof NotFoundError || error instanceof UnknownPluginError) return 404
   if (error instanceof ConflictError) return 409
+  // The device accepted the command and then did not do it. That is a
+  // failure upstream of this app, and calling it a 500 tells an operator to
+  // look in the wrong place.
+  if (error instanceof VerificationError) return 502
+  // The device refused: busy, not pointed anywhere, wrong mode. Its own
+  // message is the useful one.
+  if (error instanceof DeviceError) return 409
   if (error instanceof ConfigInvalidError || error instanceof InvalidScheduleError || error instanceof TemplateError) {
     return 400
   }
@@ -745,6 +855,9 @@ function statusFor(error: Error): number {
 }
 
 function detailsFor(error: Error): Record<string, unknown> {
+  if (error instanceof DeviceError) {
+    return { code: error.code, ...(error.remediation === undefined ? {} : { remediation: error.remediation }) }
+  }
   if (error instanceof z.ZodError) return { issues: error.issues }
   if (error instanceof ConfigInvalidError) return { issues: error.issues }
   if (error instanceof TemplateError) return { issues: error.issues }
@@ -973,4 +1086,23 @@ function assertDeliverable(output: Pick<EventOutput, 'kind' | 'destinationId' | 
   if (!output.destinationId && !output.credentialId) {
     throw new ConflictError(`"${output.label}" has nowhere to stream to. Pick a streaming service or a stream key.`)
   }
+}
+
+/**
+ * The node as the device actually reported it, not as something was
+ * configured to expect.
+ *
+ * A device that has never connected has no nodes, and saying so beats a
+ * command that fails somewhere inside a plugin.
+ */
+function nodeOr404(app: Application, deviceId: string, nodeId: string): NodeDefinition {
+  const connection = app.connections.get(deviceId)
+  if (!connection) {
+    throw new NotFoundError(
+      `"${deviceId}" is not connected. Press Connect first, so the app knows what this device can do.`,
+    )
+  }
+  const node = connection.nodes.find((candidate) => candidate.id === nodeId)
+  if (!node) throw new NotFoundError(`This device has no "${nodeId}".`)
+  return node
 }
