@@ -61,7 +61,6 @@ export function Devices(): ReactNode {
           </p>
         </div>
         <div className="row">
-          <button onClick={reload}>Refresh</button>
           <button className="primary" onClick={() => setAdding((open) => !open)}>
             {adding ? 'Cancel' : 'Add a device'}
           </button>

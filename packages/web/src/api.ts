@@ -26,6 +26,8 @@ export interface Series {
   prepareLeadMs: number
   lateStartGraceMs: number
   templates: Record<string, string>
+  /** Bumped by the server whenever the event or its outputs change. */
+  version: number
   enabled: boolean
 }
 

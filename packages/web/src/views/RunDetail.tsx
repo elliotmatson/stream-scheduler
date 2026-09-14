@@ -62,12 +62,6 @@ export function RunDetail({
         </div>
         <div className="row">
           <StatusPill status={run.state} />
-          <button
-            onClick={reload}
-            title="This screen updates itself while a run is going; this asks again now."
-          >
-            Refresh
-          </button>
           {/* The scheduler must never be the only way to stop a stream. */}
           {stoppable ? (
             <button
@@ -188,9 +182,6 @@ export function Runs({ navigate }: { navigate: (path: string) => void }): ReactN
             Every event the scheduler has taken on, newest first.
           </p>
         </div>
-        <button onClick={reload} title="This screen updates itself; this asks again now.">
-          Refresh
-        </button>
       </div>
       <ErrorBanner error={error} />
       <Card>

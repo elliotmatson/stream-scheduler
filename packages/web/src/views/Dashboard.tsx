@@ -45,9 +45,6 @@ export function Dashboard({ navigate }: { navigate: (path: string) => void }): R
               reconnecting
             </span>
           ) : null}
-          <button onClick={reload} title="This screen updates itself; this asks again now.">
-            Refresh
-          </button>
         </div>
       </div>
 
