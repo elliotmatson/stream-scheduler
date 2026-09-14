@@ -863,6 +863,11 @@ pre {
   background: var(--bad-soft);
 }
 
+/* A number that should worry you, inline in a table. */
+td.bad {
+  color: var(--bad);
+}
+
 .banner.warn {
   border-color: color-mix(in srgb, var(--warn) 45%, transparent);
   color: var(--warn);

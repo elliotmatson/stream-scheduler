@@ -35,10 +35,26 @@ export type NodeAction =
   | 'startRecording'
   | 'stopRecording'
   | 'route'
+  /** Erases a card or disk. Two-step by design; see `NodeActions`. */
+  | 'formatStorage'
 
 export interface StreamTarget {
   url: string
   key: string
+  /** A quality profile the device named in `NodeState.options`. Absent
+   *  leaves the device on whatever it is set to. */
+  quality?: string
+}
+
+/** One card, disk or slot a recorder can write to. */
+export interface StorageSlot {
+  id: number
+  /** As the device reports it: 'mounted', 'empty', 'error', and so on. */
+  status: string
+  volumeName?: string
+  remainingMs?: number
+  /** True for the slot currently being written to. */
+  active?: boolean
 }
 
 /** Read-back state. Never contains a secret: a key is reported as a fingerprint
@@ -54,9 +70,70 @@ export interface NodeState {
   recording?: {
     active: boolean
     filename?: string
+    /** Headroom on the slot being recorded to. */
     remainingMs?: number
+    /** Every slot the device has, so an operator can see the card they are
+     *  about to fill and the one it would roll onto. */
+    slots?: StorageSlot[]
+    /** Whether the device continues onto another slot when this one fills.
+     *  Absent when the device has no such notion. */
+    rollover?: boolean
+  }
+  /**
+   * What the device sees on its input.
+   *
+   * Worth reporting separately from whether it is recording: a deck with no
+   * signal refuses to record, and finding that out from a failed command is
+   * strictly worse than seeing it beforehand.
+   */
+  input?: {
+    present: boolean
+    /** As the device names it, e.g. '1080p50'. */
+    format?: string
+    /** Which input it is set to take, where the device has a choice. */
+    source?: string
   }
   routing?: Record<string, string>
+  /**
+   * Settings this node will accept, and what it is on now.
+   *
+   * Reported by the device rather than guessed, so an event offers the
+   * profiles this encoder actually has rather than a free-text box whose
+   * mistakes surface as an HTTP 400 at 09:00. Absent means the device
+   * offers no choice, which is the common case.
+   */
+  options?: {
+    /**
+     * What the device will accept for its encoder quality.
+     *
+     * `current` is written in the same vocabulary as the `quality` a caller
+     * passes in, so the two can be compared directly — that is what makes
+     * verify-after-write possible for a setting whose spelling is the
+     * device's own.
+     */
+    quality?: {
+      current?: string
+      /** Named profiles the device has. Empty when it takes a number. */
+      choices: string[]
+      /**
+       * Set instead of `choices` by a device that takes a bitrate rather
+       * than a profile name. An ATEM is the case: the named qualities in
+       * ATEM Software Control live in a file on the computer, and the
+       * switcher itself stores only the bitrate. `quality` is then a figure
+       * in Mb/s — "9", or "7-9" for a range.
+       */
+      bitrate?: { minMbps: number; maxMbps: number; note?: string }
+      /**
+       * Set instead of either by a device that takes a name it cannot be
+       * asked to list. A HyperDeck is the case: the record codec is set by
+       * name over the protocol, but which codecs a given model has is not
+       * something the protocol will answer, and the set differs by model and
+       * firmware. `examples` are suggestions, not a contract — the device
+       * refuses one it does not have, and says so.
+       */
+      freeform?: { note?: string; examples?: string[] }
+    }
+  }
   raw?: JsonObject
 }
 
@@ -101,9 +178,21 @@ export interface NodeActions {
   applyStreamTarget?(target: StreamTarget): Promise<void>
   startStreaming?(): Promise<void>
   stopStreaming?(): Promise<void>
-  startRecording?(options: { filename: string }): Promise<void>
+  /** `slot` is which card or disk to write to, where the device has more
+   *  than one. Absent means whichever it is already on. */
+  startRecording?(options: { filename: string; slot?: number; quality?: string }): Promise<void>
   stopRecording?(): Promise<void>
   route?(options: { input: string; output: string }): Promise<void>
+  /**
+   * Erases one slot.
+   *
+   * Destructive and irreversible, so the host asks twice over the wire as
+   * well as in the UI: `confirm` absent means "prepare and tell me the
+   * token", and calling again with that token is what actually erases. A
+   * device whose protocol has no such handshake should do the work only
+   * when `confirm` is present.
+   */
+  formatStorage?(options: { slot: number; confirm?: string }): Promise<{ confirm?: string }>
   /** The host calls this after every write and compares. Blackmagic devices
    *  will accept a command and then ignore it; verify-after-write turns that
    *  from a showtime mystery into a prepare-phase failure. */

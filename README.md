@@ -19,10 +19,14 @@ records, stops and tidies up — without anyone touching it.
 
 **Working now**
 
-- An event is one source encoder and one long window, with several streams and
-  recordings inside it that start and stop on their own clocks — a Sunday
-  morning is one event from 7:00 to 12:45 with services at 9:00 and 11:00 and a
-  recorder running the length of it, not five events kept in step by hand
+- An event is one long window, with several streams and recordings inside it
+  that start and stop on their own clocks — a Sunday morning is one event from
+  7:00 to 12:45 with services at 9:00 and 11:00 and a recorder running the
+  length of it, not five events kept in step by hand. Each output names its
+  own encoder or deck, and may name a quality — a profile where the device has
+  them, a bitrate in Mb/s on an ATEM, which is one encoder's setting for
+  both its stream and its recording — or a card to record onto; leave those
+  alone and the device stays as it was set up
 - Recurring events via RFC 5545 `RRULE`, timezone- and DST-correct, with
   per-occurrence skips and edits that survive changes to the series
 - A durable run engine: everything prepares at T−30, each output goes on and
@@ -36,8 +40,12 @@ records, stops and tidies up — without anyone touching it.
 - Encrypted stream keys and device passwords, write-only over the API
 - Device connection management with capability probing and verify-after-write
 - Manual control from the Devices page — start and stop a stream or a
-  recording by hand, read what a device is actually doing, and see which
-  event is mid-run on it before you touch it
+  recording by hand, point an encoder at a saved key (by name: the key itself
+  never leaves the server), pick a quality profile or a card, erase a card
+  with the deck's own two-step confirmation, see free space and whether the
+  deck can roll onto another card, and see which event is mid-run on a device
+  before you touch it. Erasing and re-pointing are refused outright while an
+  event is mid-run
 - **HyperDeck** adapter (TCP 9993), tested against a protocol-level emulator
 - **ATEM** adapter, with capabilities read from what the switcher reports
   rather than a model table that goes stale on the next firmware release
@@ -167,6 +175,22 @@ URI to paste. One of them matters more than the rest:
 > Google expires refresh tokens after 7 days, so every scheduled stream works
 > for a week and then starts failing. The app names this specific cause when a
 > refresh is rejected, but it is much easier to avoid.
+
+> **Set the user type to "External", even for one organisation.** A YouTube
+> channel in a Brand Account is not a member of any Google Workspace, so an
+> "Internal" client refuses it with `Error 403: org_internal` — the person
+> setting it up connects their own channel fine and only finds out when they
+> add the one that matters.
+
+> **The redirect URI has to match character for character**, or the consent
+> screen answers `Error 400: redirect_uri_mismatch` without saying what it
+> expected. The instructions show the URI derived from how you reached the
+> page — following `X-Forwarded-Proto` and `X-Forwarded-Host`, so an app
+> behind Tailscale Serve or a reverse proxy advertises the `https://` address
+> a browser really uses. Google will not register a plain `http://` callback
+> for anything but localhost, so a LAN or tailnet address has to be reached
+> over HTTPS. Register every address you will connect from: the URI is
+> whatever you browsed to at the time, and Google accepts a list.
 
 ## Layout
 

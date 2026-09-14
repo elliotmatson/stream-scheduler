@@ -17,9 +17,6 @@ export interface Occurrence {
 export interface Series {
   id: string
   label: string
-  /** The one encoder this event's outputs run on, unless one names its own. */
-  sourceDeviceId: string | null
-  sourceNodeId: string | null
   timezone: string
   rrule: string | null
   dtstart: number
@@ -63,8 +60,39 @@ export interface NodeState {
     bitrateBps?: number
     durationMs?: number
   }
-  recording?: { active: boolean; filename?: string; remainingMs?: number }
+  recording?: {
+    active: boolean
+    filename?: string
+    remainingMs?: number
+    slots?: StorageSlot[]
+    rollover?: boolean
+  }
+  input?: { present: boolean; format?: string; source?: string }
   routing?: Record<string, string>
+  /**
+   * Settings the device says it will accept, and what it is on now.
+   *
+   * Three ways a device spells quality, and it declares which one it takes:
+   * named profiles it can list, a bitrate where it stores only numbers, or a
+   * name it takes but will not enumerate. `current` is always in the same
+   * vocabulary as the value to send back.
+   */
+  options?: {
+    quality?: {
+      current?: string
+      choices: string[]
+      bitrate?: { minMbps: number; maxMbps: number; note?: string }
+      freeform?: { note?: string; examples?: string[] }
+    }
+  }
+}
+
+export interface StorageSlot {
+  id: number
+  status: string
+  volumeName?: string
+  remainingMs?: number
+  active?: boolean
 }
 
 export type ManualAction = 'startStreaming' | 'stopStreaming' | 'startRecording' | 'stopRecording'
@@ -165,6 +193,7 @@ export interface OAuthInstructions {
   steps: string[]
   redirectUri: string
   warning: string
+  warnings: string[]
 }
 
 export interface OAuthClient {
@@ -215,11 +244,19 @@ export interface EventOutput {
   durationMs: number
   destinationId: string | null
   credentialId: string | null
-  /** Null means the event's source encoder. */
+  /** Where it runs. Required in practice; null only on rows written before
+   *  outputs owned their device. */
   deviceId: string | null
   nodeId: string | null
   templates: Record<string, string>
+  /** Absent keys mean "leave the device as it is". */
+  settings: OutputSettings
   enabled: boolean
+}
+
+export interface OutputSettings {
+  quality?: string
+  slot?: number
 }
 
 /** Two outputs that would need the same hardware at the same time. */
@@ -238,7 +275,7 @@ export interface OutputsResponse {
 }
 
 export type OutputInput = Partial<Omit<EventOutput, 'id' | 'seriesId' | 'position'>> &
-  Pick<EventOutput, 'kind' | 'label' | 'durationMs'>
+  Pick<EventOutput, 'kind' | 'label' | 'durationMs'> & { deviceId: string; nodeId: string }
 
 export interface PreviewOccurrence {
   start: number
@@ -258,8 +295,6 @@ export interface SchedulePreview {
 
 export interface SeriesInput {
   label: string
-  sourceDeviceId: string | null
-  sourceNodeId: string | null
   timezone: string
   rrule: string | null
   /** The wall time as typed. The server resolves it in `timezone`. */
@@ -309,9 +344,30 @@ export const api = {
   connectDevice: (id: string) => request<unknown>(`/api/devices/${id}/connect`, { method: 'POST' }),
   nodeState: (deviceId: string, nodeId: string) =>
     request<{ state: NodeState | null }>(`/api/devices/${deviceId}/nodes/${nodeId}/state`),
+  /** Erase a card. Call once to get a confirmation token, then again with
+   *  it — the deck's own protocol works that way and this passes it
+   *  through rather than inventing a confirmation. */
+  formatStorage: (deviceId: string, nodeId: string, slot: number, confirm?: string) =>
+    request<{ formatted: boolean; confirm?: string }>(
+      `/api/devices/${deviceId}/nodes/${nodeId}/format`,
+      { method: 'POST', body: JSON.stringify({ slot, ...(confirm ? { confirm } : {}) }) },
+    ),
   /** Drive a device by hand. The server reads the write back before it
    *  answers, so a resolved promise means the device really did it. */
-  driveNode: (deviceId: string, nodeId: string, action: ManualAction, body: { filename?: string } = {}) =>
+  /** Point an encoder at a saved target by hand. The credential is named by
+   *  id: the key is read out of the vault on the server and never travels
+   *  through the browser. */
+  pointAtTarget: (deviceId: string, nodeId: string, body: { credentialId: string; quality?: string }) =>
+    request<{ state: NodeState | null }>(`/api/devices/${deviceId}/nodes/${nodeId}/stream-target`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+  driveNode: (
+    deviceId: string,
+    nodeId: string,
+    action: ManualAction,
+    body: { filename?: string; slot?: number } = {},
+  ) =>
     request<{ state: NodeState | null }>(`/api/devices/${deviceId}/nodes/${nodeId}/${action}`, {
       method: 'POST',
       body: JSON.stringify(body),

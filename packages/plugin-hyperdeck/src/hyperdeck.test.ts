@@ -28,6 +28,15 @@ interface FakeDeck {
     recordingTimeSeconds: number
     slotStatus: string
     failRecordWith?: number
+    /** What the deck sees on the wire, as opposed to the clip it is on. */
+    inputVideoFormat?: string
+    videoInput: string
+    fileFormat: string
+    /** Codecs this fake deck will accept, as a real one has a subset. */
+    formats: string[]
+    configurationReads: number
+    formatted: number[]
+    formatPending?: { slot: number; token: string }
   }
 }
 
@@ -43,6 +52,12 @@ function makeDeck(): FakeDeck {
     selectedSlot: 1,
     recordingTimeSeconds: 7200,
     slotStatus: 'mounted',
+    inputVideoFormat: '1080p50',
+    videoInput: 'SDI',
+    fileFormat: 'QuickTimeProResHQ',
+    formats: ['QuickTimeProResHQ', 'QuickTimeProResLT'],
+    configurationReads: 0,
+    formatted: [] as number[],
   }
   const server = new HyperdeckServer('127.0.0.1', PORT)
 
@@ -76,7 +91,54 @@ function makeDeck(): FakeDeck {
     timecode: '00:00:10:00',
     'video format': '1080p50',
     loop: 'false',
+    ...(state.inputVideoFormat === undefined ? {} : { 'input video format': state.inputVideoFormat }),
   })
+  server.onFormat = async (command) => {
+    // The deck's format is a two-step handshake: `prepare` hands back a
+    // token and erases nothing, and only quoting that token back on
+    // `confirm` wipes the card.
+    const params = command.parameters as Record<string, string | undefined>
+    if (params.prepare !== undefined) {
+      state.formatPending = {
+        slot: Number(params['slot id'] ?? state.selectedSlot),
+        token: 'f0rm4t',
+      }
+      // A real deck answers `216 format ready` with the token on a bare,
+      // unlabelled line, which `hyperdeck-connection` surfaces as a `code`
+      // parameter. This emulator can only write `name: value` lines, so the
+      // token goes out under the name the client reads rather than the
+      // `token` one the emulator's own types suggest.
+      return { code: state.formatPending.token } as unknown as { token: string }
+    }
+    if (state.formatPending && params.confirm === state.formatPending.token) {
+      state.formatted.push(state.formatPending.slot)
+      state.formatPending = undefined
+    }
+    // Confirming earns a plain `200 ok`, which the emulator sends when the
+    // handler resolves with nothing.
+    return undefined as unknown as { token: string }
+  }
+  server.onConfiguration = async (command) => {
+    const params = command.parameters as Record<string, string | undefined>
+    // A write, not a read. The emulator answers `200 ok` when the handler
+    // resolves with nothing, which is what the deck does.
+    if (Object.keys(params).length > 0) {
+      const wanted = params['file format']
+      if (wanted !== undefined) {
+        // A deck refuses a codec its model does not have.
+        if (!state.formats.includes(wanted)) throw { code: 103, name: 'unsupported parameter' }
+        state.fileFormat = wanted
+      }
+      if (params['video input'] !== undefined) state.videoInput = params['video input']
+      return undefined as unknown as { 'video input': string }
+    }
+    state.configurationReads += 1
+    return {
+      'video input': state.videoInput,
+      'audio input': 'embedded',
+      'file format': state.fileFormat,
+    }
+  }
   server.onSlotInfo = async (command) => ({
     'slot id': String(command.parameters['slot id'] ?? state.selectedSlot),
     status: state.slotStatus,
@@ -142,7 +204,7 @@ describe('connecting', () => {
     const nodes = await hyperdeck.listNodes()
     expect(nodes).toHaveLength(1)
     expect(nodes[0]).toMatchObject({ id: 'record', roles: ['sink'] })
-    expect(nodes[0]?.supports).toEqual(['startRecording', 'stopRecording'])
+    expect(nodes[0]?.supports).toEqual(['startRecording', 'stopRecording', 'formatStorage'])
   })
 })
 
@@ -196,6 +258,110 @@ describe('protocol errors', () => {
     const hyperdeck = await connect()
     await expect(hyperdeck.invoke('record', 'startRecording', { filename: 'service' })).rejects.toMatchObject({
       code: 'no-disk',
+    })
+  })
+
+  it('formats a card only after the confirmation handshake the deck requires', async () => {
+    const hyperdeck = await connect()
+
+    // The safety-critical half: preparing asks, and erases nothing.
+    // The token comes back on the state's `raw`, where a one-shot capability
+    // belongs: it is not a property of the deck.
+    const prepared = await hyperdeck.invoke('record', 'formatStorage', { slot: 2 })
+    const confirm = prepared?.raw?.confirm
+    expect(confirm).toBe('f0rm4t')
+    expect(deck.state.formatted).toEqual([])
+
+    // Quoting the deck's own token back is what erases, and it erases the
+    // slot that was prepared rather than whichever one happens to be selected.
+    await hyperdeck.invoke('record', 'formatStorage', { slot: 2, confirm: String(confirm) })
+    expect(deck.state.formatted).toEqual([2])
+  })
+
+  it('erases nothing when the token is not the one the deck handed out', async () => {
+    const hyperdeck = await connect()
+
+    await hyperdeck.invoke('record', 'formatStorage', { slot: 1 })
+    await hyperdeck.invoke('record', 'formatStorage', { slot: 1, confirm: 'guessed' })
+    expect(deck.state.formatted).toEqual([])
+  })
+
+  it('records in the codec an output asked for, and reports it back', async () => {
+    const hyperdeck = await connect()
+
+    const before = await hyperdeck.invoke('record', 'readState')
+    expect(before?.options?.quality?.current).toBe('QuickTimeProResHQ')
+    // Suggestions, not a contract: the deck will not say what it supports.
+    expect(before?.options?.quality?.choices).toEqual([])
+    expect(before?.options?.quality?.freeform?.examples).toContain('QuickTimeProResLT')
+
+    await hyperdeck.invoke('record', 'startRecording', {
+      filename: 'service',
+      quality: 'QuickTimeProResLT',
+    })
+    expect(deck.state.fileFormat).toBe('QuickTimeProResLT')
+    expect(deck.state.recording).toBe(true)
+
+    // Read fresh rather than from the cache the connection holds, or the
+    // planner would verify a setting against a stale answer.
+    expect((await hyperdeck.invoke('record', 'readState'))?.options?.quality?.current).toBe(
+      'QuickTimeProResLT',
+    )
+  })
+
+  it('will not start recording in a codec the deck refused', async () => {
+    const hyperdeck = await connect()
+
+    await expect(
+      hyperdeck.invoke('record', 'startRecording', { filename: 'service', quality: 'H.265High' }),
+    ).rejects.toMatchObject({ code: 'unknown-quality' })
+
+    // The refusal came before the record command: better no recording than
+    // one in the wrong codec.
+    expect(deck.state.recording).toBe(false)
+    expect(deck.state.fileFormat).toBe('QuickTimeProResHQ')
+  })
+
+  it('refuses to format a node that cannot', async () => {
+    const hyperdeck = await connect()
+    await expect(hyperdeck.invoke('nope', 'formatStorage', { slot: 1 })).rejects.toMatchObject({
+      code: 'unknown-node',
+    })
+  })
+
+  it('reads the deck configuration once, not on every state read', async () => {
+    // Reading state is on the notification path, and the deck pushes
+    // notifications while recording. Every avoidable round trip there is
+    // one the deck does during a service.
+    const hyperdeck = await connect()
+    await hyperdeck.invoke('record', 'readState')
+    await hyperdeck.invoke('record', 'readState')
+    await hyperdeck.invoke('record', 'readState')
+    expect(deck.state.configurationReads).toBe(1)
+  })
+
+  it('explains a "no input" refusal with what the deck says it is looking at', async () => {
+    deck.state.failRecordWith = 110
+    const hyperdeck = await connect()
+    // A deck that refuses for "no input" while reporting a format on that
+    // input is the interesting case, and the one a bare code translation
+    // sends somebody chasing cables for nothing.
+    await expect(hyperdeck.invoke('record', 'startRecording', { filename: 'take 1' })).rejects.toMatchObject({
+      code: 'no-input',
+      message: expect.stringContaining('1080p50'),
+    })
+    await expect(hyperdeck.invoke('record', 'startRecording', { filename: 'take 1' })).rejects.toMatchObject({
+      message: expect.stringContaining('SDI'),
+    })
+  })
+
+  it('says the deck sees nothing when it really sees nothing', async () => {
+    deck.state.failRecordWith = 110
+    deck.state.inputVideoFormat = undefined
+    const hyperdeck = await connect()
+    await expect(hyperdeck.invoke('record', 'startRecording', { filename: 'take 1' })).rejects.toMatchObject({
+      code: 'no-input',
+      message: expect.stringContaining('no signal'),
     })
   })
 

@@ -23,11 +23,30 @@ export interface EventOutput {
   destinationId: string | null
   /** A key entered by hand, used instead of a service. */
   credentialId: string | null
-  /** Null means the event's source encoder. */
+  /** The hardware this output runs on. Null only while an event is still
+   *  being set up; nothing can run until it is chosen. */
   deviceId: string | null
   nodeId: string | null
   templates: OutputTemplates
+  /** What to set on the device before this output runs. Every key absent
+   *  means "leave it as it is", which is the right default for gear
+   *  somebody else may have configured by hand. */
+  settings: OutputSettings
   enabled: boolean
+}
+
+/**
+ * Device settings an output wants applied before it runs.
+ *
+ * Deliberately all optional. An event that does not care should not be
+ * silently reconfiguring hardware, and "as it is now" has to be an
+ * expressible choice rather than the absence of one.
+ */
+export interface OutputSettings {
+  /** Encoder quality profile, in the device's own vocabulary. */
+  quality?: string
+  /** Which slot or disk a recorder writes to. */
+  slot?: number
 }
 
 interface OutputRow {
@@ -43,6 +62,7 @@ interface OutputRow {
   device_id: string | null
   node_id: string | null
   templates: string
+  settings: string
   enabled: number
 }
 
@@ -80,6 +100,7 @@ export function toOutput(row: OutputRow): EventOutput {
     deviceId: row.device_id,
     nodeId: row.node_id,
     templates: parseTemplates(row.templates),
+    settings: parseSettings(row.settings),
     enabled: row.enabled === 1,
   }
 }
@@ -98,15 +119,28 @@ export function effectiveTemplates(event: OutputTemplates, output: OutputTemplat
   return merged
 }
 
-/** Which device drives this output: its own, or the event's source encoder. */
-export function deviceFor(
-  output: EventOutput,
-  source: { deviceId: string | null; nodeId: string | null },
-): { deviceId: string; nodeId: string } | undefined {
-  const deviceId = output.deviceId ?? source.deviceId
-  const nodeId = output.nodeId ?? source.nodeId
-  if (!deviceId || !nodeId) return undefined
-  return { deviceId, nodeId }
+/** The device this output runs on, if it has been chosen yet. */
+export function deviceFor(output: EventOutput): { deviceId: string; nodeId: string } | undefined {
+  if (!output.deviceId || !output.nodeId) return undefined
+  return { deviceId: output.deviceId, nodeId: output.nodeId }
+}
+
+/** The node action an output of this kind needs its device to support. */
+export function requiredAction(kind: OutputKind): 'startStreaming' | 'startRecording' {
+  return kind === 'recording' ? 'startRecording' : 'startStreaming'
+}
+
+function parseSettings(raw: string): OutputSettings {
+  try {
+    const parsed = JSON.parse(raw) as Record<string, unknown>
+    if (!parsed || typeof parsed !== 'object') return {}
+    const out: OutputSettings = {}
+    if (typeof parsed.quality === 'string' && parsed.quality) out.quality = parsed.quality
+    if (typeof parsed.slot === 'number' && Number.isInteger(parsed.slot)) out.slot = parsed.slot
+    return out
+  } catch {
+    return {}
+  }
 }
 
 function parseTemplates(raw: string): OutputTemplates {

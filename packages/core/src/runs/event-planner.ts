@@ -115,13 +115,20 @@ export class EventPlanner implements RunPlanner {
           device.deviceId,
           device.nodeId,
           'applyStreamTarget',
-          { url: target.url, key: target.key },
+          // The quality is the event's if it named one, and otherwise
+          // absent, which leaves the device on whatever it is set to.
+          { url: target.url, key: target.key, ...(output.settings.quality ? { quality: output.settings.quality } : {}) },
           {
             what: 'Stream target',
-            expected: `${target.url} with key ${fingerprint(target.key)}`,
+            expected:
+              `${target.url} with key ${fingerprint(target.key)}` +
+              (output.settings.quality ? ` at ${output.settings.quality}` : ''),
             satisfiedBy: (state) =>
               state.streaming?.targetUrl === target.url &&
-              state.streaming?.keyFingerprint === fingerprint(target.key),
+              state.streaming?.keyFingerprint === fingerprint(target.key) &&
+              // A device reports `current` in the same vocabulary it takes,
+              // so the quality that was asked for can be read straight back.
+              (!output.settings.quality || state.options?.quality?.current === output.settings.quality),
           },
         )
       },
@@ -137,6 +144,11 @@ export class EventPlanner implements RunPlanner {
           what: 'Streaming',
           expected: 'active',
           satisfiedBy: (state) => state.streaming?.active === true,
+          // Going live is not a local setting: the encoder has to open an
+          // RTMP session across the internet before it will say it is
+          // streaming. An ATEM sits in Connecting for several seconds
+          // doing it, and that is a stream coming up, not a failure.
+          settleMs: 25_000,
         })
       },
     })
@@ -269,11 +281,25 @@ export class EventPlanner implements RunPlanner {
             device.deviceId,
             device.nodeId,
             'startRecording',
-            { filename },
+            {
+              filename,
+              ...(output.settings.slot === undefined ? {} : { slot: output.settings.slot }),
+              // A recorder that shares an encoder with the streaming side
+              // takes its quality here: there is no stream target to hang
+              // it on.
+              ...(output.settings.quality ? { quality: output.settings.quality } : {}),
+            },
             {
               what: 'Recording',
-              expected: `active as ${filename}`,
-              satisfiedBy: (state) => state.recording?.active === true,
+              expected:
+                `active as ${filename}` +
+                (output.settings.quality ? ` at ${output.settings.quality}` : ''),
+              // A deck spinning up media takes a moment, and reports the
+              // transport status only once it has.
+              satisfiedBy: (state) =>
+                state.recording?.active === true &&
+                (!output.settings.quality || state.options?.quality?.current === output.settings.quality),
+              settleMs: 10_000,
             },
           )
           return { response: { filename } }
@@ -412,12 +438,9 @@ export class EventPlanner implements RunPlanner {
   }
 
   private deviceOrThrow(timeline: EventTimeline, output: EventOutput): { deviceId: string; nodeId: string } {
-    const device = deviceFor(output, timeline.source)
+    const device = deviceFor(output)
     if (device) return device
-    throw new Error(
-      `"${output.label}" has no device: it does not name one of its own, and "${timeline.label}" has no ` +
-        'source encoder set.',
-    )
+    throw new Error(`"${output.label}" in "${timeline.label}" has no device to run on.`)
   }
 
   private registryOrThrow(output: EventOutput): DestinationRegistry {

@@ -18,13 +18,26 @@ export class DeviceError extends Error {
   }
 }
 
-/** The device reported a state that does not match what we just wrote. */
+/**
+ * The device still did not report what we wrote, after being given time to
+ * get there.
+ *
+ * The wait is part of the message on purpose. Blackmagic devices transition
+ * asynchronously — an ATEM goes Idle, then Connecting, then Streaming — so
+ * "did not take effect" without a duration reads as "the command failed",
+ * when what it means is "it had four seconds and was still not there".
+ */
 export class VerificationError extends DeviceError {
-  constructor(what: string, expected: string, actual: string) {
-    super('verification-failed', `${what} did not take effect: expected ${expected}, device reports ${actual}.`, {
-      retryable: true,
-      remediation: 'Check the device is not busy or rebooting, then retry.',
-    })
+  constructor(what: string, expected: string, actual: string, waitedMs?: number) {
+    const waited = waitedMs === undefined ? '' : ` within ${Math.round(waitedMs / 100) / 10}s`
+    super(
+      'verification-failed',
+      `${what} did not take effect${waited}: expected ${expected}, device reports ${actual}.`,
+      {
+        retryable: true,
+        remediation: 'Check the device is not busy or rebooting, then retry.',
+      },
+    )
     this.name = 'VerificationError'
   }
 }

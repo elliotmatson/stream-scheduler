@@ -3,7 +3,7 @@ import { Enums } from 'atem-connection'
 import type { AtemState } from 'atem-connection'
 import { fingerprint, withSerializingTransport } from '@scheduler/plugin-sdk'
 import type { DeviceContext, DeviceInstance, NodeState } from '@scheduler/plugin-sdk'
-import { atemPlugin } from './index.js'
+import { atemPlugin, formatQuality, parseQuality } from './index.js'
 import { AtemConnectionStatus, type AtemClient } from './client.js'
 
 /**
@@ -60,7 +60,12 @@ class FakeAtem implements AtemClient {
     for (const handler of this.handlers.get(event) ?? []) (handler as (...a: unknown[]) => void)(...args)
   }
 
-  async setStreamingService(props: { serviceName?: string; url?: string; key?: string }): Promise<void> {
+  async setStreamingService(props: {
+    serviceName?: string
+    url?: string
+    key?: string
+    bitrates?: [number, number]
+  }): Promise<void> {
     this.record('setStreamingService')
     const streaming = this.state?.streaming
     if (!streaming) return
@@ -210,6 +215,73 @@ describe('capability probing', () => {
     const atem = await connect(client)
     const stream = (await atem.listNodes()).find((n) => n.id === 'stream')
     expect(stream?.ports[0]).toMatchObject({ maxLinks: 1, requiresCredential: 'stream-key' })
+  })
+})
+
+describe('encoder quality', () => {
+  // One H.264 encoder feeds the stream and the recording, so the bitrate is
+  // one setting with two users. The named qualities an operator knows from
+  // ATEM Software Control are a file on that computer, not something the
+  // switcher can be asked for, so this speaks in Mb/s.
+  it('reports what the switcher is on, in the vocabulary it takes back', async () => {
+    const client = new FakeAtem({ streaming: streamingBlock(), recording: recordingBlock() } as Partial<AtemState>)
+    client.state!.streaming!.service.bitrates = [7_000_000, 9_000_000]
+    const atem = await connect(client)
+
+    const stream = await atem.invoke('stream', 'readState')
+    expect(stream?.options?.quality).toMatchObject({ current: '7-9', choices: [] })
+    expect(stream?.options?.quality?.bitrate).toMatchObject({ minMbps: 3, maxMbps: 70 })
+
+    // Reported on the recorder too, because it is the recorder's quality
+    // as much as the streamer's.
+    const record = await atem.invoke('record', 'readState')
+    expect(record?.options?.quality?.current).toBe('7-9')
+  })
+
+  it('sets the bitrate with the stream target, and leaves it alone when none is asked for', async () => {
+    const client = new FakeAtem({ streaming: streamingBlock() } as Partial<AtemState>)
+    const atem = await connect(client)
+
+    await atem.invoke('stream', 'applyStreamTarget', { url: 'rtmps://x/live2', key: 'live_k', quality: '9' })
+    expect(client.state?.streaming?.service.bitrates).toEqual([9_000_000, 9_000_000])
+    expect((await atem.invoke('stream', 'readState'))?.options?.quality?.current).toBe('9')
+
+    await atem.invoke('stream', 'applyStreamTarget', { url: 'rtmps://x/live2', key: 'live_k' })
+    expect(client.state?.streaming?.service.bitrates).toEqual([9_000_000, 9_000_000])
+  })
+
+  it('sets the bitrate for a recording, which has no stream target to carry it', async () => {
+    const client = new FakeAtem({ streaming: streamingBlock(), recording: recordingBlock() } as Partial<AtemState>)
+    const atem = await connect(client)
+
+    await atem.invoke('record', 'startRecording', { filename: 'service', quality: '20-25' })
+    expect(client.state?.streaming?.service.bitrates).toEqual([20_000_000, 25_000_000])
+    expect(client.calls).toContain('startRecording')
+    expect((await atem.invoke('record', 'readState'))?.options?.quality?.current).toBe('20-25')
+  })
+
+  it('refuses a bitrate the switcher will not take, before touching it', async () => {
+    const client = new FakeAtem({ streaming: streamingBlock() } as Partial<AtemState>)
+    const atem = await connect(client)
+
+    await expect(
+      atem.invoke('stream', 'applyStreamTarget', { url: 'rtmps://x/live2', key: 'live_k', quality: '200' }),
+    ).rejects.toMatchObject({ code: 'quality-out-of-range' })
+    await expect(
+      atem.invoke('stream', 'applyStreamTarget', { url: 'rtmps://x/live2', key: 'live_k', quality: 'High' }),
+    ).rejects.toMatchObject({ code: 'bad-quality' })
+    expect(client.calls).not.toContain('setStreamingService')
+  })
+
+  it('reads back exactly what was asked for, so a write can be verified', () => {
+    // The round trip is the contract: `current` has to be comparable to the
+    // string a caller passed, or verify-after-write cannot check a setting
+    // whose spelling belongs to the device.
+    for (const quality of ['9', '7-9', '3', '70']) {
+      expect(formatQuality(parseQuality(quality))).toBe(quality)
+    }
+    expect(parseQuality(' 9 Mb/s ')).toEqual([9_000_000, 9_000_000])
+    expect(parseQuality('7 – 9')).toEqual([7_000_000, 9_000_000])
   })
 })
 

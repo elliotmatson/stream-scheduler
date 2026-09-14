@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import type { ReactNode } from 'react'
 import {
   api,
@@ -9,6 +9,8 @@ import {
   type EventOutput,
   type OutputInput,
   type OutputsResponse,
+  type DeviceNode,
+  type NodeState,
   type Series,
 } from '../api.ts'
 import { ConfirmButton, Empty, ErrorBanner, Field } from '../components.tsx'
@@ -133,7 +135,8 @@ function OutputRow(props: RowProps): ReactNode {
       ? `credential:${draft.credentialId}`
       : ''
 
-  const save = (): void =>
+  const save = (): void => {
+    if (!draft.deviceId || !draft.nodeId) return
     props.onSave({
       kind,
       label: draft.label,
@@ -144,9 +147,16 @@ function OutputRow(props: RowProps): ReactNode {
       deviceId: draft.deviceId,
       nodeId: draft.nodeId,
       templates: templatesOf(draft, kind),
+      settings: settingsOf(draft),
       enabled: draft.enabled,
     })
+  }
 
+  const needed = kind === 'recording' ? 'startRecording' : 'startStreaming'
+  const capable = props.devices.flatMap((device) =>
+    device.nodes.filter((node) => node.supports.includes(needed)).map((node) => ({ device, node })),
+  )
+  const chosen = capable.find((entry) => entry.device.id === draft.deviceId && entry.node.id === draft.nodeId)
   const offset = offsetFrom(series, draft.startsAt)
 
   return (
@@ -211,12 +221,17 @@ function OutputRow(props: RowProps): ReactNode {
         </Field>
       ) : null}
 
+      {/* Only hardware that can actually do this. A recorder in a stream's
+          picker is an invitation to a Sunday-morning failure, and the
+          server refuses it anyway. */}
       <Field
         label="Runs on"
         hint={
-          kind === 'recording'
-            ? 'A recorder of its own, usually. Leave on the source to record on the encoder itself.'
-            : "Leave on the source unless this stream comes off different hardware."
+          capable.length === 0
+            ? `No connected device offers ${kind === 'recording' ? 'recording' : 'streaming'}. Add or connect one first.`
+            : kind === 'recording'
+              ? 'The recorder this goes onto.'
+              : 'The encoder this comes off.'
         }
       >
         <select
@@ -227,19 +242,22 @@ function OutputRow(props: RowProps): ReactNode {
               ...current,
               deviceId: event.target.value ? (deviceId ?? null) : null,
               nodeId: event.target.value ? (nodeId ?? null) : null,
+              // Its settings belong to the old device's vocabulary.
+              quality: '',
+              slot: '',
             }))
           }}
         >
-          <option value="">The event's source encoder</option>
-          {props.devices.flatMap((device) =>
-            device.nodes.map((node) => (
-              <option key={`${device.id}/${node.id}`} value={`${device.id}/${node.id}`}>
-                {device.label} — {node.label}
-              </option>
-            )),
-          )}
+          <option value="">— pick one —</option>
+          {capable.map(({ device, node }) => (
+            <option key={`${device.id}/${node.id}`} value={`${device.id}/${node.id}`}>
+              {device.label} — {node.label}
+            </option>
+          ))}
         </select>
       </Field>
+
+      <DeviceSettings kind={kind} draft={draft} set={set} device={chosen} />
 
       <details>
         <summary>Its own name{kind === 'stream' ? ' and description' : ''}</summary>
@@ -277,7 +295,7 @@ function OutputRow(props: RowProps): ReactNode {
       </details>
 
       <div className="row">
-        <button className="primary" disabled={!draft.label} onClick={save}>
+        <button className="primary" disabled={!draft.label || !draft.deviceId} onClick={save}>
           {output ? 'Save' : 'Add'}
         </button>
         <label className="row" style={{ gap: 8 }}>
@@ -288,6 +306,140 @@ function OutputRow(props: RowProps): ReactNode {
         {props.onRemove ? <ConfirmButton label="Remove" onConfirm={props.onRemove} /> : null}
       </div>
     </div>
+  )
+}
+
+
+/**
+ * What this output wants set on its device before it runs.
+ *
+ * The choices come from the device itself, asked for when one is picked —
+ * an encoder's quality profiles are per platform and a deck's slots are
+ * whatever cards are in it, so a free-text box here is a typo that surfaces
+ * as a rejected command at 09:00.
+ *
+ * Every control has a "leave it" option and that is the default. An event
+ * that does not care must not quietly reconfigure hardware somebody else
+ * set up by hand.
+ */
+function DeviceSettings({
+  kind,
+  draft,
+  set,
+  device,
+}: {
+  kind: 'stream' | 'recording'
+  draft: RowDraft
+  set: <K extends keyof RowDraft>(key: K, value: RowDraft[K]) => void
+  device: { device: Device; node: DeviceNode } | undefined
+}): ReactNode {
+  const [state, setState] = useState<NodeState | null>()
+
+  useEffect(() => {
+    if (!device) {
+      setState(undefined)
+      return
+    }
+    let cancelled = false
+    api
+      .nodeState(device.device.id, device.node.id)
+      .then((result) => !cancelled && setState(result.state))
+      // A device that will not answer is not an error here: the settings
+      // simply cannot be offered, and the run will say so if it matters.
+      .catch(() => !cancelled && setState(null))
+    return () => {
+      cancelled = true
+    }
+    // Keyed on the identity of the chosen node, not the object: the parent
+    // rebuilds that on every render and depending on it would re-ask the
+    // device on every keystroke in the form.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [device?.device.id, device?.node.id])
+
+  if (!device) return null
+  // Three ways a device spells its quality, and it says which one it takes:
+  // named profiles (a Streaming Encoder), a bitrate (an ATEM, which stores
+  // only numbers), or a name it cannot enumerate (a HyperDeck's codec).
+  const quality = state?.options?.quality
+  const qualities = quality?.choices ?? []
+  const bitrate = quality?.bitrate
+  const freeform = quality?.freeform
+  const current = quality?.current
+  const slots = state?.recording?.slots ?? []
+  if (!quality && slots.length === 0) return null
+  const listId = `quality-${device.device.id}-${device.node.id}`
+
+  return (
+    <details>
+      <summary>Device settings</summary>
+      <div className="stack" style={{ marginTop: 8 }}>
+        {qualities.length > 0 ? (
+          <Field label="Quality" hint="The profiles this encoder reports for the service it is on.">
+            <select value={draft.quality} onChange={(event) => set('quality', event.target.value)}>
+              <option value="">Leave as it is{current ? ` (${current})` : ''}</option>
+              {qualities.map((choice) => (
+                <option key={choice} value={choice}>
+                  {choice}
+                </option>
+              ))}
+            </select>
+          </Field>
+        ) : bitrate ? (
+          /* Offered for a recording as well as a stream: on a box that takes
+             a bitrate, the two come out of the same encoder. */
+          <Field
+            label="Bitrate (Mb/s)"
+            hint={`${bitrate.note ? `${bitrate.note} ` : ''}Between ${bitrate.minMbps} and ${bitrate.maxMbps}, or a low-high range. Blank leaves it${current ? ` at ${current}` : ''}.`}
+          >
+            <input
+              value={draft.quality}
+              placeholder={current ?? `${bitrate.minMbps}-${bitrate.maxMbps}`}
+              onChange={(event) => set('quality', event.target.value)}
+            />
+          </Field>
+        ) : freeform ? (
+          <Field
+            label="Quality"
+            hint={`${freeform.note ? `${freeform.note} ` : ''}The list is a suggestion — the device has its own set and refuses one it does not have. Blank leaves it${current ? ` on ${current}` : ''}.`}
+          >
+            <input
+              list={listId}
+              value={draft.quality}
+              placeholder={current ?? ''}
+              onChange={(event) => set('quality', event.target.value)}
+            />
+            <datalist id={listId}>
+              {(freeform.examples ?? []).map((example) => (
+                <option key={example} value={example} />
+              ))}
+            </datalist>
+          </Field>
+        ) : null}
+
+        {kind === 'recording' && slots.length > 0 ? (
+          <>
+            <Field label="Record to" hint="Which card this output writes to.">
+              <select value={draft.slot} onChange={(event) => set('slot', event.target.value)}>
+                <option value="">Leave as it is</option>
+                {slots.map((slot) => (
+                  <option key={slot.id} value={String(slot.id)}>
+                    Slot {slot.id}
+                    {slot.volumeName ? ` — ${slot.volumeName}` : ` — ${slot.status}`}
+                  </option>
+                ))}
+              </select>
+            </Field>
+            {/* Said plainly rather than offered as a switch that would not
+                do anything: the protocol has no rollover setting to write. */}
+            <p className="muted" style={{ margin: 0 }}>
+              {state?.recording?.rollover
+                ? 'The deck rolls onto its other card by itself when this one fills. That is the deck\'s own behaviour and cannot be turned off from here.'
+                : 'There is no second mounted card, so recording stops when this one fills.'}
+            </p>
+          </>
+        ) : null}
+      </div>
+    </details>
   )
 }
 
@@ -303,6 +455,9 @@ interface RowDraft {
   title: string
   description: string
   filename: string
+  /** Blank means "leave the device as it is". */
+  quality: string
+  slot: string
   enabled: boolean
 }
 
@@ -318,9 +473,18 @@ function toDraft(output: EventOutput | undefined, kind: 'stream' | 'recording', 
     title: output?.templates.title ?? '',
     description: output?.templates.description ?? '',
     filename: output?.templates.filename ?? '',
+    quality: output?.settings.quality ?? '',
+    slot: output?.settings.slot === undefined ? '' : String(output.settings.slot),
     enabled: output?.enabled ?? true,
     ...(kind === 'recording' ? { destinationId: null, credentialId: null } : {}),
   }
+}
+
+function settingsOf(draft: RowDraft): { quality?: string; slot?: number } {
+  const out: { quality?: string; slot?: number } = {}
+  if (draft.quality) out.quality = draft.quality
+  if (draft.slot) out.slot = Number(draft.slot)
+  return out
 }
 
 function templatesOf(draft: RowDraft, kind: 'stream' | 'recording'): Record<string, string> {

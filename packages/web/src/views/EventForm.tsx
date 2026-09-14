@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { ReactNode } from 'react'
-import { api, useResource, type SchedulePreview, type Series } from '../api.ts'
+import { api, type SchedulePreview, type Series } from '../api.ts'
 import { Outputs } from './Outputs.tsx'
 import { Card, ErrorBanner, Field } from '../components.tsx'
 import { shortZone, timeIn } from '../format.ts'
@@ -19,8 +19,6 @@ type Repeat = 'once' | 'daily' | 'weekly' | 'monthly' | 'custom'
 
 interface Draft {
   label: string
-  sourceDeviceId: string | null
-  sourceNodeId: string | null
   timezone: string
   date: string
   time: string
@@ -51,7 +49,6 @@ export function EventForm({
   series?: Series
   onDone: () => void
 }): ReactNode {
-  const { data: devices } = useResource(() => api.devices(), [])
   const [draft, setDraft] = useState<Draft>(() => toDraft(series))
   const [error, setError] = useState<string>()
   const [saving, setSaving] = useState(false)
@@ -91,8 +88,6 @@ export function EventForm({
     try {
       const input = {
         label: draft.label,
-        sourceDeviceId: draft.sourceDeviceId,
-        sourceNodeId: draft.sourceNodeId,
         timezone: draft.timezone,
         rrule,
         dtstartLocal: { date: draft.date, time: draft.time },
@@ -128,32 +123,6 @@ export function EventForm({
               placeholder="Sunday Service"
               onChange={(event) => set('label', event.target.value)}
             />
-          </Field>
-
-          <Field
-            label="Source encoder"
-            hint="The one feed this event comes off. Its outputs all use it unless they name their own device."
-          >
-            <select
-              value={draft.sourceDeviceId ? `${draft.sourceDeviceId}/${draft.sourceNodeId}` : ''}
-              onChange={(event) => {
-                const [deviceId, nodeId] = event.target.value.split('/')
-                setDraft((current) => ({
-                  ...current,
-                  sourceDeviceId: event.target.value ? (deviceId ?? null) : null,
-                  sourceNodeId: event.target.value ? (nodeId ?? null) : null,
-                }))
-              }}
-            >
-              <option value="">— none set —</option>
-              {(devices ?? []).flatMap((device) =>
-                device.nodes.map((node) => (
-                  <option key={`${device.id}/${node.id}`} value={`${device.id}/${node.id}`}>
-                    {device.label} — {node.label}
-                  </option>
-                )),
-              )}
-            </select>
           </Field>
 
           <Field
@@ -364,8 +333,6 @@ function toDraft(series: Series | undefined): Draft {
 
   return {
     label: series?.label ?? '',
-    sourceDeviceId: series?.sourceDeviceId ?? null,
-    sourceNodeId: series?.sourceNodeId ?? null,
     timezone: zone,
     date: dateInZone(start, zone),
     time: timeInZone(start, zone),

@@ -64,7 +64,7 @@ beforeEach(() => {
   destinationState = { state: 'ok' }
 
   const plugins = new PluginRegistry().register(mockPlugin({ now: () => clock.now() }))
-  connections = new ConnectionManager({ db, registry: plugins, clock, random: () => 0.5 })
+  connections = new ConnectionManager({ db, registry: plugins, clock, random: () => 0.5, sleep: async () => {} })
   destinations = new DestinationRegistry({ db, clock, vault })
   destinations.register(fakeProvider)
   notifier = new Notifier({ db, clock, vault, fetchImpl })
@@ -115,17 +115,23 @@ function seed(options: SeedOptions = {}): string {
   const occurrenceId = randomUUID()
   db.prepare(
     `INSERT INTO event_series
-       (id, label, source_device_id, source_node_id, timezone, rrule, dtstart, duration_ms, templates,
-        created_at, updated_at)
-     VALUES (?, 'Sunday Service', ?, 'stream', 'America/Chicago', NULL, ?, 5400000, ?, 0, 0)`,
-  ).run(seriesId, options.source ?? null, START, JSON.stringify(options.templates ?? {}))
+       (id, label, timezone, rrule, dtstart, duration_ms, templates, created_at, updated_at)
+     VALUES (?, 'Sunday Service', 'America/Chicago', NULL, ?, 5400000, ?, 0, 0)`,
+  ).run(seriesId, START, JSON.stringify(options.templates ?? {}))
 
   if (options.outputs !== 'none') {
     db.prepare(
       `INSERT INTO event_output
-         (id, series_id, kind, label, position, offset_ms, duration_ms, destination_id, credential_id, created_at)
-       VALUES (?, ?, 'stream', 'Main', 0, 0, 5400000, ?, ?, 0)`,
-    ).run(randomUUID(), seriesId, options.destinationId ?? null, options.credentialId ?? null)
+         (id, series_id, kind, label, position, offset_ms, duration_ms, destination_id, credential_id,
+          device_id, node_id, created_at)
+       VALUES (?, ?, 'stream', 'Main', 0, 0, 5400000, ?, ?, ?, 'stream', 0)`,
+    ).run(
+      randomUUID(),
+      seriesId,
+      options.destinationId ?? null,
+      options.credentialId ?? null,
+      options.source ?? null,
+    )
   }
 
   db.prepare(

@@ -39,6 +39,26 @@ export interface Connection {
   health: HealthReport
 }
 
+/** What a write is expected to produce, and how long the device may take. */
+export interface VerifyCheck {
+  what: string
+  expected: string
+  satisfiedBy: (state: NodeState) => boolean
+  /**
+   * How long to let the device get there before calling it a failure.
+   *
+   * Default for a setting that should land at once. A command that has to
+   * reach past the device — an encoder opening an RTMP session — wants
+   * longer, and says so at its call site.
+   */
+  settleMs?: number
+}
+
+/** Generous for a local command, short enough that a wedged device is not
+ *  mistaken for a slow one. */
+const DEFAULT_SETTLE_MS = 4_000
+const VERIFY_POLL_MS = 250
+
 export interface ConnectionManagerDeps {
   db: Db
   registry: PluginRegistry
@@ -47,6 +67,8 @@ export interface ConnectionManagerDeps {
   vault?: SecretVault
   /** Injected in tests for deterministic backoff. */
   random?: () => number
+  /** Injected in tests so the verify settle window costs no wall time. */
+  sleep?: (ms: number) => Promise<void>
   /** Wrap every device in the serializing transport, as CI does, to catch
    *  anything that would not survive moving plugins into child processes. */
   enforceSerialization?: boolean
@@ -190,25 +212,51 @@ export class ConnectionManager {
   }
 
   /**
-   * Writes, then reads the device back and checks the write actually took.
+   * Writes, then reads the device back until it agrees the write took.
    *
    * Blackmagic devices will accept a command and then ignore it — a Web
-   * Presenter mid-reboot happily takes a stream key on TCP 9977 and drops it.
-   * Verifying turns that from a showtime mystery into a prepare-phase failure.
+   * Presenter mid-reboot happily takes a stream key and drops it. Verifying
+   * turns that from a showtime mystery into a prepare-phase failure.
+   *
+   * The read is a *poll*, not a single shot, because these devices also
+   * transition asynchronously. An ATEM told to stream goes Idle, then
+   * Connecting, then Streaming, and the state arrives over its own protocol
+   * some time after the command is acknowledged. Reading once, immediately,
+   * caught it at Idle and called a stream that was coming up perfectly a
+   * failure — on real hardware, every time.
+   *
+   * So each check says how long the device may take. Being slow is not the
+   * same as ignoring the command, and only the second one is a fault.
    */
   async applyAndVerify(
     deviceId: string,
     nodeId: string,
     action: InvokableAction,
     args: JsonObject,
-    check: { what: string; expected: string; satisfiedBy: (state: NodeState) => boolean },
+    check: VerifyCheck,
   ): Promise<NodeState> {
     await this.invoke(deviceId, nodeId, action, args)
-    const state = await this.invoke(deviceId, nodeId, 'readState')
-    if (!state || !check.satisfiedBy(state)) {
-      throw new VerificationError(check.what, check.expected, state ? JSON.stringify(state) : 'nothing')
+
+    const settleMs = check.settleMs ?? DEFAULT_SETTLE_MS
+    // Counted rather than clock-bounded: tests drive a manual clock that
+    // does not advance on its own, and a deadline it never reaches would
+    // spin here forever.
+    const attempts = Math.max(1, Math.ceil(settleMs / VERIFY_POLL_MS))
+    const sleep = this.deps.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)))
+
+    let state: NodeState | null = null
+    for (let attempt = 0; attempt < attempts; attempt++) {
+      state = await this.invoke(deviceId, nodeId, 'readState')
+      if (state && check.satisfiedBy(state)) return state
+      if (attempt < attempts - 1) await sleep(VERIFY_POLL_MS)
     }
-    return state
+
+    throw new VerificationError(
+      check.what,
+      check.expected,
+      state ? JSON.stringify(state) : 'nothing',
+      settleMs,
+    )
   }
 
   /**

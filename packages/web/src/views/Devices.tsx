@@ -11,7 +11,7 @@ import {
   type Plugin,
 } from '../api.ts'
 import { Card, ConfigFields, ConfirmButton, Empty, ErrorBanner, Field, StatusPill } from '../components.tsx'
-import { relative } from '../format.ts'
+import { duration, relative } from '../format.ts'
 
 export function Devices(): ReactNode {
   const { data, error, reload } = useResource(() => api.devices(), [])
@@ -175,6 +175,15 @@ function NodeControls({ device, node }: { device: Device; node: DeviceNode }): R
   const [busy, setBusy] = useState<string>()
   const [error, setError] = useState<string>()
   const [filename, setFilename] = useState('')
+  const [slot, setSlot] = useState<number>()
+  const [credentialId, setCredentialId] = useState('')
+  const [quality, setQuality] = useState('')
+  // Only fetched for a node that can be pointed somewhere, and only once
+  // the panel is open.
+  const { data: credentials } = useResource(
+    () => (open && node.supports.includes('applyStreamTarget') ? api.credentials() : Promise.resolve([])),
+    [open, node.id],
+  )
 
   const connected = device.health === 'connected' || device.health === 'degraded'
 
@@ -191,15 +200,76 @@ function NodeControls({ device, node }: { device: Device; node: DeviceNode }): R
   }
 
   const read = (): void => void run('read', () => api.nodeState(device.id, node.id))
+
+  /**
+   * Erase a card, asking the deck twice as its protocol requires.
+   *
+   * The button is armed once by the operator and the two calls go back to
+   * back, so the deck's token never sits around waiting. The state is
+   * re-read afterwards because the volume name and the headroom both
+   * change.
+   */
+  const format = (slot: number): void => {
+    setBusy(`format-${slot}`)
+    setError(undefined)
+    void (async () => {
+      try {
+        const prepared = await api.formatStorage(device.id, node.id, slot)
+        if (prepared.confirm) await api.formatStorage(device.id, node.id, slot, prepared.confirm)
+        setState((await api.nodeState(device.id, node.id)).state)
+      } catch (err) {
+        setError(err instanceof Error ? err.message : String(err))
+      } finally {
+        setBusy(undefined)
+      }
+    })()
+  }
   const drive = (action: ManualAction): void =>
     void run(action, () =>
-      api.driveNode(device.id, node.id, action, action === 'startRecording' && filename ? { filename } : {}),
+      api.driveNode(
+        device.id,
+        node.id,
+        action,
+        action === 'startRecording' && filename
+          ? {
+              filename,
+              ...(slot === undefined ? {} : { slot }),
+              // Only where the quality box belongs to the recorder: on a
+              // node that streams, the same box is part of pointing it.
+              ...(quality && !canStream ? { quality } : {}),
+            }
+          : {},
+      ),
+    )
+
+  /** Point the encoder at a saved target, with the profile if one is picked. */
+  const point = (): void =>
+    void run('point', () =>
+      api.pointAtTarget(device.id, node.id, {
+        credentialId,
+        ...(quality ? { quality } : {}),
+      }),
     )
 
   const streaming = state?.streaming
   const recording = state?.recording
   const canStream = node.supports.includes('startStreaming')
   const canRecord = node.supports.includes('startRecording')
+  // Nothing here can drive this node. An ATEM's aux bus is the case: the
+  // adapter can route it, but routing is a live-production control rather
+  // than something the scheduler has any business touching, so there is
+  // nothing to press. Showing what it is set to is still worth doing.
+  const readOnly = !canStream && !canRecord
+  const slots = state?.recording?.slots ?? []
+  const qualityChoices = state?.options?.quality?.choices ?? []
+  // A device with no named profiles may still take a bitrate — an ATEM
+  // keeps only a number, the names being a file on the computer running
+  // ATEM Software Control.
+  const bitrate = state?.options?.quality?.bitrate
+  // A name the device takes but will not list — a deck's recording codec.
+  const freeform = state?.options?.quality?.freeform
+  const current = state?.options?.quality?.current
+  const qualityListId = `quality-${device.id}-${node.id}`
 
   return (
     <details
@@ -248,6 +318,50 @@ function NodeControls({ device, node }: { device: Device; node: DeviceNode }): R
             {/* Only what this node actually does. A recorder with a
                 "Streaming —" line reads as broken rather than as a
                 recorder. */}
+            {readOnly ? (
+              <p className="muted" style={{ margin: 0 }}>
+                Nothing to drive here. This node {node.roles.includes('router') ? 'routes signal' : 'does neither streaming nor recording'}, which is
+                the operator's job at the desk rather than the scheduler's — so this panel only reports what it
+                is set to.
+              </p>
+            ) : null}
+
+            {state?.input ? (
+              <div
+                className={state.input.present ? 'banner info' : 'banner warn'}
+                style={{ marginBottom: 0 }}
+              >
+                {state.input.present
+                  ? `Input: ${state.input.format ?? 'signal present'}`
+                  : 'No signal on the input.'}
+                {state.input.source ? ` · taking ${state.input.source}` : ''}
+                {/* A recorder with no signal refuses to record. Saying so
+                    here means nobody has to learn it from a failure. */}
+                {!state.input.present && canRecord ? ' A recording will be refused until there is one.' : ''}
+              </div>
+            ) : null}
+
+            {state?.routing && Object.keys(state.routing).length > 0 ? (
+              <div className="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Output</th>
+                      <th>Source</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {Object.entries(state.routing).map(([output, source]) => (
+                      <tr key={output}>
+                        <td>{output}</td>
+                        <td className="muted">{source}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : null}
+
             <div className="row" style={{ gap: 18 }}>
               {canStream ? (
                 <Fact
@@ -272,14 +386,176 @@ function NodeControls({ device, node }: { device: Device; node: DeviceNode }): R
               {streaming?.targetUrl ? <Fact label="Pointed at" value={streaming.targetUrl} /> : null}
             </div>
 
+            {state?.recording?.slots && state.recording.slots.length > 0 ? (
+              <div className="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Slot</th>
+                      <th>Media</th>
+                      <th>Free</th>
+                      <th />
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {state.recording.slots.map((slot) => (
+                      <tr key={slot.id}>
+                        <td>
+                          {slot.id}
+                          {slot.active ? <span className="muted"> · in use</span> : null}
+                        </td>
+                        <td className="muted">{slot.volumeName ?? slot.status}</td>
+                        <td className={lowOn(slot) ? 'bad' : 'muted'}>
+                          {slot.remainingMs === undefined ? '—' : duration(slot.remainingMs)}
+                        </td>
+                        <td>
+                          {node.supports.includes('formatStorage') ? (
+                            <ConfirmButton
+                              label="Format"
+                              confirmLabel={`Erase slot ${slot.id}?`}
+                              disabled={busy !== undefined || device.inUseBy.length > 0}
+                              onConfirm={() => format(slot.id)}
+                            />
+                          ) : null}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                {device.inUseBy.length > 0 && node.supports.includes('formatStorage') ? (
+                  <p className="muted" style={{ margin: '6px 0 0' }}>
+                    Formatting is off while an event is mid-run on this device.
+                  </p>
+                ) : null}
+                {state.recording.rollover !== undefined ? (
+                  <p className="muted" style={{ margin: '6px 0 0' }}>
+                    {state.recording.rollover
+                      ? 'Rolls onto the other slot when this one fills.'
+                      : 'Nowhere to roll onto: recording stops when this slot fills.'}
+                  </p>
+                ) : null}
+              </div>
+            ) : null}
+
+            {node.supports.includes('applyStreamTarget') ? (
+              <div className="stack" style={{ gap: 8 }}>
+                <div className="row" style={{ gap: 10, alignItems: 'flex-end' }}>
+                  <Field
+                    label="Stream target"
+                    hint="A saved key, chosen by name. The key itself stays on the server."
+                  >
+                    <select value={credentialId} onChange={(event) => setCredentialId(event.target.value)}>
+                      <option value="">Leave as it is</option>
+                      {(credentials ?? [])
+                        .filter((credential) => credential.ingestUrl)
+                        .map((credential) => (
+                          <option key={credential.id} value={credential.id}>
+                            {credential.label}
+                          </option>
+                        ))}
+                    </select>
+                  </Field>
+                  {/* Quality is set in the same command as the target on
+                      every device that has it, so it is offered here and
+                      nowhere else. */}
+                  {qualityChoices.length > 0 ? (
+                    <Field label="Quality" hint={current ? `Now on ${current}.` : undefined}>
+                      <select value={quality} onChange={(event) => setQuality(event.target.value)}>
+                        <option value="">Leave as it is</option>
+                        {qualityChoices.map((choice) => (
+                          <option key={choice} value={choice}>
+                            {choice}
+                          </option>
+                        ))}
+                      </select>
+                    </Field>
+                  ) : bitrate ? (
+                    <Field
+                      label="Bitrate (Mb/s)"
+                      hint={`${bitrate.minMbps}–${bitrate.maxMbps}, or a low-high range.${current ? ` Now on ${current}.` : ''}`}
+                    >
+                      <input
+                        value={quality}
+                        placeholder={current ?? `${bitrate.minMbps}-${bitrate.maxMbps}`}
+                        onChange={(event) => setQuality(event.target.value)}
+                      />
+                    </Field>
+                  ) : null}
+                  <button
+                    disabled={busy !== undefined || !credentialId || device.inUseBy.length > 0}
+                    onClick={point}
+                  >
+                    {busy === 'point' ? 'Pointing…' : 'Point at it'}
+                  </button>
+                </div>
+                <p className="muted" style={{ margin: 0 }}>
+                  {device.inUseBy.length > 0
+                    ? 'Re-pointing is off while an event is mid-run on this device.'
+                    : 'For a one-off. An event points its own encoder when it starts, which overwrites this.'}
+                </p>
+              </div>
+            ) : null}
+
             {canRecord ? (
-              <Field label="Recording name" hint="Needed before a recording can start. Named by you, not by us.">
-                <input
-                  value={filename}
-                  placeholder="2026-09-06 rehearsal"
-                  onChange={(event) => setFilename(event.target.value)}
-                />
-              </Field>
+              <div className="row" style={{ gap: 10, alignItems: 'flex-end' }}>
+                <Field label="Recording name" hint="Needed before a recording can start. Named by you, not by us.">
+                  <input
+                    value={filename}
+                    placeholder="2026-09-06 rehearsal"
+                    onChange={(event) => setFilename(event.target.value)}
+                  />
+                </Field>
+                {/* On a box whose encoder serves both, the recording's
+                    quality is set here because there is no stream target to
+                    hang it on. */}
+                {!canStream && bitrate ? (
+                  <Field
+                    label="Bitrate (Mb/s)"
+                    hint={`${bitrate.note ? `${bitrate.note} ` : ''}Now on ${current ?? 'whatever it was set to'}.`}
+                  >
+                    <input
+                      value={quality}
+                      placeholder={current ?? `${bitrate.minMbps}-${bitrate.maxMbps}`}
+                      onChange={(event) => setQuality(event.target.value)}
+                    />
+                  </Field>
+                ) : !canStream && freeform ? (
+                  <Field
+                    label="Quality"
+                    hint={`${freeform.note ? `${freeform.note} ` : ''}Now on ${current ?? 'whatever it was set to'}. The list is a suggestion; the deck refuses a codec it does not have.`}
+                  >
+                    <input
+                      list={qualityListId}
+                      value={quality}
+                      placeholder={current ?? ''}
+                      onChange={(event) => setQuality(event.target.value)}
+                    />
+                    <datalist id={qualityListId}>
+                      {(freeform.examples ?? []).map((example) => (
+                        <option key={example} value={example} />
+                      ))}
+                    </datalist>
+                  </Field>
+                ) : null}
+                {slots.length > 0 ? (
+                  <Field label="Card" hint="Leave it and the deck records onto whichever it is set to.">
+                    <select
+                      value={slot === undefined ? '' : String(slot)}
+                      onChange={(event) =>
+                        setSlot(event.target.value === '' ? undefined : Number(event.target.value))
+                      }
+                    >
+                      <option value="">Leave as it is</option>
+                      {slots.map((card) => (
+                        <option key={card.id} value={card.id}>
+                          Slot {card.id}
+                          {card.volumeName ? ` · ${card.volumeName}` : ''}
+                        </option>
+                      ))}
+                    </select>
+                  </Field>
+                ) : null}
+              </div>
             ) : null}
 
             <div className="row">
@@ -309,12 +585,12 @@ function NodeControls({ device, node }: { device: Device; node: DeviceNode }): R
                 ))}
             </div>
 
-            <p className="muted" style={{ margin: 0 }}>
-              {canStream
-                ? 'Starting a stream sends it wherever this device is already pointed. '
-                : ''}
-              Every button here is read back off the device before it reports success.
-            </p>
+            {readOnly ? null : (
+              <p className="muted" style={{ margin: 0 }}>
+                {canStream ? 'Starting a stream sends it wherever this device is already pointed. ' : ''}
+                Every button here is read back off the device before it reports success.
+              </p>
+            )}
           </>
         )}
       </div>
@@ -454,6 +730,11 @@ function DeviceForm({
       </div>
     </Card>
   )
+}
+
+/** Less than an hour of headroom before a service is worth shouting about. */
+function lowOn(slot: { remainingMs?: number }): boolean {
+  return slot.remainingMs !== undefined && slot.remainingMs < 3_600_000
 }
 
 function Fact({ label, value }: { label: string; value: string }): ReactNode {

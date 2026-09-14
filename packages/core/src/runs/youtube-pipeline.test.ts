@@ -46,7 +46,7 @@ beforeEach(() => {
   youtube = new FakeYouTube()
 
   const plugins = new PluginRegistry().register(mockPlugin({ now: () => clock.now() }))
-  connections = new ConnectionManager({ db, registry: plugins, clock, random: () => 0.5, enforceSerialization: true })
+  connections = new ConnectionManager({ db, registry: plugins, clock, random: () => 0.5, sleep: async () => {}, enforceSerialization: true })
 
   destinations = new DestinationRegistry({ db, clock, vault })
   destinations.register(
@@ -132,12 +132,11 @@ function seedEvent(
 
   db.prepare(
     `INSERT INTO event_series
-       (id, label, source_device_id, source_node_id, timezone, rrule, dtstart, duration_ms, prepare_lead_ms,
+       (id, label, timezone, rrule, dtstart, duration_ms, prepare_lead_ms,
         preroll_ms, postroll_ms, late_start_grace_ms, templates, created_at, updated_at)
-     VALUES (?, 'Sunday Service', ?, 'stream', 'America/Chicago', NULL, ?, ?, ?, 0, 0, ?, ?, 0, 0)`,
+     VALUES (?, 'Sunday Service', 'America/Chicago', NULL, ?, ?, ?, 0, 0, ?, ?, 0, 0)`,
   ).run(
     seriesId,
-    options.encoderId,
     START,
     DURATION,
     30 * MINUTE,
@@ -146,9 +145,10 @@ function seedEvent(
   )
   db.prepare(
     `INSERT INTO event_output
-       (id, series_id, kind, label, position, offset_ms, duration_ms, destination_id, created_at)
-     VALUES (?, ?, 'stream', 'Church YouTube', 0, 0, ?, ?, ?)`,
-  ).run(outputId, seriesId, DURATION, options.destinationId, clock.now())
+       (id, series_id, kind, label, position, offset_ms, duration_ms, destination_id, device_id, node_id,
+        created_at)
+     VALUES (?, ?, 'stream', 'Church YouTube', 0, 0, ?, ?, ?, 'stream', ?)`,
+  ).run(outputId, seriesId, DURATION, options.destinationId, options.encoderId, clock.now())
   db.prepare(
     `INSERT INTO occurrence (id, series_id, scheduled_start, scheduled_end, local_date, status, series_version)
      VALUES (?, ?, ?, ?, '2026-03-08', 'pending', 1)`,

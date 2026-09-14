@@ -34,12 +34,20 @@ export interface NodeDefinition {
 
 /** Every action is idempotent, async, and takes/returns serializable values. */
 export interface NodeActions {
-  applyStreamTarget?(t: { url: string; key: string }): Promise<void>
+  /** `quality` is a profile the device already has, by name. Absent leaves
+   *  the device on whatever it is set to. */
+  applyStreamTarget?(t: { url: string; key: string; quality?: string }): Promise<void>
   startStreaming?(): Promise<void>
   stopStreaming?(): Promise<void>
-  startRecording?(o: { filename: string }): Promise<void>
+  /** `slot` picks the card. Absent records onto whichever the deck is on. */
+  startRecording?(o: { filename: string; slot?: number }): Promise<void>
   stopRecording?(): Promise<void>
   route?(o: { input: string; output: string }): Promise<void>
+  /** Erase a card, in the two steps the deck's own protocol uses: called
+   *  without a token it returns one and erases nothing, and only that token
+   *  coming back erases. The handshake is the device's, not one invented
+   *  here, so the token is as short-lived as the deck makes it. */
+  formatStorage?(o: { slot: number; confirm?: string }): Promise<{ confirm?: string }>
   /** Read back actual state. The host verifies every write with this. */
   readState(): Promise<NodeState>
 }
@@ -87,11 +95,22 @@ storage path.
 Built on [`atem-connection`](https://www.npmjs.com/package/atem-connection), the
 Sofie project's TypeScript implementation of the ATEM protocol. Relevant surface:
 
-- `setStreamingService({ serviceName, url, key })` — push the target
+- `setStreamingService({ serviceName, url, key, bitrates })` — push the target,
+  and the encoder bitrate as a `[low, high]` pair in bits per second
 - `startStreaming()` / `stopStreaming()`
 - `requestStreamingDuration()`, plus streaming status and bitrate in the state
 - `startRecording()` / `stopRecording()` on models with a disk recorder
-- aux output routing, for the `router` role
+- `setRecordingSettings({ filename, workingSet1DiskId, ... })` — note what is
+  *not* there: no quality, codec or bitrate. An ATEM has one H.264 encoder and
+  it serves both the stream and the recording, so `bitrates` above is the
+  recording's quality as well. That is why the adapter offers quality on the
+  recorder node too, applies it through the streaming service, and why two
+  outputs on one ATEM asking for different qualities is reported as a clash.
+  There are no named profiles to enumerate: "Streaming High", "HyperDeck
+  1080p50" and the rest live in a `Streaming.xml` on the computer running ATEM
+  Software Control, not in the switcher, so the adapter speaks in Mb/s
+- aux output routing, for the `router` role — implemented and tested, but
+  see **Routing** below for what drives it
 
 Capabilities are **probed, not declared**. The ATEM family's streaming and
 recording support varies by model and firmware — a Mini Pro streams and records to
@@ -127,6 +146,23 @@ This is the `sink` for the recording half of the product. The filename comes fro
 the template engine, run through a filesystem sanitizer plus the HyperDeck's own
 filename constraints.
 
+Quality here is the recording codec, set with `configuration: file format:`
+before the record command. The protocol has no "what do you support", and the
+set differs by model and firmware, so the adapter reports the codec the deck is
+on, offers the documented spellings as suggestions, and turns the deck's refusal
+of one it does not have into a message naming both that codec and the current
+one. Rollover is *not* settable: there is only the one-shot `RecordSpillCommand`,
+the deck spilling onto the next mounted card being its own behaviour, so it is
+reported rather than offered.
+
+A **REST API** exists for current decks (firmware 8.4 and later) at
+`/control/api/v1/`, with a websocket at `/control/api/v1/event/websocket` pushing
+property changes. It is not what this adapter uses, deliberately: TCP 9993 works
+on every deck ever shipped, Blackmagic still maintains it, and it is the one with
+a protocol-level emulator to test against. REST would buy enumerable codecs and
+video formats, `supportedVideoFormats`, and NAS media — worth adding as a second
+transport for decks that have it, not worth losing the older ones over.
+
 Testing gets a gift here:
 [`hyperdeck-server-connection`](https://www.npmjs.com/package/hyperdeck-server-connection)
 already emulates a HyperDeck at the protocol level, so integration tests need no
@@ -142,9 +178,41 @@ touching the core, the abstraction is wrong and we find out early.
 
 ### `plugin-mock`
 
-Fake source, sink, router and a fake that fails on demand. Lets the entire
+A fake source, a fake sink, and a fake that fails on demand. Lets the entire
 scheduling engine be developed and tested with no hardware, and lets a prospective
 user evaluate the app before buying anything.
+
+No fake router: nothing above the plugin layer drives routing, so a fake one
+would exercise nothing. See **Routing** below.
+
+## Routing
+
+`route` is a real part of the contract and the ATEM adapter implements it
+against aux busses, with the mapping read back afterwards like every other
+write. **Nothing above the plugin layer calls it**, and that is deliberate
+rather than unfinished.
+
+What is on an aux bus during a service is a live-production decision, made at
+the desk second by second. A scheduler's job is that a thing starts at 09:00
+and stops at 10:15; those are different clocks, and reaching through the
+scheduler to set a crosspoint would be answering a question nobody asked. Its
+arguments are the device's own vocabulary too — the ATEM wants numeric source
+and bus ids — and the SDK has no way for a plugin to say what its inputs are
+called, so there is nothing an operator would recognise to put in a form.
+
+Concretely, as a result:
+
+- `EventOutput` has no crosspoint field and `OutputKind` is `'stream' |
+  'recording'`, so a scheduled run cannot emit a route step.
+- The manual device controls do not offer it; `POST
+  /api/devices/:id/nodes/:nodeId/route` is refused, and a test pins that.
+- `GET /api/devices/:id/nodes/:nodeId/state` does return the live `routing`
+  map, and the Devices page shows it. Reading is useful; writing is not ours.
+
+The shape worth building, if any, is a **pre-flight assertion** — "the aux
+feeding the chapel encoder is still on source 3", checked the evening before
+alongside the token and the encoder. That is a check, not an action, and it
+is a few lines whenever somebody actually wants it.
 
 ## Adding a plugin later
 

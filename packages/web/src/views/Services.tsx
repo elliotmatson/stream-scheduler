@@ -231,7 +231,11 @@ function Instructions({ provider }: { provider: string }): ReactNode {
         ))}
       </ol>
       {/* The one mistake that works for a week and then breaks every Sunday. */}
-      {data.warning ? <div className="banner error">{data.warning}</div> : null}
+      {(data.warnings ?? (data.warning ? [data.warning] : [])).map((warning) => (
+        <div key={warning} className="banner error">
+          {warning}
+        </div>
+      ))}
     </div>
   )
 }

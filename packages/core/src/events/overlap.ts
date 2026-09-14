@@ -2,6 +2,9 @@ import type { Db } from '../db/index.js'
 import { deviceFor, outputsForSeries, type EventOutput } from './outputs.js'
 
 export interface OutputConflict {
+  /** `device` is two outputs wanting the transport; `setting` is two
+   *  wanting it configured differently. */
+  kind?: 'device' | 'setting'
   deviceLabel: string
   first: { id: string; label: string }
   second: { id: string; label: string }
@@ -27,7 +30,6 @@ export interface OutputConflict {
  */
 export function findOverlaps(
   outputs: EventOutput[],
-  source: { deviceId: string | null; nodeId: string | null },
   labelFor: (deviceId: string) => string,
 ): OutputConflict[] {
   const enabled = outputs.filter((output) => output.enabled)
@@ -37,8 +39,8 @@ export function findOverlaps(
     for (let j = i + 1; j < enabled.length; j++) {
       const a = enabled[i]!
       const b = enabled[j]!
-      const deviceA = deviceFor(a, source)
-      const deviceB = deviceFor(b, source)
+      const deviceA = deviceFor(a)
+      const deviceB = deviceFor(b)
       if (!deviceA || !deviceB) continue
       if (deviceA.deviceId !== deviceB.deviceId || deviceA.nodeId !== deviceB.nodeId) continue
 
@@ -56,6 +58,50 @@ export function findOverlaps(
         second: { id: b.id, label: b.label },
         from,
         to,
+        kind: 'device',
+      })
+    }
+  }
+  return conflicts
+}
+
+/**
+ * Outputs that would need one device set two ways at once.
+ *
+ * A different clash from an overlap: these are not fighting over the
+ * transport, they are fighting over a setting. An ATEM encodes streaming
+ * and recording through one encoder at one quality, so a 9:00 service
+ * asking for one profile while a recording asks for another cannot both be
+ * honoured — whichever is applied last wins, and silently.
+ *
+ * Checked per device rather than per node for exactly that reason: the
+ * contention is in the box, not in the node.
+ */
+export function findSettingConflicts(
+  outputs: EventOutput[],
+  labelFor: (deviceId: string) => string,
+): OutputConflict[] {
+  const enabled = outputs.filter((output) => output.enabled && output.settings.quality)
+  const conflicts: OutputConflict[] = []
+
+  for (let i = 0; i < enabled.length; i++) {
+    for (let j = i + 1; j < enabled.length; j++) {
+      const a = enabled[i]!
+      const b = enabled[j]!
+      if (!a.deviceId || a.deviceId !== b.deviceId) continue
+      if (a.settings.quality === b.settings.quality) continue
+
+      const from = Math.max(a.offsetMs, b.offsetMs)
+      const to = Math.min(a.offsetMs + a.durationMs, b.offsetMs + b.durationMs)
+      if (to <= from) continue
+
+      conflicts.push({
+        kind: 'setting',
+        deviceLabel: labelFor(a.deviceId),
+        first: { id: a.id, label: a.label },
+        second: { id: b.id, label: b.label },
+        from,
+        to,
       })
     }
   }
@@ -64,29 +110,30 @@ export function findOverlaps(
 
 /** The same check against what is stored, for the API and pre-flight. */
 export function overlapsForSeries(db: Db, seriesId: string): OutputConflict[] {
-  const series = db
-    .prepare('SELECT source_device_id, source_node_id FROM event_series WHERE id = ?')
-    .get(seriesId) as { source_device_id: string | null; source_node_id: string | null } | undefined
-  if (!series) return []
-
-  return findOverlaps(
-    outputsForSeries(db, seriesId),
-    { deviceId: series.source_device_id, nodeId: series.source_node_id },
-    (deviceId) => {
-      const row = db.prepare('SELECT label FROM device WHERE id = ?').get(deviceId) as
-        | { label: string }
-        | undefined
-      return row?.label ?? `device ${deviceId}`
-    },
-  )
+  const outputs = outputsForSeries(db, seriesId)
+  const labelFor = (deviceId: string): string => {
+    const row = db.prepare('SELECT label FROM device WHERE id = ?').get(deviceId) as
+      | { label: string }
+      | undefined
+    return row?.label ?? `device ${deviceId}`
+  }
+  return [...findOverlaps(outputs, labelFor), ...findSettingConflicts(outputs, labelFor)]
 }
 
 /** One line a human can act on. */
 export function describeConflict(conflict: OutputConflict): string {
+  const when = describeSpan(conflict.from, conflict.to)
+  if (conflict.kind === 'setting') {
+    return (
+      `"${conflict.first.label}" and "${conflict.second.label}" ask ${conflict.deviceLabel} for different ` +
+      `quality settings while both are running, ${when}. One box encodes both, so whichever is applied ` +
+      'last wins and the other gets it silently. Match them, or move one onto its own hardware.'
+    )
+  }
   return (
     `"${conflict.first.label}" and "${conflict.second.label}" both need ${conflict.deviceLabel} for ` +
-    `${describeSpan(conflict.from, conflict.to)}. It can only do one at a time, so one of them will drop ` +
-    'the other. Move one, or give it its own encoder.'
+    `${when}. It can only do one at a time, so one of them will drop the other. Move one, or give it ` +
+    'its own encoder.'
   )
 }
 

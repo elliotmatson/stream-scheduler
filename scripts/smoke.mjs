@@ -131,8 +131,6 @@ async function main() {
   const start = Date.now() + 120_000
   const series = await api('POST', '/api/series', {
     label: 'Smoke Service',
-    sourceDeviceId: device.id,
-    sourceNodeId: 'stream',
     timezone: 'America/Chicago',
     rrule: 'FREQ=WEEKLY',
     dtstart: start,
@@ -144,6 +142,8 @@ async function main() {
     label: 'Main',
     durationMs: 3_600_000,
     credentialId: credential.id,
+    deviceId: device.id,
+    nodeId: 'stream',
   })
   check('an output is attached with no clashes', firstOutput.conflicts.length === 0, JSON.stringify(firstOutput.conflicts))
 
@@ -156,6 +156,8 @@ async function main() {
     offsetMs: 600_000,
     durationMs: 1_800_000,
     credentialId: credential.id,
+    deviceId: device.id,
+    nodeId: 'stream',
   })
   check(
     'two streams fighting over one encoder are reported',
@@ -163,6 +165,20 @@ async function main() {
     JSON.stringify(clashing.conflicts),
   )
   await api('DELETE', `/api/outputs/${clashing.id}`)
+
+  let wrongKindRefused = false
+  try {
+    await api('POST', `/api/series/${series.id}/outputs`, {
+      kind: 'recording',
+      label: 'Archive',
+      durationMs: 3_600_000,
+      deviceId: device.id,
+      nodeId: 'stream',
+    })
+  } catch (error) {
+    wrongKindRefused = String(error).includes('does not record')
+  }
+  check('a recording cannot be put on a node that only streams', wrongKindRefused)
 
   const preview = await api('GET', `/api/series/${series.id}/preview`)
   const firstTitle = preview[0]?.outputs?.[0]?.title
@@ -251,8 +267,16 @@ async function main() {
   const instructions = await api('GET', '/api/oauth/youtube/instructions')
   check(
     'setup instructions warn about the 7-day Testing expiry',
-    instructions.warning.includes('Testing') && instructions.steps.length >= 5,
-    instructions.warning,
+    instructions.warnings.some((warning) => warning.includes('Testing')) && instructions.steps.length >= 5,
+    instructions.warnings.join(' / '),
+  )
+  check(
+    // Bites at connect time: a Brand Account channel is not a member of the
+    // Workspace, so an Internal client refuses it and only the setter-up's
+    // own channel works.
+    'setup instructions warn that an Internal client cannot connect a Brand Account',
+    instructions.warnings.some((warning) => warning.includes('org_internal')),
+    instructions.warnings.join(' / '),
   )
   check(
     'the redirect URI is a loopback address',
@@ -394,8 +418,6 @@ async function main() {
 
   const uiSeries = await api('POST', '/api/series', {
     label: 'Form Service',
-    sourceDeviceId: device.id,
-    sourceNodeId: 'stream',
     timezone: 'America/Chicago',
     rrule: 'FREQ=WEEKLY;BYDAY=SU',
     dtstartLocal: { date: '2026-03-01', time: '09:00' },
@@ -414,9 +436,9 @@ async function main() {
   try {
     await api('DELETE', `/api/devices/${device.id}`)
   } catch (error) {
-    deviceLocked = String(error).includes('Form Service')
+    deviceLocked = String(error).includes('Smoke Service')
   }
-  check('the encoder an event sources from cannot be deleted, and it says which event', deviceLocked)
+  check('a device an output still runs on cannot be deleted, and it says which event', deviceLocked)
 
   let keyLocked = false
   try {

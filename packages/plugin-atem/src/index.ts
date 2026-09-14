@@ -204,9 +204,19 @@ class AtemDevice {
   actionsFor(nodeId: string): NodeActions | undefined {
     if (nodeId === 'stream') {
       return {
-        applyStreamTarget: async ({ url, key }) => {
+        applyStreamTarget: async ({ url, key, quality }) => {
+          // Parsed before anything is sent: a bitrate the switcher would
+          // refuse should be an argument error, not a device error, and
+          // should leave the switcher as it was.
+          const bitrates = quality === undefined ? undefined : parseQuality(quality)
           await this.guard(() =>
-            this.client.setStreamingService({ serviceName: this.serviceName, url, key }),
+            this.client.setStreamingService({
+              serviceName: this.serviceName,
+              url,
+              key,
+              // Absent leaves the switcher on the bitrate it is set to.
+              ...(bitrates ? { bitrates } : {}),
+            }),
           )
         },
         startStreaming: async () => {
@@ -227,10 +237,21 @@ class AtemDevice {
 
     if (nodeId === 'record') {
       return {
-        startRecording: async ({ filename }) => {
+        startRecording: async ({ filename, quality }) => {
           // The ATEM records to its own media with a filename it is given
           // beforehand, unlike the HyperDeck where the name rides along with
           // the record command.
+          //
+          // Quality goes through the streaming service because that is where
+          // the switcher keeps it: one H.264 encoder feeds both the stream
+          // and the recording, so the bitrate set here is the bitrate a
+          // stream on this box gets too. That is why two outputs on one ATEM
+          // asking for different qualities is reported as a clash rather
+          // than quietly resolved.
+          const bitrates = quality === undefined ? undefined : parseQuality(quality)
+          if (bitrates) {
+            await this.guard(() => this.client.setStreamingService({ bitrates }))
+          }
           await this.guard(() => this.client.setRecordingSettings({ filename }))
           await this.guard(() => this.client.startRecording())
         },
@@ -271,6 +292,9 @@ class AtemDevice {
             ? {}
             : { remainingMs: recording.status.recordingTimeAvailable * 1000 }),
         },
+        // Reported on the recorder as well as the streamer, because it is
+        // one setting: the recording's quality is the streaming bitrate.
+        ...this.qualityOption(state),
         raw: { recordingError: recordingErrorName(recording?.status?.error) },
       }
     }
@@ -293,9 +317,35 @@ class AtemDevice {
         ...(streaming?.service.key ? { keyFingerprint: fingerprint(streaming.service.key) } : {}),
         ...(streaming?.stats === undefined ? {} : { bitrateBps: streaming.stats.encodingBitrate }),
       },
+      ...this.qualityOption(state),
       raw: {
         streamingState: streamingStatusName(streaming?.status?.state),
         streamingError: streamingErrorName(streaming?.status?.error),
+      },
+    }
+  }
+
+  /**
+   * What this switcher will take for quality, and what it is on now.
+   *
+   * Only offered where the switcher has an encoder at all: a plain Mini
+   * neither streams nor records, and a quality box on it would be a control
+   * for nothing.
+   */
+  private qualityOption(state: Readonly<AtemState>): Pick<NodeState, 'options'> {
+    if (!state.streaming && !state.recording) return {}
+    const current = formatQuality(state.streaming?.service.bitrates)
+    return {
+      options: {
+        quality: {
+          ...(current === undefined ? {} : { current }),
+          choices: [],
+          bitrate: {
+            minMbps: MIN_MBPS,
+            maxMbps: MAX_MBPS,
+            note: 'One encoder serves streaming and recording, so this is the quality of both.',
+          },
+        },
       },
     }
   }
@@ -357,6 +407,61 @@ function streamingErrorName(error: number | undefined): string {
 
 function recordingErrorName(error: number | undefined): string {
   return error === undefined ? 'none' : (Enums.RecordingError[error] ?? String(error))
+}
+
+/**
+ * The switcher's encoder quality, as a bitrate.
+ *
+ * An ATEM has no named quality profiles to offer. The names in ATEM Software
+ * Control ("Streaming High", "HyperDeck 1080p50") come out of a Streaming.xml
+ * on the computer running it, not out of the switcher — over the wire there is
+ * only a pair of numbers. So this adapter speaks in Mb/s and says so, rather
+ * than inventing profile names the box would not recognise and could not
+ * report back.
+ *
+ * The pair is a range: Blackmagic's own files use a low and a high figure for
+ * variable bitrate, and a single number here means both.
+ */
+const MIN_MBPS = 3
+const MAX_MBPS = 70
+
+export function parseQuality(quality: string): [number, number] {
+  const cleaned = quality.trim().replace(/mb\/?s$/i, '').trim()
+  const parts = cleaned.split(/\s*[-–]\s*/)
+  if (parts.length > 2) throw badQuality(quality)
+
+  const numbers = parts.map((part) => {
+    const value = Number(part)
+    if (!Number.isFinite(value) || value <= 0) throw badQuality(quality)
+    return value
+  })
+  const low = numbers[0]!
+  const high = numbers[1] ?? low
+  if (high < low) throw badQuality(quality)
+  if (low < MIN_MBPS || high > MAX_MBPS) {
+    throw new DeviceError(
+      'quality-out-of-range',
+      `An ATEM takes ${MIN_MBPS} to ${MAX_MBPS} Mb/s, and "${quality}" is outside that.`,
+      { remediation: `Pick a bitrate between ${MIN_MBPS} and ${MAX_MBPS} Mb/s.` },
+    )
+  }
+  return [Math.round(low * 1_000_000), Math.round(high * 1_000_000)]
+}
+
+/** The inverse, in the same vocabulary, so a caller can compare the two. */
+export function formatQuality(bitrates: readonly [number, number] | undefined): string | undefined {
+  if (!bitrates) return undefined
+  const [low, high] = bitrates.map((bps) => Math.round(bps / 10_000) / 100) as [number, number]
+  if (!low && !high) return undefined
+  return low === high ? String(low) : `${low}-${high}`
+}
+
+function badQuality(quality: string): DeviceError {
+  return new DeviceError(
+    'bad-quality',
+    `"${quality}" is not a bitrate. An ATEM takes a figure in Mb/s, such as "9" or "7-9".`,
+    { remediation: 'Give a number of Mb/s, or a low-high range.' },
+  )
 }
 
 function describe(error: unknown): string {

@@ -5,7 +5,7 @@ import type { FastifyInstance } from 'fastify'
 import websocket from '@fastify/websocket'
 import fastifyStatic from '@fastify/static'
 import { z } from 'zod'
-import { DeviceError, VerificationError } from '@scheduler/plugin-sdk'
+import { DeviceError, fingerprint, VerificationError } from '@scheduler/plugin-sdk'
 import type { ConfigValues, JsonObject, NodeDefinition, NodeState } from '@scheduler/plugin-sdk'
 import type { Application } from '../app.js'
 import type { Db } from '../db/index.js'
@@ -20,7 +20,7 @@ import { isValidTimeZone, zonedWallTimeToUtc } from '../schedule/zoned.js'
 import { ConfigInvalidError, UnknownPluginError } from '../plugins/registry.js'
 import { renderTemplate, TemplateError } from '../template/render.js'
 import { sanitizeFilename } from '../template/index.js'
-import { outputsForSeries, toOutput, type EventOutput } from '../events/outputs.js'
+import { outputsForSeries, requiredAction, toOutput, type EventOutput, type OutputKind } from '../events/outputs.js'
 import { describeConflict, overlapsForSeries } from '../events/overlap.js'
 import { assertUnreferenced, ConflictError, NotFoundError } from './errors.js'
 import { registerNotifyRoutes } from './notify-routes.js'
@@ -117,29 +117,19 @@ function registerRoutes(fastify: FastifyInstance, app: Application): void {
     // Which events are mid-run on each device, so the manual controls can
     // say whose stream they are about to interfere with.
     const busy = db.prepare(
-      `SELECT DISTINCT r.id AS run_id, s.label AS label, s.source_device_id AS source_device_id,
-              o.id AS occurrence_id
+      `SELECT DISTINCT r.id AS run_id, s.label AS label, eo.device_id AS device_id
          FROM run r
          JOIN occurrence o ON o.id = r.occurrence_id
          JOIN event_series s ON s.id = o.series_id
+         JOIN event_output eo ON eo.series_id = s.id AND eo.enabled = 1
         WHERE r.state NOT IN ('completed', 'failed', 'cancelled')`,
-    ).all() as { run_id: string; label: string; source_device_id: string | null; occurrence_id: string }[]
-    const usesDevice = db.prepare(
-      `SELECT 1 FROM event_output eo
-         JOIN occurrence o ON o.series_id = eo.series_id
-        WHERE o.id = ? AND eo.device_id = ? AND eo.enabled = 1
-        LIMIT 1`,
-    )
+    ).all() as { run_id: string; label: string; device_id: string | null }[]
 
     return rows.map((row) => {
       const connection = app.connections.get(row.id)
       return {
         inUseBy: busy
-          .filter(
-            (run) =>
-              run.source_device_id === row.id ||
-              usesDevice.get(run.occurrence_id, row.id) !== undefined,
-          )
+          .filter((run) => run.device_id === row.id)
           .map((run) => ({ runId: run.run_id, label: run.label })),
         id: row.id,
         pluginId: row.plugin_id,
@@ -225,32 +215,50 @@ function registerRoutes(fastify: FastifyInstance, app: Application): void {
    * Blackmagic device will accept a command and quietly ignore it, and a
    * button that lies is worse than no button.
    *
-   * `applyStreamTarget` is deliberately not offered. It takes a stream key,
-   * so exposing it here would mean posting a key in the clear to be pushed
-   * at a device outside any run, with nothing to clean it up afterwards.
-   * Getting a key onto an encoder is what stream credentials and the prepare
-   * phase are for.
+   * Two actions a node may declare are deliberately not offered.
+   *
+   * `applyStreamTarget` takes a stream key, so exposing it here would mean
+   * posting a key in the clear to be pushed at a device outside any run,
+   * with nothing to clean it up afterwards. Getting a key onto an encoder is
+   * what stream credentials and the prepare phase are for.
+   *
+   * `route` is a live-production control — what is on an ATEM's aux bus is
+   * the operator's call at the desk, second by second, not something worth
+   * reaching through a scheduler to set. Its arguments are the device's own
+   * vocabulary too (the ATEM wants numeric source and bus ids), and there is
+   * nothing here that could turn those into something an operator recognises.
+   * The current routing is readable through the state endpoint below; it
+   * just cannot be written. See docs/plan/04-plugin-sdk.md.
    */
+  // The settle windows match the scheduled path's, and for the same reason:
+  // going live means opening an RTMP session across the internet, and an
+  // encoder sits part-way through that for several seconds. A button that
+  // gives up in four is a button that reports failure on a stream which is
+  // coming up perfectly.
   const MANUAL_ACTIONS = {
     startStreaming: {
       what: 'Streaming',
       expected: 'active',
       satisfiedBy: (state: NodeState) => state.streaming?.active === true,
+      settleMs: 25_000,
     },
     stopStreaming: {
       what: 'Streaming',
       expected: 'stopped',
       satisfiedBy: (state: NodeState) => state.streaming?.active === false,
+      settleMs: 10_000,
     },
     startRecording: {
       what: 'Recording',
       expected: 'active',
       satisfiedBy: (state: NodeState) => state.recording?.active === true,
+      settleMs: 10_000,
     },
     stopRecording: {
       what: 'Recording',
       expected: 'stopped',
       satisfiedBy: (state: NodeState) => state.recording?.active === false,
+      settleMs: 10_000,
     },
   } as const
 
@@ -258,6 +266,134 @@ function registerRoutes(fastify: FastifyInstance, app: Application): void {
     const { id, nodeId } = z.object({ id: z.string(), nodeId: z.string() }).parse(request.params)
     nodeOr404(app, id, nodeId)
     return { state: await app.connections.invoke(id, nodeId, 'readState') }
+  })
+
+  /**
+   * The event, if any, that is mid-run on this device.
+   *
+   * Two things on this screen are refused while one is: erasing a card and
+   * re-pointing an encoder. Both would be undone or, worse, not undone, by
+   * a run that is part-way through its window.
+   */
+  const eventMidRunOn = (deviceId: string): string | undefined =>
+    (
+      db
+        .prepare(
+          `SELECT s.label AS label
+             FROM run r
+             JOIN occurrence o ON o.id = r.occurrence_id
+             JOIN event_series s ON s.id = o.series_id
+             JOIN event_output eo ON eo.series_id = s.id AND eo.enabled = 1
+            WHERE r.state NOT IN ('completed', 'failed', 'cancelled') AND eo.device_id = ?
+            LIMIT 1`,
+        )
+        .get(deviceId) as { label: string } | undefined
+    )?.label
+
+  /**
+   * Point an encoder at a stored stream target by hand.
+   *
+   * Takes the id of a saved credential, never a key. The key is read out of
+   * the vault on this side and handed straight to the device, so no secret
+   * crosses this API in either direction — which is what the action
+   * allow-list above refuses to allow and this route does not change.
+   *
+   * Quality rides along because the device takes both in one command: an
+   * encoder is told its platform, server, key and profile together, and
+   * there is no way to set the profile on its own. Leaving it out leaves
+   * the device on whatever profile it is already set to.
+   */
+  fastify.post('/api/devices/:id/nodes/:nodeId/stream-target', async (request) => {
+    const { id, nodeId } = z.object({ id: z.string(), nodeId: z.string() }).parse(request.params)
+    const body = z
+      .object({ credentialId: z.string(), quality: z.string().min(1).max(100).optional() })
+      .parse(request.body)
+
+    const node = nodeOr404(app, id, nodeId)
+    if (!node.supports.includes('applyStreamTarget')) {
+      throw new ConflictError(`"${node.label}" cannot be pointed at a stream target.`)
+    }
+
+    // Re-pointing an encoder that is live sends the stream somewhere else
+    // mid-service, and the scheduler will not put it back until the next
+    // event starts.
+    const busy = eventMidRunOn(id)
+    if (busy) {
+      throw new ConflictError(`"${busy}" is mid-run on this device. Stop the run before re-pointing it.`)
+    }
+
+    const credential = db
+      .prepare('SELECT label, ingest_url, secret_ref FROM stream_credential WHERE id = ?')
+      .get(body.credentialId) as { label: string; ingest_url: string | null; secret_ref: string } | undefined
+    if (!credential) throw new NotFoundError(`No stream credential with id "${body.credentialId}".`)
+    if (!credential.ingest_url) {
+      throw new ConflictError(`"${credential.label}" has no ingest URL to point anything at.`)
+    }
+
+    const key = app.vault.reveal(credential.secret_ref)
+    const state = await app.connections.applyAndVerify(
+      id,
+      nodeId,
+      'applyStreamTarget',
+      { url: credential.ingest_url, key, ...(body.quality ? { quality: body.quality } : {}) },
+      {
+        what: 'Stream target',
+        expected: `${credential.ingest_url} with key ${fingerprint(key)}`,
+        // The device reports the key back as a fingerprint, so the check is
+        // that the right key landed without the value making the trip.
+        satisfiedBy: (state: NodeState) =>
+          state.streaming?.targetUrl === credential.ingest_url &&
+          state.streaming?.keyFingerprint === fingerprint(key),
+        settleMs: 10_000,
+      },
+    )
+
+    app.logger.info('an operator pointed a device at a stream target by hand', {
+      deviceId: id,
+      nodeId,
+      credentialId: body.credentialId,
+    })
+    return { state }
+  })
+
+  /**
+   * Erase a card.
+   *
+   * On its own route rather than in the action allow-list above, because
+   * it is the one thing here that destroys something and it does not share
+   * their shape: it answers with a token instead of state, and it is
+   * refused outright while the device is mid-run. The deck's own protocol
+   * is already a two-step handshake and this passes that through rather
+   * than inventing a confirmation of its own.
+   */
+  fastify.post('/api/devices/:id/nodes/:nodeId/format', async (request) => {
+    const { id, nodeId } = z.object({ id: z.string(), nodeId: z.string() }).parse(request.params)
+    const body = z
+      .object({ slot: z.number().int().positive(), confirm: z.string().min(1).optional() })
+      .parse(request.body)
+
+    const node = nodeOr404(app, id, nodeId)
+    if (!node.supports.includes('formatStorage')) {
+      throw new ConflictError(`"${node.label}" cannot format its storage.`)
+    }
+
+    // Erasing the card an event is recording onto is not a thing to find
+    // out about afterwards.
+    const busy = eventMidRunOn(id)
+    if (busy) {
+      throw new ConflictError(`"${busy}" is mid-run on this device. Stop the run before formatting.`)
+    }
+
+    const state = await app.connections.invoke(id, nodeId, 'formatStorage', {
+      slot: body.slot,
+      ...(body.confirm ? { confirm: body.confirm } : {}),
+    })
+    const confirm = (state?.raw as { confirm?: unknown } | undefined)?.confirm
+    if (body.confirm) {
+      app.logger.warn('an operator formatted device storage', { deviceId: id, nodeId, slot: body.slot })
+      return { formatted: true }
+    }
+    return { formatted: false, confirm: typeof confirm === 'string' ? confirm : undefined }
   })
 
   fastify.post('/api/devices/:id/nodes/:nodeId/:action', async (request) => {
@@ -268,7 +404,17 @@ function registerRoutes(fastify: FastifyInstance, app: Application): void {
         action: z.enum(['startStreaming', 'stopStreaming', 'startRecording', 'stopRecording']),
       })
       .parse(request.params)
-    const body = z.object({ filename: z.string().min(1).max(200).optional() }).parse(request.body ?? {})
+    const body = z
+      .object({
+        filename: z.string().min(1).max(200).optional(),
+        // Which card to record onto. Absent means the deck's own setting,
+        // which is what an operator who has not thought about it wants.
+        slot: z.number().int().positive().optional(),
+        // For a recorder that shares its encoder with the streaming side,
+        // where there is no stream target to carry the quality.
+        quality: z.string().min(1).max(100).optional(),
+      })
+      .parse(request.body ?? {})
 
     const node = nodeOr404(app, id, nodeId)
     if (!node.supports.includes(action)) {
@@ -283,7 +429,13 @@ function registerRoutes(fastify: FastifyInstance, app: Application): void {
       throw new ConflictError('Give the recording a name before starting it.')
     }
     const args: JsonObject =
-      action === 'startRecording' ? { filename: sanitizeFilename(body.filename!) } : {}
+      action === 'startRecording'
+        ? {
+            filename: sanitizeFilename(body.filename!),
+            ...(body.slot === undefined ? {} : { slot: body.slot }),
+            ...(body.quality ? { quality: body.quality } : {}),
+          }
+        : {}
     const state = await app.connections.applyAndVerify(id, nodeId, action, args, check)
 
     app.logger.info('an operator drove a device by hand', { deviceId: id, nodeId, action })
@@ -400,11 +552,6 @@ function registerRoutes(fastify: FastifyInstance, app: Application): void {
 
   const seriesBody = z.object({
     label: z.string().min(1),
-    /** The one encoder this event's outputs run on, unless an output names
-     *  its own. Nullable so an event can be written before the hardware is
-     *  added. */
-    sourceDeviceId: z.string().nullable().default(null),
-    sourceNodeId: z.string().nullable().default(null),
     timezone: z.string().min(1),
     rrule: z.string().nullable().default(null),
     dtstart: z.number().int().optional(),
@@ -433,15 +580,13 @@ function registerRoutes(fastify: FastifyInstance, app: Application): void {
     const now = app.clock.now()
     db.prepare(
       `INSERT INTO event_series
-         (id, label, source_device_id, source_node_id, timezone, rrule, dtstart, duration_ms, exdates,
+         (id, label, timezone, rrule, dtstart, duration_ms, exdates,
           prepare_lead_ms, preroll_ms, postroll_ms, late_start_grace_ms, templates, version, enabled,
           created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)`,
     ).run(
       id,
       body.label,
-      body.sourceDeviceId,
-      body.sourceNodeId,
       body.timezone,
       body.rrule,
       body.dtstart,
@@ -473,13 +618,11 @@ function registerRoutes(fastify: FastifyInstance, app: Application): void {
     assertSchedulable(merged)
 
     db.prepare(
-      `UPDATE event_series SET label = ?, source_device_id = ?, source_node_id = ?, timezone = ?, rrule = ?,
+      `UPDATE event_series SET label = ?, timezone = ?, rrule = ?,
          dtstart = ?, duration_ms = ?, exdates = ?, prepare_lead_ms = ?, preroll_ms = ?, postroll_ms = ?,
          late_start_grace_ms = ?, templates = ?, enabled = ? WHERE id = ?`,
     ).run(
       merged.label,
-      merged.sourceDeviceId,
-      merged.sourceNodeId,
       merged.timezone,
       merged.rrule,
       merged.dtstart,
@@ -544,10 +687,15 @@ function registerRoutes(fastify: FastifyInstance, app: Application): void {
     durationMs: z.number().int().positive(),
     destinationId: z.string().nullable().default(null),
     credentialId: z.string().nullable().default(null),
-    /** Null means the event's source encoder. */
-    deviceId: z.string().nullable().default(null),
-    nodeId: z.string().nullable().default(null),
+    /** Where it runs. Required: an output with no hardware is an event that
+     *  does nothing at 09:00, and a silent default is how that happens. */
+    deviceId: z.string().min(1),
+    nodeId: z.string().min(1),
     templates: z.record(z.string()).default({}),
+    /** Absent keys mean "leave the device as it is". */
+    settings: z
+      .object({ quality: z.string().min(1).optional(), slot: z.number().int().positive().optional() })
+      .default({}),
     enabled: z.boolean().default(true),
     position: z.number().int().nonnegative().optional(),
   })
@@ -571,6 +719,7 @@ function registerRoutes(fastify: FastifyInstance, app: Application): void {
     seriesOr404(db, id)
     const body = outputBody.parse(request.body)
     assertDeliverable(body)
+    assertRightKindOfDevice(app, body)
 
     const next =
       body.position ??
@@ -583,8 +732,8 @@ function registerRoutes(fastify: FastifyInstance, app: Application): void {
     db.prepare(
       `INSERT INTO event_output
          (id, series_id, kind, label, position, offset_ms, duration_ms, destination_id, credential_id,
-          device_id, node_id, templates, enabled, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          device_id, node_id, templates, settings, enabled, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).run(
       outputId,
       id,
@@ -598,6 +747,7 @@ function registerRoutes(fastify: FastifyInstance, app: Application): void {
       body.deviceId,
       body.nodeId,
       JSON.stringify(body.templates),
+      JSON.stringify(body.settings),
       body.enabled ? 1 : 0,
       app.clock.now(),
     )
@@ -619,10 +769,12 @@ function registerRoutes(fastify: FastifyInstance, app: Application): void {
     const body = outputBody.partial().parse(request.body)
     const merged = { ...current, ...body }
     assertDeliverable(merged)
+    assertRightKindOfDevice(app, merged)
 
     db.prepare(
       `UPDATE event_output SET kind = ?, label = ?, position = ?, offset_ms = ?, duration_ms = ?,
-         destination_id = ?, credential_id = ?, device_id = ?, node_id = ?, templates = ?, enabled = ?
+         destination_id = ?, credential_id = ?, device_id = ?, node_id = ?, templates = ?, settings = ?,
+         enabled = ?
        WHERE id = ?`,
     ).run(
       merged.kind,
@@ -635,6 +787,7 @@ function registerRoutes(fastify: FastifyInstance, app: Application): void {
       merged.deviceId,
       merged.nodeId,
       JSON.stringify(merged.templates),
+      JSON.stringify(merged.settings),
       merged.enabled ? 1 : 0,
       id,
     )
@@ -880,8 +1033,6 @@ interface DeviceRowShape {
 interface SeriesRowShape {
   id: string
   label: string
-  source_device_id: string | null
-  source_node_id: string | null
   timezone: string
   rrule: string | null
   dtstart: number
@@ -925,8 +1076,6 @@ function toSeriesDto(row: SeriesRowShape) {
   return {
     id: row.id,
     label: row.label,
-    sourceDeviceId: row.source_device_id,
-    sourceNodeId: row.source_node_id,
     timezone: row.timezone,
     rrule: row.rrule,
     dtstart: row.dtstart,
@@ -1066,6 +1215,39 @@ function maskSecrets(app: Application, pluginId: string, config: ConfigValues): 
 function seriesOr404(db: Db, id: string): void {
   const row = db.prepare('SELECT id FROM event_series WHERE id = ?').get(id)
   if (!row) throw new NotFoundError(`No event with id "${id}".`)
+}
+
+/**
+ * A stream needs an encoder and a recording needs a recorder.
+ *
+ * Checked against what the device actually reported it can do, not against
+ * what it is called: the point of probing is that a model name is a guess
+ * and `supports` is not. An unconnected device cannot be checked, so it is
+ * allowed through and pre-flight catches it the evening before — refusing
+ * would mean you could not write next month's events with the rack powered
+ * down.
+ */
+function assertRightKindOfDevice(
+  app: Application,
+  output: { kind: OutputKind; label: string; deviceId: string | null; nodeId: string | null },
+): void {
+  if (!output.deviceId || !output.nodeId) return
+  const connection = app.connections.get(output.deviceId)
+  if (!connection) return
+
+  const node = connection.nodes.find((candidate) => candidate.id === output.nodeId)
+  if (!node) {
+    throw new ConflictError(`"${connection.label}" has no "${output.nodeId}".`)
+  }
+
+  const needed = requiredAction(output.kind)
+  if (node.supports.includes(needed)) return
+
+  throw new ConflictError(
+    output.kind === 'stream'
+      ? `"${output.label}" is a stream, but "${node.label}" does not stream. Pick an encoder.`
+      : `"${output.label}" is a recording, but "${node.label}" does not record. Pick a recorder.`,
+  )
 }
 
 /**

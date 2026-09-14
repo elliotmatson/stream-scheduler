@@ -38,7 +38,7 @@ function addDevice(config: ConfigValues = {}, over: { pluginId?: string; enabled
 }
 
 const managerFor = (over: Partial<ConstructorParameters<typeof ConnectionManager>[0]> = {}) =>
-  new ConnectionManager({ db, registry, clock, random: () => 0.5, enforceSerialization: true, ...over })
+  new ConnectionManager({ db, registry, clock, random: () => 0.5, sleep: async () => {}, enforceSerialization: true, ...over })
 
 describe('PluginRegistry', () => {
   it('refuses a plugin built against a different SDK major', () => {
@@ -238,6 +238,46 @@ describe('applyAndVerify', () => {
         },
       ),
     ).rejects.toThrow(/did not take effect/)
+    await manager.closeAll()
+  })
+
+  it('waits for a device that reports a change a few reads late', async () => {
+    // What real hardware does, and what a single read got wrong: an ATEM
+    // told to stream reports Idle, then Connecting, then Streaming. The
+    // command landed; the state had not caught up. Reading once called a
+    // stream that was coming up perfectly a failure.
+    const id = addDevice({ kind: 'encoder', fault: 'slow-to-settle' })
+    const manager = managerFor()
+    await manager.applyAndVerify(
+      id,
+      'stream',
+      'applyStreamTarget',
+      { url: 'rtmps://a.rtmp.youtube.com/live2', key: 'live_abcd-1234-efgh' },
+      { what: 'Stream target', expected: 'set', satisfiedBy: () => true },
+    )
+
+    const state = await manager.applyAndVerify(id, 'stream', 'startStreaming', {}, {
+      what: 'Streaming',
+      expected: 'active',
+      satisfiedBy: (s) => s.streaming?.active === true,
+    })
+    expect(state.streaming?.active).toBe(true)
+    await manager.closeAll()
+  })
+
+  it('still gives up on a device that never gets there', async () => {
+    // The settle window must not turn a wedged device into a slow one.
+    const id = addDevice({ kind: 'recorder', fault: 'ignores-writes' })
+    const manager = managerFor()
+
+    await expect(
+      manager.applyAndVerify(id, 'record', 'startRecording', { filename: 'take 1' }, {
+        what: 'Recording',
+        expected: 'active',
+        satisfiedBy: (s) => s.recording?.active === true,
+        settleMs: 500,
+      }),
+    ).rejects.toThrow(/did not take effect within 0.5s/)
     await manager.closeAll()
   })
 })

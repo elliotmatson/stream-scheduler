@@ -165,8 +165,10 @@ class StreamingEncoderDevice {
   actionsFor(nodeId: string): NodeActions | undefined {
     if (nodeId !== 'stream') return undefined
     return {
-      applyStreamTarget: async ({ url, key }) => {
-        await this.api.setActivePlatform(this.resolveTarget(url, key))
+      applyStreamTarget: async ({ url, key, quality }) => {
+        // A quality named by the event beats the one in device config: the
+        // device setting is the house default, the event is the exception.
+        await this.api.setActivePlatform(this.resolveTarget(url, key, quality))
       },
       startStreaming: async () => {
         const platform = await this.api.activePlatform()
@@ -186,8 +188,18 @@ class StreamingEncoderDevice {
 
   async readState(): Promise<NodeState> {
     const [state, platform] = await Promise.all([this.api.livestream(), this.api.activePlatform()])
+    // Profiles are per platform, so the choices only mean anything once one
+    // is active. The device names them; we never invent one.
+    const choices = platform ? await this.profileNames(platform.platform) : []
 
     return {
+      ...(choices.length === 0
+        ? {}
+        : {
+            options: {
+              quality: { ...(platform?.quality ? { current: platform.quality } : {}), choices },
+            },
+          }),
       streaming: {
         // "Flushing" means the stop took effect and the on-device cache is
         // draining, so it counts as stopped: a stop that has been accepted
@@ -211,6 +223,17 @@ class StreamingEncoderDevice {
     this.disposed = true
   }
 
+  /** The quality profiles the named platform offers, straight off the box. */
+  private async profileNames(platform: string): Promise<string[]> {
+    try {
+      const config = await this.api.platform(platform)
+      return config?.profiles.map((profile) => profile.profile) ?? []
+    } catch {
+      // Reading the options must never break reading the state.
+      return []
+    }
+  }
+
   /**
    * Turns a URL and key into the platform/server/quality triple the device
    * wants.
@@ -220,7 +243,7 @@ class StreamingEncoderDevice {
    * issued this morning, for instance. Failing that, a platform whose own
    * server already points at the requested URL, where only the key changes.
    */
-  private resolveTarget(url: string, key: string): ActivePlatform {
+  private resolveTarget(url: string, key: string, quality?: string): ActivePlatform {
     const named = this.settings.platform
       ? this.platforms.find((p) => p.platform === this.settings.platform)
       : undefined
@@ -238,12 +261,12 @@ class StreamingEncoderDevice {
         return {
           platform: named.platform,
           server: server.server,
-          quality: this.qualityFor(named),
+          quality: this.qualityFor(named, quality),
           key,
         }
       }
       if (named.customizableUrlEnabled) {
-        return { platform: named.platform, server: 'Custom', quality: this.qualityFor(named), key, url }
+        return { platform: named.platform, server: 'Custom', quality: this.qualityFor(named, quality), key, url }
       }
       throw new DeviceError(
         'url-not-available',
@@ -261,7 +284,7 @@ class StreamingEncoderDevice {
       return {
         platform: customizable.platform,
         server: 'Custom',
-        quality: this.qualityFor(customizable),
+        quality: this.qualityFor(customizable, quality),
         key,
         url,
       }
@@ -297,7 +320,20 @@ class StreamingEncoderDevice {
     return platform.servers.find((server) => sameEndpoint(server.url, url))
   }
 
-  private qualityFor(platform: PlatformConfig): string {
+  private qualityFor(platform: PlatformConfig, requested?: string): string {
+    if (requested) {
+      const known = platform.profiles.some((profile) => profile.profile === requested)
+      if (!known) {
+        throw new DeviceError(
+          'unknown-quality',
+          `"${platform.platform}" has no quality profile called "${requested}".`,
+          {
+            remediation: `It offers ${platform.profiles.map((p) => p.profile).join(', ') || 'none'}.`,
+          },
+        )
+      }
+      return requested
+    }
     if (this.settings.quality) return this.settings.quality
     if (platform.defaultProfile) return platform.defaultProfile
     const first = platform.profiles[0]?.profile

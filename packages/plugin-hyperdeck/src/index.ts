@@ -10,7 +10,7 @@ import type {
   NodeState,
   PluginDefinition,
 } from '@scheduler/plugin-sdk'
-import { Commands, Hyperdeck, SlotStatus, TransportStatus } from 'hyperdeck-connection'
+import { Commands, FilesystemFormat, Hyperdeck, SlotStatus, TransportStatus } from 'hyperdeck-connection'
 
 /**
  * Blackmagic HyperDeck Studio / Extreme / Shuttle.
@@ -24,6 +24,24 @@ import { Commands, Hyperdeck, SlotStatus, TransportStatus } from 'hyperdeck-conn
  */
 
 export const DEFAULT_PORT = 9993
+
+/**
+ * Codecs to suggest, not a list of what any particular deck has.
+ *
+ * These are the spellings in Blackmagic's own protocol documentation. A
+ * given model has some subset and newer firmware adds more, and there is no
+ * command that answers "what do you support", so this is offered alongside
+ * whatever the deck reports it is on — which is always a valid answer.
+ */
+const KNOWN_FILE_FORMATS = [
+  'QuickTimeProResHQ',
+  'QuickTimeProRes',
+  'QuickTimeProResLT',
+  'QuickTimeProResProxy',
+  'QuickTimeDNxHR220',
+  'DNxHR220',
+  'QuickTimeUncompressed',
+]
 
 const configSchema: ConfigField[] = [
   {
@@ -54,6 +72,18 @@ class HyperdeckDevice {
   private model = 'HyperDeck'
   private slots = 1
   private disposed = false
+  /**
+   * Guards against a state read feeding itself.
+   *
+   * The deck pushes `notify.slot`, and reading every slot is itself slot
+   * traffic, so an unguarded emit triggers the notification that triggers
+   * the next emit. That is not a slow loop: each pass issues a round trip
+   * per slot, and the pending work grows faster than it drains.
+   */
+  private emitting = false
+  /** The deck's own configuration, which changes about never. Read once
+   *  rather than on every state read. */
+  private config: Commands.ConfigurationCommandResponse | undefined
 
   constructor(
     private readonly ctx: DeviceContext,
@@ -161,7 +191,7 @@ class HyperdeckDevice {
         ports: [
           { id: 'in', direction: 'in', label: 'Record input', transport: ['sdi', 'hdmi'], maxLinks: 1 },
         ],
-        supports: ['startRecording', 'stopRecording'],
+        supports: ['startRecording', 'stopRecording', 'formatStorage'],
       },
     ]
   }
@@ -169,18 +199,51 @@ class HyperdeckDevice {
   actionsFor(nodeId: string): NodeActions | undefined {
     if (nodeId !== 'record') return undefined
     return {
-      startRecording: async ({ filename }) => {
-        if (this.slot !== undefined) {
+      startRecording: async ({ filename, slot, quality }) => {
+        // An event that names a slot beats the device's own default: the
+        // device setting is the house rule, the event is the exception.
+        const wanted = slot ?? this.slot
+        if (wanted !== undefined) {
           const select = new Commands.SlotSelectCommand()
-          select.slotId = this.slot
+          select.slotId = wanted
           await this.send(select)
         }
-        // The deck appends its own extension, and rejects some characters the
-        // core sanitizer already removes.
-        await this.send(new Commands.RecordCommand(filename))
+        // A deck's quality is its recording codec, set on the deck rather
+        // than carried with the record command, so it goes first.
+        if (quality !== undefined) await this.setFileFormat(quality)
+        try {
+          // The deck appends its own extension, and rejects some characters
+          // the core sanitizer already removes.
+          await this.send(new Commands.RecordCommand(filename))
+        } catch (error) {
+          throw await this.explain(error)
+        }
       },
       stopRecording: async () => {
         await this.send(new Commands.StopCommand())
+      },
+      /**
+       * Erases a card. The deck's own protocol is a handshake — `format
+       * prepare` answers with a token and nothing happens until `format
+       * confirm` quotes it back — so this mirrors that rather than
+       * inventing its own confirmation. The token is short-lived, which
+       * is the point: an operator who wanders off does not leave a live
+       * erase primed.
+       */
+      formatStorage: async ({ slot, confirm }) => {
+        if (confirm) {
+          const command = new Commands.FormatConfirmCommand()
+          command.code = confirm
+          await this.send(command)
+          // The volume name and headroom both change; nothing cached
+          // about the slot is true any more.
+          return {}
+        }
+        const prepare = new Commands.FormatCommand()
+        prepare.slotId = slot
+        prepare.filesystem = FilesystemFormat.exFAT
+        const { code } = await this.send(prepare)
+        return { confirm: code }
       },
       readState: async () => this.readState(),
     }
@@ -189,6 +252,8 @@ class HyperdeckDevice {
   async readState(): Promise<NodeState> {
     const transport = await this.send(new Commands.TransportInfoCommand())
     const slot = await this.slotInfo(transport)
+    const slots = await this.allSlots(transport)
+    const config = await this.configuration()
 
     return {
       recording: {
@@ -197,11 +262,45 @@ class HyperdeckDevice {
         // `recordingTime` is seconds of headroom left on the media, which is
         // the number an operator actually wants before a long service.
         ...(slot === undefined ? {} : { remainingMs: slot.recordingTime * 1000 }),
+        ...(slots.length === 0 ? {} : { slots }),
+        // The deck spills onto the next mounted slot on its own when the
+        // current one fills; there is no setting to read, only whether
+        // there is somewhere for it to go.
+        rollover: slots.filter((entry) => entry.status === SlotStatus.MOUNTED).length > 1,
+      },
+      // A deck's quality is the codec it records in. It takes one by name
+      // and will not say which names it knows, so the current one is
+      // reported as fact and the rest offered as suggestions.
+      ...(config?.fileFormat === undefined
+        ? {}
+        : {
+            options: {
+              quality: {
+                current: config.fileFormat,
+                choices: [],
+                freeform: {
+                  note: 'The recording codec, spelled as the deck spells it.',
+                  examples: KNOWN_FILE_FORMATS,
+                },
+              },
+            },
+          }),
+      input: {
+        // `inputVideoFormat` is what the deck sees on the wire, as opposed
+        // to `videoFormat`, which is the format of the clip it is on. Older
+        // protocols do not report it, so its absence is not "no signal".
+        present: transport.inputVideoFormat !== null && transport.inputVideoFormat !== undefined,
+        ...(transport.inputVideoFormat ? { format: String(transport.inputVideoFormat) } : {}),
+        ...(config?.videoInput ? { source: config.videoInput } : {}),
       },
       raw: {
         transportStatus: transport.status,
         timecode: transport.timecode,
         ...(transport.videoFormat === null ? {} : { videoFormat: transport.videoFormat }),
+        ...(transport.inputVideoFormat == null ? {} : { inputVideoFormat: transport.inputVideoFormat }),
+        ...(config === undefined
+          ? {}
+          : { videoInput: config.videoInput, audioInput: config.audioInput, fileFormat: config.fileFormat }),
         ...(slot === undefined
           ? {}
           : { slotId: slot.slotId, slotStatus: slot.status, volumeName: slot.volumeName }),
@@ -237,6 +336,114 @@ class HyperdeckDevice {
     }
   }
 
+  /**
+   * Turns a refusal into something with the deck's own evidence attached.
+   *
+   * "No video input" from a deck that visibly has a feed is a dead end for
+   * whoever is holding it at 08:40. Asking the deck what it thinks it is
+   * looking at — which input it is set to, and what format it sees there —
+   * turns that into a fact. The extra round trip only happens on the
+   * failure path.
+   */
+  private async explain(error: unknown): Promise<DeviceError> {
+    // `send` has already translated this. Running it through again would
+    // look for a numeric protocol code on a DeviceError, not find one, and
+    // flatten every specific diagnosis back to a generic failure.
+    const translated = error instanceof DeviceError ? error : toDeviceError(error)
+    if (translated.code !== 'no-input') return translated
+
+    let seen = 'the deck did not say what it is looking at'
+    try {
+      const transport = await this.send(new Commands.TransportInfoCommand())
+      const config = await this.configuration()
+      const source = config?.videoInput ? `set to record from ${config.videoInput}` : 'input setting unknown'
+      seen = transport.inputVideoFormat
+        ? // The interesting case: the deck refuses and yet reports a signal.
+          `${source}, and reports ${transport.inputVideoFormat} on its input`
+        : `${source}, and reports no signal there`
+    } catch {
+      // The deck is refusing commands generally; the original error stands.
+    }
+
+    return new DeviceError('no-input', `The HyperDeck will not record: it is ${seen}.`, {
+      retryable: true,
+      remediation:
+        'Check the feed into the deck and that its video input setting matches the socket it is plugged ' +
+        'into. If the deck reports a format above and still refuses, the refusal is about something else ' +
+        'and is worth reporting.',
+    })
+  }
+
+  /** Every slot the deck has, so the UI can show the card it would roll onto. */
+  private async allSlots(
+    transport: Commands.TransportInfoCommandResponse,
+  ): Promise<{ id: number; status: string; volumeName?: string; remainingMs?: number; active?: boolean }[]> {
+    const out: { id: number; status: string; volumeName?: string; remainingMs?: number; active?: boolean }[] = []
+    for (let id = 1; id <= this.slots; id++) {
+      try {
+        const info = await this.send(new Commands.SlotInfoCommand(id))
+        out.push({
+          id,
+          status: String(info.status),
+          ...(info.volumeName ? { volumeName: info.volumeName } : {}),
+          remainingMs: info.recordingTime * 1000,
+          active: transport.slotId === id,
+        })
+      } catch {
+        // An empty slot answers with an error code. Reporting it as empty is
+        // the useful answer; dropping it would hide the card you can put in.
+        out.push({ id, status: 'empty', active: transport.slotId === id })
+      }
+    }
+    return out
+  }
+
+  /**
+   * Put the deck on a recording codec.
+   *
+   * Which codecs a deck has depends on its model and firmware, and the
+   * protocol will not list them, so this cannot be checked before it is
+   * sent. A deck that does not have the one asked for refuses, and the
+   * refusal is turned into something that names both the codec and what the
+   * deck is on now — the alternative is a bare "unsupported parameter" at
+   * the moment a service starts.
+   */
+  private async setFileFormat(fileFormat: string): Promise<void> {
+    const before = (await this.configuration())?.fileFormat
+    const command = new Commands.ConfigurationCommand()
+    command.fileFormat = fileFormat
+    try {
+      await this.send(command)
+    } catch (error) {
+      const translated = error instanceof DeviceError ? error : toDeviceError(error)
+      throw new DeviceError(
+        'unknown-quality',
+        `This HyperDeck will not record as "${fileFormat}"${before ? `; it is on ${before}` : ''}.`,
+        {
+          cause: error,
+          retryable: translated.retryable,
+          remediation:
+            'Codecs differ by model and firmware, and the deck does not publish its list. Set the one ' +
+            'you want on the deck itself, read it back here, and use that spelling.',
+        },
+      )
+    }
+    // The cached read is now a lie, and the next state read is what proves
+    // the deck took it.
+    this.config = undefined
+  }
+
+  /** What the deck is set to record *from*. Older firmware may not answer. */
+  private async configuration(): Promise<Commands.ConfigurationCommandResponse | undefined> {
+    if (this.config) return this.config
+    try {
+      this.config = await this.send(new Commands.ConfigurationGetCommand())
+      return this.config
+    } catch {
+      return undefined
+    }
+  }
+
   private async send<T>(command: Commands.AbstractCommand<T>): Promise<T> {
     if (this.disposed) throw new DeviceError('disposed', 'This device has been closed.')
     try {
@@ -247,11 +454,14 @@ class HyperdeckDevice {
   }
 
   private async emit(): Promise<void> {
-    if (this.disposed) return
+    if (this.disposed || this.emitting) return
+    this.emitting = true
     try {
       this.ctx.emitState('record', await this.readState())
     } catch (error) {
       this.ctx.log('debug', 'could not read deck state after a notification', { error: describe(error) })
+    } finally {
+      this.emitting = false
     }
   }
 }

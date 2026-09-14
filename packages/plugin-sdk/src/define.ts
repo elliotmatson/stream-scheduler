@@ -39,6 +39,24 @@ export function defineDevice(spec: DeviceSpec): DeviceInstance {
 
       if (action === 'readState') return actions.readState()
 
+      // The one action that answers with something other than state. It is
+      // kept off the NodeState path deliberately: a format token is a
+      // one-shot capability, not a property of the device.
+      if (action === 'formatStorage') {
+        if (!actions.formatStorage) {
+          throw new DeviceError('unsupported-action', `"${nodeId}" cannot format its storage.`)
+        }
+        const slot = args.slot
+        if (typeof slot !== 'number' || !Number.isInteger(slot)) {
+          throw new DeviceError('bad-argument', '"slot" must be a slot number.')
+        }
+        const result = await actions.formatStorage({
+          slot,
+          ...(typeof args.confirm === 'string' && args.confirm ? { confirm: args.confirm } : {}),
+        })
+        return { raw: result.confirm === undefined ? {} : { confirm: result.confirm } }
+      }
+
       const handler = actions[action]
       if (!handler) {
         throw new DeviceError('unsupported-action', `"${action}" is not supported by node "${nodeId}".`, {
@@ -51,7 +69,14 @@ export function defineDevice(spec: DeviceSpec): DeviceInstance {
           await actions.applyStreamTarget!(readStreamTarget(args))
           break
         case 'startRecording':
-          await actions.startRecording!({ filename: readString(args, 'filename') })
+          await actions.startRecording!({
+            filename: readString(args, 'filename'),
+            ...(typeof args.slot === 'number' ? { slot: args.slot } : {}),
+            // A recorder may share its encoder with the streaming side, in
+            // which case the quality has to be set on the way in rather
+            // than with a stream target the recording does not have.
+            ...(typeof args.quality === 'string' && args.quality ? { quality: args.quality } : {}),
+          })
           break
         case 'route':
           await actions.route!({ input: readString(args, 'input'), output: readString(args, 'output') })
@@ -76,5 +101,9 @@ function readString(args: JsonObject, key: string): string {
 }
 
 function readStreamTarget(args: JsonObject): StreamTarget {
-  return { url: readString(args, 'url'), key: readString(args, 'key') }
+  return {
+    url: readString(args, 'url'),
+    key: readString(args, 'key'),
+    ...(typeof args.quality === 'string' && args.quality ? { quality: args.quality } : {}),
+  }
 }

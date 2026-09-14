@@ -71,8 +71,6 @@ async function seedEverything(templates: Record<string, string> = {}) {
 
   const series = await post('/api/series', {
     label: 'Sunday Service',
-    sourceDeviceId: device.json.id,
-    sourceNodeId: 'stream',
     timezone: 'America/Chicago',
     rrule: 'FREQ=WEEKLY;BYDAY=SU',
     dtstart: START,
@@ -84,6 +82,8 @@ async function seedEverything(templates: Record<string, string> = {}) {
     label: 'Main',
     durationMs: 90 * MINUTE,
     credentialId: credential.json.id,
+    deviceId: device.json.id,
+    nodeId: 'stream',
   })
   return {
     deviceId: device.json.id,
@@ -352,6 +352,53 @@ describe('driving a device by hand', () => {
     expect(refused.json.error).toMatch(/not connected/)
   })
 
+  it('offers no way to route signal, which is the desk\'s job and not the scheduler\'s', async () => {
+    // The ATEM adapter implements `route` and nothing above the plugin
+    // drives it. Pinned so that stays a decision rather than drifting back
+    // in because the action happens to exist.
+    const { deviceId } = await seedEverything()
+    const refused = await post(`/api/devices/${deviceId}/nodes/stream/route`, { input: '3', output: '0' })
+    expect(refused.status).toBe(400)
+  })
+
+  it('points an encoder at a saved target by id, so no key crosses this API', async () => {
+    const { deviceId, credentialId } = await seedEverything()
+
+    const pointed = await post(`/api/devices/${deviceId}/nodes/stream/stream-target`, { credentialId })
+    expect(pointed.status).toBe(200)
+    expect(pointed.json.state.streaming.targetUrl).toBe('rtmps://a.rtmp.youtube.com/live2')
+    // Read back as a fingerprint: the key went to the device and nowhere else.
+    expect(pointed.json.state.streaming.keyFingerprint).toBeTruthy()
+    expect(JSON.stringify(pointed.json)).not.toContain('live_super-secret-key')
+
+    // And now it can actually go live, which it could not before.
+    const live = await post(`/api/devices/${deviceId}/nodes/stream/startStreaming`, {})
+    expect(live.json.state.streaming.active).toBe(true)
+  })
+
+  it('will not re-point an encoder out from under a running event', async () => {
+    const { deviceId, credentialId } = await seedEverything()
+    const [first] = (await get(`/api/occurrences?from=${START - MINUTE}&to=${START + MINUTE}`)).json
+    clock.set(START)
+    await post(`/api/occurrences/${first.id}/start-now`, {})
+
+    const refused = await post(`/api/devices/${deviceId}/nodes/stream/stream-target`, { credentialId })
+    expect(refused.status).toBe(409)
+    expect(refused.json.error).toMatch(/Sunday Service/)
+  })
+
+  it('records onto the card an operator picked rather than the deck default', async () => {
+    const deviceId = await connectRecorder()
+    const started = await post(`/api/devices/${deviceId}/nodes/record/startRecording`, {
+      filename: 'take 1',
+      slot: 2,
+    })
+    expect(started.status).toBe(200)
+    expect(started.json.state.recording.active).toBe(true)
+    const slots = started.json.state.recording.slots as { id: number; active?: boolean }[]
+    expect(slots.find((slot) => slot.active)?.id).toBe(2)
+  })
+
   it('offers no way to push a stream key at a device', async () => {
     const { deviceId } = await seedEverything()
     const attempt = await post(`/api/devices/${deviceId}/nodes/stream/applyStreamTarget`, {
@@ -378,6 +425,64 @@ describe('driving a device by hand', () => {
     const device = (await get('/api/devices')).json.find((row: { id: string }) => row.id === deviceId)
     expect(device.inUseBy).toEqual([])
   })
+
+  it('erases a card only when the token the device handed out comes back', async () => {
+    const deviceId = await connectRecorder()
+
+    const prepared = await post(`/api/devices/${deviceId}/nodes/record/format`, { slot: 2 })
+    expect(prepared.status).toBe(200)
+    expect(prepared.json).toMatchObject({ formatted: false, confirm: expect.any(String) })
+
+    // Preparing asks the device and erases nothing.
+    const untouched = await get(`/api/devices/${deviceId}/nodes/record/state`)
+    expect(untouched.json.state.recording.slots[1].volumeName).toBe('Sunday B')
+
+    const done = await post(`/api/devices/${deviceId}/nodes/record/format`, {
+      slot: 2,
+      confirm: prepared.json.confirm,
+    })
+    expect(done.json).toEqual({ formatted: true })
+
+    const after = await get(`/api/devices/${deviceId}/nodes/record/state`)
+    expect(after.json.state.recording.slots[1].volumeName).toBe('Untitled')
+  })
+
+  it('passes on the device refusing a confirmation it never gave out', async () => {
+    const deviceId = await connectRecorder()
+    const refused = await post(`/api/devices/${deviceId}/nodes/record/format`, {
+      slot: 1,
+      confirm: 'guessed',
+    })
+    expect(refused.status).toBe(409)
+    expect(refused.json.code).toBe('invalid-token')
+  })
+
+  it('will not erase a card an event is recording onto', async () => {
+    const { seriesId } = await seedEverything()
+    const deck = await post('/api/devices', { pluginId: 'mock', label: 'Deck', config: { kind: 'recorder' } })
+    await post(`/api/devices/${deck.json.id}/connect`, {})
+    await post(`/api/series/${seriesId}/outputs`, {
+      kind: 'recording',
+      label: 'Archive',
+      durationMs: 90 * MINUTE,
+      deviceId: deck.json.id,
+      nodeId: 'record',
+    })
+    const [first] = (await get(`/api/occurrences?from=${START - MINUTE}&to=${START + MINUTE}`)).json
+    clock.set(START)
+    await post(`/api/occurrences/${first.id}/start-now`, {})
+
+    const refused = await post(`/api/devices/${deck.json.id}/nodes/record/format`, { slot: 1 })
+    expect(refused.status).toBe(409)
+    expect(refused.json.error).toMatch(/Sunday Service/)
+  })
+
+  it('refuses to format a node with no storage to format', async () => {
+    const { deviceId } = await seedEverything()
+    const refused = await post(`/api/devices/${deviceId}/nodes/stream/format`, { slot: 1 })
+    expect(refused.status).toBe(409)
+    expect(refused.json.error).toMatch(/cannot format/)
+  })
 })
 
 async function connectRecorder(): Promise<string> {
@@ -385,6 +490,75 @@ async function connectRecorder(): Promise<string> {
   await post(`/api/devices/${device.json.id}/connect`, {})
   return device.json.id as string
 }
+
+describe('the OAuth callback address', () => {
+  // The route asks the registry for the provider before it answers, so the
+  // test needs one registered. Nothing here touches Google.
+  beforeEach(() => {
+    app.destinations.register({
+      id: 'youtube',
+      displayName: 'YouTube',
+      apiVersion: '1',
+      configSchema: [],
+      providesIngest: true,
+      oauth: {
+        begin: () => ({ url: 'https://accounts.google.invalid/o/oauth2/v2/auth', state: 'state', verifier: 'v' }),
+        complete: async () => {
+          throw new Error('not exercised here')
+        },
+      },
+      createDestination: async () => {
+        throw new Error('not exercised here')
+      },
+    })
+  })
+
+  // Google matches this character for character and says only
+  // "redirect_uri_mismatch" when it does not, so what the app advertises has
+  // to be what a browser actually reaches.
+  const instructions = async (headers: Record<string, string>) =>
+    JSON.parse(
+      (await server.inject({ method: 'GET', url: '/api/oauth/youtube/instructions', headers })).body,
+    )
+
+  it('uses the host the browser asked for', async () => {
+    const body = await instructions({ host: 'scheduler.local:8500' })
+    expect(body.redirectUri).toBe('http://scheduler.local:8500/oauth/callback')
+  })
+
+  it('follows a proxy that terminated TLS, rather than advertising http', async () => {
+    // Tailscale Serve and every reverse proxy hand this process a plain
+    // HTTP request. Advertising `http://` for a name like this is not just
+    // wrong, it is a URI Google refuses to register at all.
+    const body = await instructions({
+      host: 'stream.tail48658.ts.net',
+      'x-forwarded-proto': 'https',
+    })
+    expect(body.redirectUri).toBe('https://stream.tail48658.ts.net/oauth/callback')
+    expect(body.warnings.some((warning: string) => warning.includes('localhost'))).toBe(false)
+  })
+
+  it('takes the first hop when a chain of proxies appends to the header', async () => {
+    const body = await instructions({
+      host: 'inner:8500',
+      'x-forwarded-proto': 'https, http',
+      'x-forwarded-host': 'stream.example.org, inner:8500',
+    })
+    expect(body.redirectUri).toBe('https://stream.example.org/oauth/callback')
+  })
+
+  it('says so when the address it would advertise is one Google will not take', async () => {
+    const body = await instructions({ host: 'stream.tail48658.ts.net' })
+    expect(body.redirectUri).toBe('http://stream.tail48658.ts.net/oauth/callback')
+    expect(body.warnings.some((warning: string) => warning.includes('localhost'))).toBe(true)
+  })
+
+  it('does not warn about http on loopback, where it is the correct flow', async () => {
+    const body = await instructions({ host: '127.0.0.1:8500' })
+    expect(body.warnings.some((warning: string) => warning.includes('localhost'))).toBe(false)
+  })
+
+})
 
 describe('credentials', () => {
   it('never exposes a stored stream key', async () => {
@@ -476,7 +650,7 @@ describe('unpicking a setup', () => {
     expect((await del(`/api/credentials/${credentialId}`)).status).toBe(200)
   })
 
-  it('refuses to delete the device an event uses as its source', async () => {
+  it('refuses to delete a device an output still runs on', async () => {
     const { deviceId } = await seedEverything()
     const refused = await del(`/api/devices/${deviceId}`)
     expect(refused.status).toBe(409)
@@ -486,7 +660,7 @@ describe('unpicking a setup', () => {
 
 describe('outputs', () => {
   it('reports two outputs that would fight over the same encoder', async () => {
-    const { seriesId, credentialId } = await seedEverything()
+    const { seriesId, credentialId, deviceId } = await seedEverything()
     // A second stream on the same source, overlapping the first.
     const added = await post(`/api/series/${seriesId}/outputs`, {
       kind: 'stream',
@@ -494,6 +668,8 @@ describe('outputs', () => {
       offsetMs: 30 * MINUTE,
       durationMs: 60 * MINUTE,
       credentialId,
+      deviceId,
+      nodeId: 'stream',
     })
 
     expect(added.status).toBe(201)
@@ -506,20 +682,26 @@ describe('outputs', () => {
 
   it('does not call a recording and a stream on one device a clash', async () => {
     const { seriesId } = await seedEverything()
+    const deck = await post('/api/devices', { pluginId: 'mock', label: 'Deck', config: { kind: 'recorder' } })
+    await post(`/api/devices/${deck.json.id}/connect`, {})
     const added = await post(`/api/series/${seriesId}/outputs`, {
       kind: 'recording',
       label: 'Archive',
       durationMs: 90 * MINUTE,
+      deviceId: deck.json.id,
+      nodeId: 'record',
     })
     expect(added.json.conflicts).toEqual([])
   })
 
   it('refuses a stream with nowhere to go, and one told twice', async () => {
-    const { seriesId, credentialId } = await seedEverything()
+    const { seriesId, credentialId, deviceId } = await seedEverything()
     const nowhere = await post(`/api/series/${seriesId}/outputs`, {
       kind: 'stream',
       label: 'Lost',
       durationMs: 90 * MINUTE,
+      deviceId,
+      nodeId: 'stream',
     })
     expect(nowhere.status).toBe(409)
     expect(nowhere.json.error).toContain('nowhere to stream to')
@@ -536,6 +718,8 @@ describe('outputs', () => {
         durationMs: 90 * MINUTE,
         credentialId,
         destinationId: destination.json.id,
+        deviceId,
+        nodeId: 'stream',
       })
       expect(both.status).toBe(409)
     }
@@ -543,10 +727,14 @@ describe('outputs', () => {
 
   it('reorders in one call rather than one patch per row', async () => {
     const { seriesId, outputId } = await seedEverything()
+    const deck = await post('/api/devices', { pluginId: 'mock', label: 'Deck', config: { kind: 'recorder' } })
+    await post(`/api/devices/${deck.json.id}/connect`, {})
     const second = await post(`/api/series/${seriesId}/outputs`, {
       kind: 'recording',
       label: 'Archive',
       durationMs: 90 * MINUTE,
+      deviceId: deck.json.id,
+      nodeId: 'record',
     })
 
     const reordered = await post(`/api/series/${seriesId}/outputs/order`, {

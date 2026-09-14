@@ -2,17 +2,23 @@
 
 ## The central abstraction: an event and its outputs
 
-An **event** is one source encoder and one long window. Inside that window sit
-several **outputs**, each with its own start, its own length, and its own name.
+An **event** is one long window. Inside that window sit several **outputs**,
+each with its own start, its own length, its own name, and its own piece of
+hardware.
 
 ```
-EventSeries  "Sunday // Anderson"      source: Web Presenter   window 07:00-12:45
-  ├─ Output  "Grace Anderson // 9:00"   +2h00   75m   -> YouTube (main channel)
-  ├─ Output  "AND Worship // 9:00"      +2h00   75m   -> YouTube (worship channel)
-  ├─ Output  "Grace Anderson // 11:00"  +4h00   75m   -> YouTube (main channel)
-  ├─ Output  "AND Worship // 11:00"     +4h00   75m   -> YouTube (worship channel)
-  └─ Output  "Archive"                  +0h00  345m   -> HyperDeck
+EventSeries  "Sunday // Anderson"      window 07:00-12:45
+  ├─ Output  "Grace Anderson // 9:00"   +2h00   75m   Web Presenter -> YouTube (main channel)
+  ├─ Output  "AND Worship // 9:00"      +2h00   75m   Web Presenter -> YouTube (worship channel)
+  ├─ Output  "Grace Anderson // 11:00"  +4h00   75m   Web Presenter -> YouTube (main channel)
+  ├─ Output  "AND Worship // 11:00"     +4h00   75m   Web Presenter -> YouTube (worship channel)
+  └─ Output  "Archive"                  +0h00  345m   HyperDeck
 ```
+
+The event used to name one source encoder that outputs fell back to. It no
+longer does: every output already named its own device most of the time, two
+places saying where a thing runs is one too many, and an event-level source
+could not express a morning split across two encoders.
 
 This is the shape a Sunday actually has, and it is the shape Resi uses. The
 alternative — one event per stream — makes five things a human has to keep in
@@ -32,7 +38,7 @@ Every device is provided by a plugin and exposes **nodes**, each declaring a
 | Role | Means | Examples |
 |---|---|---|
 | `source` | produces video, and may itself push a stream | ATEM Mini Pro, Web Presenter, Streaming Bridge |
-| `router` | selects or routes an existing signal | ATEM aux output, Videohub, ATEM macro |
+| `router` | selects or routes an existing signal | ATEM aux output, Videohub, ATEM macro. Implemented by the ATEM adapter; nothing schedules it, and [04](./04-plugin-sdk.md#routing) says why |
 | `relay` | ingests a stream and re-emits one or more | built-in ffmpeg/SRT relay, external restreamer |
 | `sink` | terminates the chain | YouTube, generic RTMP/RTMPS/SRT, HyperDeck recording |
 
@@ -72,7 +78,7 @@ Device            a physical box on the network (IP, credentials, model, health)
 Destination       a configured sink target (a YouTube channel + defaults, an RTMP URL)
 Account           an OAuth identity (a YouTube channel), owning refresh tokens
 StreamCredential  a stream key, from manual entry / YouTube / a reusable stream
-EventSeries       a named recurring (or one-off) event: schedule + source encoder + defaults
+EventSeries       a named recurring (or one-off) event: schedule + window + defaults
   └─ EventOutput  one stream or recording, with its own slot inside the window
 Occurrence        one materialized instance of a series at a concrete instant
 Run               the execution record of an Occurrence
@@ -141,8 +147,6 @@ CREATE TABLE stream_credential (
 CREATE TABLE event_series (
   id             TEXT PRIMARY KEY,
   label          TEXT NOT NULL,
-  source_device_id TEXT REFERENCES device(id),  -- the one feed this event comes off
-  source_node_id TEXT,
   timezone       TEXT NOT NULL,              -- IANA, e.g. 'America/Chicago'
   rrule          TEXT,                       -- NULL for a one-off
   dtstart        INTEGER NOT NULL,           -- first occurrence, UTC epoch ms
@@ -167,9 +171,11 @@ CREATE TABLE event_output (
   duration_ms    INTEGER NOT NULL,
   destination_id TEXT REFERENCES destination(id),        -- a service that issues a key
   credential_id  TEXT REFERENCES stream_credential(id),  -- ...or a key entered by hand
-  device_id      TEXT REFERENCES device(id), -- NULL means the event's source encoder
+  device_id      TEXT REFERENCES device(id), -- the hardware this output runs on
   node_id        TEXT,
   templates      TEXT NOT NULL DEFAULT '{}',
+  settings       TEXT NOT NULL DEFAULT '{}', -- JSON; each key absent means "leave it alone"
+
   enabled        INTEGER NOT NULL DEFAULT 1
 );
 CREATE INDEX event_output_series ON event_output (series_id, position);
@@ -246,9 +252,50 @@ CREATE INDEX quota_day ON quota_ledger (provider, client_ref, day);
   stored as a time of day. It is what keeps a morning together when the event
   moves, and what makes a clock change shift the whole thing rather than
   putting the 11:00 service an hour out from the 9:00 one.
-- **`event_output.device_id` being NULL** means "the event's source encoder".
-  Repeating the source on every output would be a second copy of the same fact,
-  and changing the source would then have to be a fan-out write.
+- **`event_output.device_id`** is the one place an output's hardware is named.
+  A stream may only be put on a node that reports `startStreaming` and a
+  recording only on one that reports `startRecording` — checked against what
+  the device said it can do, not against what it is called. A device that has
+  never connected is allowed through and caught by pre-flight, so next month's
+  events can still be written with the rack powered down.
+- **`event_output.settings`** carries per-output device settings: an encoder
+  quality profile, a recording slot. Every key is optional and an absent key
+  means "leave the device as it is" — an event that does not care must not
+  quietly reconfigure gear somebody set up by hand. The choices are read off
+  the device when one is picked, because a free-text box here is a typo that
+  surfaces as a rejected command at 09:00.
+
+  Quality is not spelled the same way on every box, and the setting says so
+  rather than flattening it. There are three forms, and a device declares
+  which one it takes, so nothing in the core has to know one model from
+  another:
+
+  - **a list**, where the device reports its profiles — a Streaming Encoder;
+  - **a bitrate**, where it stores only numbers — an ATEM asks for Mb/s (3 to
+    70, one figure or a low-high range), the named qualities in ATEM Software
+    Control being a `Streaming.xml` on that computer rather than anything the
+    switcher knows;
+  - **a name it will not enumerate** — a HyperDeck's recording codec. It is
+    set by name over the protocol, but which codecs a model has is not
+    something the protocol answers, so the deck's current codec is reported as
+    fact, a documented set is offered as suggestions, and a codec the deck
+    does not have is refused by the deck with a message naming both it and
+    what the deck is on.
+
+  Whichever form, the device reports `current` in the same words it accepts,
+  which is what lets a write be verified at all.
+
+  On an ATEM that bitrate is *one* setting for two users, because one H.264
+  encoder feeds both the stream and the recording. Setting it is therefore
+  how an ATEM recording's quality gets set — there is no separate recording
+  quality to write — and two outputs on one ATEM asking for different
+  bitrates while both run is reported as a clash rather than quietly
+  resolved.
+
+  One thing that looks like a setting is not offered, because the hardware
+  does not have it: a HyperDeck's rollover is not persistent state — the
+  deck spills onto the next mounted card on its own — so it is reported,
+  never offered as a toggle.
 - **`occurrence.local_date`** is stored, not derived at read time. Template
   rendering and the calendar both need the date *in the series' timezone*, and
   recomputing it from a UTC instant in a container running UTC is exactly where

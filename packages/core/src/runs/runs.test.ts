@@ -61,9 +61,9 @@ function seedOccurrence(over: SeedOptions = {}): string {
 
   db.prepare(
     `INSERT INTO event_series
-       (id, label, source_device_id, source_node_id, timezone, rrule, dtstart, duration_ms, prepare_lead_ms,
+       (id, label, timezone, rrule, dtstart, duration_ms, prepare_lead_ms,
         preroll_ms, postroll_ms, late_start_grace_ms, created_at, updated_at)
-     VALUES (?, 'Sunday // AND', 'enc', 'stream', 'America/Chicago', NULL, ?, ?, ?, 0, ?, ?, 0, 0)`,
+     VALUES (?, 'Sunday // AND', 'America/Chicago', NULL, ?, ?, ?, 0, ?, ?, 0, 0)`,
   ).run(seriesId, START, WINDOW, over.prepareLeadMs ?? 30 * MINUTE, over.postrollMs ?? 0, over.graceMs ?? 5 * MINUTE)
 
   const insert = db.prepare(
@@ -81,8 +81,10 @@ function seedOccurrence(over: SeedOptions = {}): string {
       spec.offsetMs ?? 0,
       spec.durationMs ?? WINDOW,
       spec.destination ? 'svc' : null,
-      spec.deviceId ?? null,
-      spec.deviceId ? 'record' : null,
+      // Every output names its own hardware now; a stream defaults to the
+      // encoder and a recording to the deck.
+      spec.deviceId ?? 'enc',
+      spec.deviceId ? 'record' : 'stream',
     )
   })
 

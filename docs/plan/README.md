@@ -17,7 +17,7 @@ tray app for Mac/PC, and shipped as the same image for Docker.
 | 01 | [Architecture](./01-architecture.md) | Process model, runtime topology, how Companion's patterns are and aren't borrowed |
 | 02 | [Domain model](./02-domain-model.md) | Events and their outputs, entities, database schema |
 | 03 | [Scheduling engine](./03-scheduling-engine.md) | Recurrence, materialization, the run state machine, crash recovery |
-| 04 | [Plugin SDK](./04-plugin-sdk.md) | The extension contract for encoders, destinations and routers |
+| 04 | [Plugin SDK](./04-plugin-sdk.md) | The extension contract for encoders and destinations |
 | 05 | [YouTube integration](./05-youtube.md) | OAuth, broadcast lifecycle, quota budget, playlists |
 | 06 | [Templating & secrets](./06-templating-and-secrets.md) | Name templates, stream key management, encryption at rest |
 | 07 | [Packaging & distribution](./07-packaging.md) | Monorepo layout, Electron, Docker, signing, updates |

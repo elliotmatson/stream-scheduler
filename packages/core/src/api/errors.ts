@@ -37,14 +37,7 @@ export function assertUnreferenced(
     )
     .all(id) as { label: string }[]
 
-  const sources =
-    column === 'device_id'
-      ? (db
-          .prepare('SELECT label FROM event_series WHERE source_device_id = ? ORDER BY label')
-          .all(id) as { label: string }[])
-      : []
-
-  const labels = [...new Set([...users, ...sources].map((row) => row.label))]
+  const labels = [...new Set(users.map((row) => row.label))]
   if (labels.length === 0) return
 
   throw new ConflictError(
