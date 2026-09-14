@@ -1,4 +1,5 @@
-import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'node:crypto'
+import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto'
+import { fingerprint } from '@scheduler/plugin-sdk'
 import type { Db } from '../db/index.js'
 import type { MasterKey } from './master-key.js'
 import { scrubber as defaultScrubber, type Scrubber } from './scrubber.js'
@@ -98,15 +99,8 @@ export class SecretVault {
   }
 }
 
-/**
- * A short, stable fingerprint of a secret.
- *
- * Verify-after-write needs to confirm the right stream key landed on a device
- * without the value travelling back across the plugin boundary.
- */
-export function fingerprint(secret: string): string {
-  return createHash('sha256').update(secret).digest('hex').slice(0, 12)
-}
+/** Re-exported so callers holding a vault do not need a second import. */
+export { fingerprint }
 
 function randomId(): string {
   return randomBytes(12).toString('hex')

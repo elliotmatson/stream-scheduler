@@ -69,9 +69,22 @@ importers:
         specifier: ^3.24.1
         version: 3.25.76
     devDependencies:
+      '@scheduler/plugin-mock':
+        specifier: workspace:*
+        version: link:../plugin-mock
       '@types/better-sqlite3':
         specifier: ^7.6.12
         version: 7.6.13
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
+
+  packages/plugin-mock:
+    dependencies:
+      '@scheduler/plugin-sdk':
+        specifier: workspace:*
+        version: link:../plugin-sdk
+    devDependencies:
       typescript:
         specifier: ^5.7.2
         version: 5.9.3

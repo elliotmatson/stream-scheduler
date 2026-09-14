@@ -11,8 +11,11 @@ module.exports = {
     {
       name: 'core-must-not-import-a-plugin',
       severity: 'error',
-      comment: 'Core discovers plugins through the registry; naming one directly breaks extensibility.',
-      from: { path: '^packages/core' },
+      comment:
+        'Core discovers plugins through the registry; naming one directly breaks extensibility. ' +
+        'Tests are exempt: exercising the plugin host needs a concrete plugin, and plugin-mock ' +
+        'exists precisely so that can happen without hardware.',
+      from: { path: '^packages/core', pathNot: '\\.test\\.ts$' },
       to: { path: '^packages/plugin-(?!sdk)' },
     },
     {

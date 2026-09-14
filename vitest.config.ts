@@ -11,6 +11,7 @@ export default defineConfig({
     alias: {
       '@scheduler/plugin-sdk': src('plugin-sdk'),
       '@scheduler/core': src('core'),
+      '@scheduler/plugin-mock': src('plugin-mock'),
     },
   },
   test: {
