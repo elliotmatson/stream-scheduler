@@ -27,18 +27,27 @@ COPY . .
 RUN pnpm install --frozen-lockfile --prefer-offline
 RUN pnpm run build
 
-# Prunes the root project only: pnpm leaves workspace devDependencies in
-# place, so this image still carries the build toolchain. Kept because it is
-# harmless and removing it would not shrink anything; genuinely slimming the
-# runtime image needs `pnpm deploy` or a hand-built production tree, which is
-# a change worth making on its own.
-RUN pnpm prune --prod
+# A self-contained production tree for the host alone: its own dist, the
+# built web assets, and only the dependencies it actually imports.
+#
+# `pnpm prune --prod` stood here and did nothing useful. It prunes the root
+# project only — pnpm leaves workspace devDependencies linked — so the
+# runtime stage was copying TypeScript, Turbo, Vitest and ESLint into the
+# shipped image. `pnpm deploy` resolves the workspace graph properly: 108 MB
+# against 787 MB.
+#
+# The tree is flat, not a workspace: the host's own files land at the root
+# of it, which is why the runtime paths below have no packages/host prefix.
+RUN pnpm deploy --filter @scheduler/host --prod /deploy
 
 # Load the entrypoint under native ESM without starting it. The module graph
-# resolving here is what proves the pruned tree is complete and that no
-# dependency is imported in a way that only works under a bundler — the exact
-# failure a CommonJS package imported by name produces at startup.
-RUN node --input-type=module -e "await import('/app/packages/host/dist/main.js'); console.log('entrypoint loads')"
+# resolving here is what proves the tree is complete and that no dependency
+# is imported in a way that only works under a bundler — the exact failure a
+# CommonJS package imported by name produces at startup.
+#
+# It runs against /deploy rather than the build tree, which is the whole
+# point: verifying the fat tree proves nothing about the one that ships.
+RUN node --input-type=module -e "await import('/deploy/dist/main.js'); console.log('entrypoint loads')"
 
 # --- runtime -------------------------------------------------------------
 FROM node:22-bookworm-slim AS runtime
@@ -49,9 +58,7 @@ RUN apt-get update \
  && rm -rf /var/lib/apt/lists/* \
  && useradd --system --create-home --uid 10001 scheduler
 
-COPY --from=build --chown=scheduler:scheduler /app/node_modules          ./node_modules
-COPY --from=build --chown=scheduler:scheduler /app/packages              ./packages
-COPY --from=build --chown=scheduler:scheduler /app/package.json          ./package.json
+COPY --from=build --chown=scheduler:scheduler /deploy ./
 
 # Created in the image, owned by the runtime user. Without this Docker
 # creates the volume mountpoint itself, owned by root, and the container —
@@ -86,4 +93,4 @@ EXPOSE 8500
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
   CMD curl -fsS http://127.0.0.1:8500/healthz || exit 1
 
-ENTRYPOINT ["node", "packages/host/dist/main.js"]
+ENTRYPOINT ["node", "dist/main.js"]

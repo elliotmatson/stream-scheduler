@@ -92,6 +92,20 @@ async function main() {
     ['atem', 'hyperdeck', 'streaming-encoder'].every((id) => plugins.some((p) => p.id === id)),
     plugins.map((p) => p.id).join(', '),
   )
+  check(
+    // A Web Presenter owner has no other way to know this adapter drives
+    // their unit: the dropdown label is the whole signal.
+    'the encoder adapter says it covers the Web Presenter too',
+    plugins.find((p) => p.id === 'streaming-encoder')?.displayName.includes('Web Presenter'),
+    plugins.find((p) => p.id === 'streaming-encoder')?.displayName,
+  )
+
+  const favicon = await fetch(`${BASE}/favicon.svg`)
+  check(
+    'the favicon is served rather than falling through to the SPA',
+    favicon.ok && (favicon.headers.get('content-type') ?? '').includes('svg'),
+    `${favicon.status} ${favicon.headers.get('content-type')}`,
+  )
 
   const device = await api('POST', '/api/devices', {
     pluginId: 'mock',

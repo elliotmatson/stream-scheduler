@@ -117,7 +117,28 @@ jobs:
             || { echo "the UI did not render"; docker logs scheduler; exit 1; }
           curl -fsS http://127.0.0.1:8500/api/devices > /dev/null \
             || { echo "the API did not answer"; docker logs scheduler; exit 1; }
-          echo "UI and API both served"
+          # Static assets are copied through a separate path from the HTML
+          # (Vite's public/ directory into the deployed tree), so a broken
+          # copy shows up here and nowhere else.
+          curl -fsS http://127.0.0.1:8500/favicon.svg | grep -q '<svg' \
+            || { echo "static assets are missing"; docker logs scheduler; exit 1; }
+          echo "UI, API and static assets all served"
+
+      - name: The runtime image does not ship the build toolchain
+        # The image used to carry TypeScript, Turbo, Vitest and ESLint,
+        # because `pnpm prune --prod` silently does nothing in a workspace.
+        # Nothing would notice that coming back, so assert it here rather
+        # than trusting the Dockerfile to stay right.
+        run: |
+          for module in typescript turbo vitest eslint vite; do
+            if docker run --rm --entrypoint sh stream-scheduler:ci \
+                 -c "test -e node_modules/$module"; then
+              echo "$module is in the runtime image"
+              exit 1
+            fi
+          done
+          echo "the build toolchain is absent"
+          docker image inspect stream-scheduler:ci --format 'image size: {{.Size}} bytes'
 
       - name: Container logs
         if: always()

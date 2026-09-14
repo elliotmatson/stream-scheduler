@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32">
+  <!--
+    The sidebar's brand mark at tab size: the accent rounded square with a
+    play triangle in it.
+
+    Drawn rather than exported so it stays one file with no build step, and
+    redrawn rather than scaled from the 16px glyph in src/icons.tsx — that
+    one fills its box, which at 16px in a tab leaves the triangle touching
+    the plate edges and reading as a blur.
+
+    The corners are rounded by stroking the triangle in its own colour
+    instead of by arcs in the path: three coordinates stay legible, and the
+    rounding is the one thing that survives rasterising to 16px.
+
+    The accent lightens under a dark UI exactly as it does in styles.css, so
+    the mark keeps its contrast against dark browser chrome. A browser that
+    ignores the media query gets the light value, which is the safer default
+    against the grey most tab bars use.
+  -->
+  <style>
+    .plate { fill: #4460e0; }
+    @media (prefers-color-scheme: dark) {
+      .plate { fill: #7b95ff; }
+    }
+  </style>
+  <rect class="plate" width="32" height="32" rx="8" />
+  <path fill="#fff" stroke="#fff" stroke-width="2.4" stroke-linejoin="round"
+        d="M13.4 10.6 22 16l-8.6 5.4z" />
+</svg>
