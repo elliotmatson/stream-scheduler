@@ -21,7 +21,7 @@ tray app for Mac/PC, and shipped as the same image for Docker.
 | 05 | [YouTube integration](./05-youtube.md) | OAuth, broadcast lifecycle, quota budget, playlists |
 | 06 | [Templating & secrets](./06-templating-and-secrets.md) | Name templates, stream key management, encryption at rest |
 | 07 | [Packaging & distribution](./07-packaging.md) | Monorepo layout, Electron, Docker, signing, updates |
-| 08 | [Roadmap & risks](./08-roadmap-and-risks.md) | Phases with deliverables, open risks, decisions already made |
+| 08 | [Roadmap & risks](./08-roadmap-and-risks.md) | What shipped, open risks, decisions already made. Remaining work lives in issues |
 
 ## Scope
 
