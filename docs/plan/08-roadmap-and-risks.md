@@ -1,72 +1,47 @@
 # 08 — Roadmap and risks
 
-Each phase ends in something runnable. No phase is "build the abstractions for
-the next phase".
+The phase plan this document opened with has been delivered and is recorded
+below as history. **Work still to do is tracked in
+[GitHub Issues](https://github.com/elliotmatson/stream-scheduler/issues), not
+here** — a roadmap kept in a markdown file goes stale the moment something
+lands, which is exactly what happened to the original.
 
-## Phase 0 — Skeleton
+The risks section below is not history. It is still the best statement of
+what can go wrong with this thing, and it should be kept current.
 
-Monorepo, Drizzle schema and migrations, config directory resolution, secret vault
-with all backends, React shell, REST + WebSocket scaffolding, Electron tray,
-Dockerfile, CI pipeline.
+## What shipped
 
-**Deliverable:** the app installs and runs on macOS, Windows and Docker, and does
-nothing useful. Worth doing first anyway — packaging pain discovered in month four
-is much more expensive than in week one.
+Each phase ended in something runnable, and none of them was "build the
+abstractions for the next phase".
 
-## Phase 1 — Devices
+| Phase | Delivered |
+|---|---|
+| **0 — Skeleton** | Monorepo, SQLite schema and migrations, config directory resolution, secret vault with every backend, React shell, REST + WebSocket API, Electron tray, Dockerfile, CI |
+| **1 — Devices** | `ConnectionManager`, plugin SDK v1, and the HyperDeck, ATEM, Streaming Encoder and mock adapters, each with a protocol-level fake. Device inventory with discovery, health and probed capabilities |
+| **2 — YouTube** | BYO OAuth with the "In production" warning, token vault, the account/destination model, broadcast creation with full metadata, reusable ingestion streams, playlist insertion, quota ledger, fake YouTube server |
+| **3 — Scheduling** | RRULE series, materialization and reconciliation, the run state machine, durable steps, crash recovery, compensation, missed-event policy, templating with live preview, calendar and list views, run timeline |
+| **4 — Pipelines** | The pipeline model and editor, capability negotiation. Multi-destination fan-out was **not** built and is issue #5 |
+| **5 — Hardening** | Failure notifications with pre-flight. Backup/restore (#10), diagnostics bundle and signed installers (#11) were not built |
 
-`ConnectionManager`, the plugin SDK v1 contract, and the ATEM, Web Presenter,
-HyperDeck and mock adapters, each with a protocol-level fake. Device inventory UI
-with discovery, manual add, health and probed capabilities. Manual "start stream
-now" / "start recording now" buttons.
+Two deviations from the original plan worth recording:
 
-**Deliverable:** control real hardware from the app. No scheduling yet. This is
-the phase that retires the largest technical risk — if `atem-connection` doesn't
-behave against real gear, everything downstream changes and we want to know now.
-
-## Phase 2 — YouTube
-
-BYO OAuth setup wizard (including the "In production" check), token vault, the
-account/destination model, broadcast creation with full metadata, reusable
-ingestion streams, playlist insertion, the quota ledger, and the fake YouTube
-server for tests.
-
-**Deliverable:** "Create a broadcast now" from the UI, end to end, with the key
-pushed to a real encoder and the stream live on YouTube.
-
-## Phase 3 — Scheduling
-
-RRULE series, materialization and reconciliation, the run state machine, durable
-steps, crash recovery, compensation, missed-event policy, the templating engine
-with live preview, calendar and list views, the run-detail timeline.
-
-**Deliverable:** the actual product. A recurring Sunday service that creates its
-own broadcast, starts, records and stops without anyone touching it.
-
-## Phase 4 — Pipelines and routing
-
-The full graph model and editor, capability negotiation in the UI, router
-adapters (ATEM aux, Videohub), the built-in ffmpeg/SRT relay for multi-destination
-fan-out, and a second real destination plugin to prove the sink abstraction.
-
-**Deliverable:** one source to several destinations, with the routing visible and
-editable.
-
-## Phase 5 — Hardening
-
-Failure notifications (email, Slack, generic webhook) with a pre-flight alert at
-prepare time. Backup and restore. Log rotation and a diagnostics bundle. Signed
-and notarized installers. Auto-update. Documentation.
-
-**Deliverable:** shippable to someone who is not you.
+- **Web Presenter.** Phase 1 named a Web Presenter adapter speaking its own
+  TCP protocol. What was built instead is a Streaming Encoder adapter over the
+  documented `/control/api/v1/` REST API, because current Blackmagic firmware
+  exposes that API on Web Presenter hardware too. Older firmware that predates
+  it is not supported. See #4.
+- **Setup UI.** The plan assumed the UI grew with each phase. It did not — for
+  most of the build everything was API-only, and the setup screens landed in
+  one piece near the end. Phases 1 and 2 were really "works over the API"
+  until then.
 
 ## v2 candidates
 
 Out-of-tree plugin loading. iCal/Google Calendar import as a schedule source
-(the RRULE model makes this small). Multi-node. Simulated live. A hosted verified
-OAuth client. Companion integration in both directions — expose an HTTP API
-Companion triggers can call, and ship a Companion module so a Stream Deck button
-can start the next scheduled event early.
+(the RRULE model makes this small). Multi-node. Simulated live. A hosted
+verified OAuth client. Companion integration in both directions — expose an
+HTTP API Companion triggers can call, and ship a Companion module so a Stream
+Deck button can start the next scheduled event early.
 
 ## Risks
 

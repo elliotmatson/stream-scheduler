@@ -47,13 +47,18 @@ records, stops and tidies up — without anyone touching it.
 
 **Not built yet**
 
-- The older Web Presenter's own TCP 9977 protocol, which is a different
-  interface from the Streaming Encoder REST API
 - Fanning one encoder out to several services at once, which needs a relay
   in the pipeline
-- Signed and notarized installers
+- Week and day calendar views, and dragging an occurrence to reschedule it
+- Backup and restore, and signed installers
 
-See [the roadmap](./docs/plan/08-roadmap-and-risks.md) for the plan.
+None of the adapters has met real hardware yet, which is the biggest open
+question about all of this.
+
+Remaining work is tracked in
+[issues](https://github.com/elliotmatson/stream-scheduler/issues). The
+[risks](./docs/plan/08-roadmap-and-risks.md#risks) are worth reading before
+you rely on this for a Sunday.
 
 ## Try it
 
@@ -162,7 +167,7 @@ Start with [`docs/plan/README.md`](./docs/plan/README.md).
 | [05 YouTube](./docs/plan/05-youtube.md) | OAuth, broadcast lifecycle, quota budget |
 | [06 Templating & secrets](./docs/plan/06-templating-and-secrets.md) | Name templates, key management, encryption at rest |
 | [07 Packaging](./docs/plan/07-packaging.md) | Monorepo, Electron, Docker, signing, CI |
-| [08 Roadmap & risks](./docs/plan/08-roadmap-and-risks.md) | Phases with deliverables, open risks |
+| [08 Roadmap & risks](./docs/plan/08-roadmap-and-risks.md) | What shipped, and the risks worth keeping in view |
 
 ## Alerts
 
