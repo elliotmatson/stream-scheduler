@@ -7,7 +7,7 @@ import type { FastifyInstance } from 'fastify'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { Application } from '../app.js'
 import { silentLogger } from '../log.js'
-import { createServer, InsecureBindError } from './server.js'
+import { createServer } from './server.js'
 
 const MINUTE = 60_000
 const START = Date.parse('2026-03-08T14:00:00Z') // 09:00 America/Chicago
@@ -90,12 +90,23 @@ async function seedEverything(templates: Record<string, string> = {}) {
 }
 
 describe('server binding', () => {
-  it('refuses to expose the UI on a LAN without a password', async () => {
-    await expect(createServer({ app, host: '0.0.0.0' })).rejects.toBeInstanceOf(InsecureBindError)
-  })
-
   it('answers healthz', async () => {
     expect(await get('/healthz')).toMatchObject({ status: 200, json: { ok: true } })
+  })
+
+  it('serves the API with no credentials, on a LAN bind as well as loopback', async () => {
+    // There is no authentication yet. The bearer check that used to live
+    // here rejected every browser request including the HTML page, so the UI
+    // was unusable exactly where it was enabled. Asserting the unauthenticated
+    // path works is what keeps a half-built login from shipping in that state
+    // again.
+    const exposed = await createServer({ app, host: '0.0.0.0' })
+    try {
+      const response = await exposed.inject({ method: 'GET', url: '/api/devices' })
+      expect(response.statusCode).toBe(200)
+    } finally {
+      await exposed.close()
+    }
   })
 })
 

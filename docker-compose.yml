@@ -14,9 +14,12 @@ services:
       # Required. Without a key source the app refuses to start rather than
       # storing stream keys and OAuth tokens in plaintext.
       SCHEDULER_SECRET: ${SCHEDULER_SECRET:?set SCHEDULER_SECRET to a long random string}
-      # Required because the container binds 0.0.0.0.
-      SCHEDULER_UI_PASSWORD: ${SCHEDULER_UI_PASSWORD:?set SCHEDULER_UI_PASSWORD}
       SCHEDULER_PORT: 8500
+      # Host networking means this binds the machine's own interfaces, so
+      # loopback keeps it to this machine. There is no authentication yet:
+      # change to 0.0.0.0 only if you accept that anyone on the network can
+      # start broadcasts and read stream keys.
+      SCHEDULER_HOST: 127.0.0.1
     volumes:
       - scheduler-config:/config
 

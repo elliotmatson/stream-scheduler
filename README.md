@@ -87,8 +87,7 @@ and `linux/arm64`:
 ```bash
 docker run -d --name scheduler \
   -e SCHEDULER_SECRET="a long random string" \
-  -e SCHEDULER_UI_PASSWORD="something only you know" \
-  -p 8500:8500 -v scheduler-config:/config \
+  -p 127.0.0.1:8500:8500 -v scheduler-config:/config \
   ghcr.io/elliotmatson/stream-scheduler:latest
 ```
 
@@ -100,16 +99,32 @@ run-tested.
 Or build it yourself:
 
 ```bash
-SCHEDULER_SECRET="a long random string" \
-SCHEDULER_UI_PASSWORD="something only you know" \
-docker compose up --build
+SCHEDULER_SECRET="a long random string" docker compose up --build
 ```
 
-The container binds `0.0.0.0`, so it refuses to start without
-`SCHEDULER_UI_PASSWORD`: an unauthenticated page that can start broadcasts and
-reveal stream keys is a worse hole than the unauthenticated device protocols
-themselves. It also refuses to start without a key source rather than writing
-secrets to disk in the clear.
+It refuses to start without a key source rather than writing secrets to disk
+in the clear.
+
+### There is no login yet
+
+Anyone who can reach the port can drive the whole app — start broadcasts,
+read the schedule, add devices. Stream keys and OAuth tokens are never
+returned by the API, so those stay encrypted at rest either way, but
+everything else is wide open.
+
+So the address you publish to *is* the access control:
+
+- `-p 127.0.0.1:8500:8500` — only the machine running it. This is the default
+  above, and the right one unless you have decided otherwise.
+- `-p 8500:8500` — anyone on the network.
+- Reaching it from another machine safely: tunnel it, with
+  `ssh -L 8500:127.0.0.1:8500 user@thatbox`, or put a reverse proxy that does
+  authentication in front.
+
+Running it directly with `node` binds loopback by default, so the same holds
+without you doing anything.
+
+A real login is [issue #14](https://github.com/elliotmatson/stream-scheduler/issues/14).
 
 Everything lives in one config directory (`/config` in Docker). A single
 archive of it is the entire backup.
@@ -120,8 +135,7 @@ archive of it is the entire backup.
 |---|---|---|
 | `SCHEDULER_CONFIG_DIR` | per-platform | Database, logs, master key |
 | `SCHEDULER_SECRET` | — | Derives the master key when no keychain or key file is available |
-| `SCHEDULER_UI_PASSWORD` | — | Required to bind anywhere but loopback |
-| `SCHEDULER_HOST` | `127.0.0.1` | Listen address |
+| `SCHEDULER_HOST` | `127.0.0.1` | Listen address. Anything but loopback logs a warning, because there is no login yet |
 | `SCHEDULER_PORT` | `8500` | Listen port |
 | `SCHEDULER_LOG_LEVEL` | `info` | `debug`, `info`, `warn`, `error` |
 

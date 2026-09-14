@@ -26,46 +26,38 @@ export interface ServerOptions {
   app: Application
   port?: number
   /**
-   * Defaults to loopback. Exposing the UI on a LAN is an explicit choice:
-   * an unauthenticated page that can start broadcasts and reveal stream keys
-   * is a worse hole than the unauthenticated device protocols themselves.
+   * Defaults to loopback, so a plain `node main.js` is not reachable from
+   * anywhere else. Binding elsewhere is an explicit act, and there is no
+   * authentication yet — see the warning below.
    */
   host?: string
   /** Directory of built web assets, served at `/` when present. */
   webRoot?: string
 }
 
-export class InsecureBindError extends Error {
-  constructor(host: string) {
-    super(
-      `Refusing to listen on ${host} without SCHEDULER_UI_PASSWORD set.\n` +
-        `Anyone who can reach this port could start broadcasts and read stream keys. ` +
-        `Set a password, or bind to 127.0.0.1 (the default).`,
-    )
-    this.name = 'InsecureBindError'
-  }
-}
-
 export async function createServer(options: ServerOptions): Promise<FastifyInstance> {
   const { app } = options
   const host = options.host ?? '127.0.0.1'
-  const password = process.env.SCHEDULER_UI_PASSWORD
 
-  if (!isLoopback(host) && !password) throw new InsecureBindError(host)
+  // There is no authentication. There was a bearer-token check here, but no
+  // browser can send that header — it 401'd the HTML page itself, so the UI
+  // was unreachable whenever it was switched on. A lock nobody can open is
+  // not security, and it made the container check look like it proved
+  // something. Removed until there is a login that works; tracked as an
+  // issue.
+  //
+  // What protects the app today is where it listens. Loopback is the
+  // default, and anything else is something the operator chose.
+  if (!isLoopback(host)) {
+    app.logger.warn(
+      `Listening on ${host} with no authentication. Anyone who can reach this ` +
+        `port can start broadcasts and read stream keys. In Docker, publish to ` +
+        `127.0.0.1 (-p 127.0.0.1:8500:8500) unless you mean to share it.`,
+    )
+  }
 
   const fastify = Fastify({ logger: false, bodyLimit: 2 * 1024 * 1024 })
   await fastify.register(websocket)
-
-  if (password) {
-    fastify.addHook('onRequest', async (request, reply) => {
-      if (request.url === '/healthz') return
-      const header = request.headers.authorization ?? ''
-      const expected = `Bearer ${password}`
-      if (header !== expected) {
-        await reply.code(401).send({ error: 'Unauthorized' })
-      }
-    })
-  }
 
   fastify.setErrorHandler(async (raw, _request, reply) => {
     const error = raw instanceof Error ? raw : new Error(String(raw))
