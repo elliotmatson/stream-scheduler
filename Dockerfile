@@ -53,6 +53,17 @@ COPY --from=build --chown=scheduler:scheduler /app/node_modules          ./node_
 COPY --from=build --chown=scheduler:scheduler /app/packages              ./packages
 COPY --from=build --chown=scheduler:scheduler /app/package.json          ./package.json
 
+# Created in the image, owned by the runtime user. Without this Docker
+# creates the volume mountpoint itself, owned by root, and the container —
+# which runs as uid 10001 — cannot write to it: every first start died with
+# EACCES on mkdir '/config/logs'.
+#
+# Docker seeds a named or anonymous volume from the image directory,
+# ownership included, so this covers `docker run` with no mount and the
+# named volume in docker-compose.yml. A bind mount of a host directory keeps
+# the host's ownership instead and has to be chowned to 10001 by hand.
+RUN install -d -o scheduler -g scheduler /config
+
 USER scheduler
 
 # The config directory holds the database, logs and the master key. A single
