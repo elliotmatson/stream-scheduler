@@ -147,22 +147,26 @@ function DeviceCard({
         <Fact label="Capabilities" value={device.capabilities?.features.join(', ') || '—'} />
       </div>
 
-      {/* Where to go for the things this app does not do: a deck's media
-          over FTP, say. The plugin builds the address because only it knows
-          the protocol and port; this just shows it and makes it copyable,
-          since browsers no longer open ftp:// themselves. */}
+      {/* Where to go for the things this app does not do: the media on a
+          deck or a switcher's drive. The plugin builds the address because
+          only it knows the protocol and port. */}
       {(device.capabilities?.links ?? []).length > 0 ? (
         <div className="stack" style={{ marginTop: 10, gap: 6 }}>
           {device.capabilities!.links!.map((link) => (
             <div key={link.url} className="row" style={{ gap: 10, alignItems: 'baseline' }}>
               <span style={{ minWidth: 130 }}>{link.label}</span>
-              <code className="address">{link.url}</code>
+              {/* A real link, so it opens wherever the browser or the OS
+                  still handles the scheme. Most browsers dropped ftp://,
+                  which the hint says rather than leaving a dead click, and
+                  the address stays selectable for pasting elsewhere. */}
+              <a className="address" href={link.url} target="_blank" rel="noreferrer">
+                {link.url}
+              </a>
               <CopyButton value={link.url} />
-              {link.note ? (
-                <span className="muted" style={{ fontSize: 12 }}>
-                  {link.note}
-                </span>
-              ) : null}
+              <span className="muted" style={{ fontSize: 12 }}>
+                {link.note ? `${link.note} ` : ''}Most browsers no longer open ftp:// — if nothing happens,
+                paste it into Finder (Go &gt; Connect to Server) or Explorer.
+              </span>
             </div>
           ))}
         </div>
@@ -375,27 +379,6 @@ function NodeControls({ device, node }: { device: Device; node: DeviceNode }): R
               </div>
             ) : null}
 
-            {state?.routing && Object.keys(state.routing).length > 0 ? (
-              <div className="table-wrap">
-                <table>
-                  <thead>
-                    <tr>
-                      <th>Output</th>
-                      <th>Source</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {Object.entries(state.routing).map(([output, source]) => (
-                      <tr key={output}>
-                        <td>{output}</td>
-                        <td className="muted">{source}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            ) : null}
-
             <div className="row" style={{ gap: 18 }}>
               {canStream ? (
                 <Fact
@@ -536,13 +519,17 @@ function NodeControls({ device, node }: { device: Device; node: DeviceNode }): R
                     disabled={busy !== undefined || !credentialId || device.inUseBy.length > 0}
                     onClick={point}
                   >
-                    {busy === 'point' ? 'Pointing…' : 'Point at it'}
+                    {busy === 'point' ? 'Applying…' : 'Apply to the device'}
                   </button>
                 </div>
                 <p className="muted" style={{ margin: 0 }}>
                   {device.inUseBy.length > 0
-                    ? 'Re-pointing is off while an event is mid-run on this device.'
-                    : 'For a one-off. An event points its own encoder when it starts, which overwrites this.'}
+                    ? 'Off while an event is mid-run on this device: re-pointing it would move the stream.'
+                    : !credentialId
+                      ? 'Pick a saved target to apply. The quality goes with it — the device takes both in ' +
+                        'one command, so there is no way to send one alone.'
+                      : 'Pushes the key and the quality to the device now. For a one-off: an event points ' +
+                        'its own encoder when it starts, which overwrites this.'}
                 </p>
               </div>
             ) : null}

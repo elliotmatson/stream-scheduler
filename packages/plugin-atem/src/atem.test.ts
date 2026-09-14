@@ -218,14 +218,14 @@ describe('capability probing', () => {
     const atem = await connect(client)
 
     const nodes = await atem.listNodes()
-    expect(nodes.map((n) => n.id)).toEqual(['aux'])
+    expect(nodes.map((n) => n.id)).toEqual([])
     expect((await atem.probe()).features).not.toContain('streaming')
   })
 
   it('offers a recorder only when the switcher reports one', async () => {
     const client = new FakeAtem({ recording: recordingBlock() } as Partial<AtemState>)
     const atem = await connect(client)
-    expect((await atem.listNodes()).map((n) => n.id)).toEqual(['record', 'aux'])
+    expect((await atem.listNodes()).map((n) => n.id)).toEqual(['record'])
   })
 
   it('declares the stream output as single-link, so fan-out needs a relay', async () => {
@@ -237,6 +237,21 @@ describe('capability probing', () => {
 })
 
 describe('recording media', () => {
+  it('offers the drive over FTP, which is how a recording gets off the box', async () => {
+    const client = new FakeAtem({ recording: recordingBlock() } as Partial<AtemState>)
+    const atem = await connect(client)
+
+    const ftp = (await atem.probe()).links?.find((link) => link.url.startsWith('ftp://'))
+    expect(ftp?.url).toBe('ftp://10.0.0.5/')
+    expect(ftp?.note).toMatch(/while recording/i)
+  })
+
+  it('offers no drive on a switcher that does not record', async () => {
+    const client = new FakeAtem({ streaming: streamingBlock() } as Partial<AtemState>)
+    const atem = await connect(client)
+    expect((await atem.probe()).links ?? []).toEqual([])
+  })
+
   it('reports the switcher\u2019s disks the way a deck reports its cards', async () => {
     const client = new FakeAtem({ recording: { ...recordingBlock(), disks: disks() } } as Partial<AtemState>)
     const atem = await connect(client)
@@ -422,20 +437,16 @@ describe('recording', () => {
 })
 
 describe('aux routing', () => {
-  it('routes a source to an aux bus and reports the mapping', async () => {
-    const client = new FakeAtem({})
+  it('is not offered at all, because the scheduler has no business routing signal', async () => {
+    // The adapter can drive an aux bus and nothing above the plugin does.
+    // A panel reporting a bus nobody can change from here is furniture, and
+    // the routing is the operator's job at the desk.
+    const client = new FakeAtem({ streaming: streamingBlock() } as Partial<AtemState>)
     const atem = await connect(client)
 
-    await atem.invoke('aux', 'route', { input: '3', output: '0' })
-    expect(client.state?.video.auxilliaries[0]).toBe(3)
-    expect((await atem.invoke('aux', 'readState'))?.routing).toEqual({ '0': '3' })
-  })
-
-  it('rejects non-numeric routing arguments rather than sending nonsense', async () => {
-    const client = new FakeAtem({})
-    const atem = await connect(client)
-    await expect(atem.invoke('aux', 'route', { input: 'camera one', output: '0' })).rejects.toMatchObject({
-      code: 'bad-argument',
+    expect((await atem.listNodes()).map((node) => node.id)).toEqual(['stream'])
+    await expect(atem.invoke('aux', 'route', { input: '3', output: '0' })).rejects.toMatchObject({
+      code: 'unknown-node',
     })
   })
 })

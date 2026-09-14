@@ -136,6 +136,20 @@ class AtemDevice {
       model: state.info.productIdentifier ?? Enums.Model[state.info.model] ?? 'ATEM',
       firmware: `protocol ${protocolName(state.info.apiVersion)}`,
       features,
+      ...(state.recording === undefined
+        ? {}
+        : {
+            // A switcher that records serves the drive it records to over
+            // FTP, and will do it mid-recording, so a service can come off
+            // the box without unplugging anything.
+            links: [
+              {
+                label: 'Recordings (FTP)',
+                url: `ftp://${this.host}/`,
+                note: 'The drive plugged into the switcher. No password, and it works while recording.',
+              },
+            ],
+          }),
     }
   }
 
@@ -187,20 +201,9 @@ class AtemDevice {
       })
     }
 
-    const auxes = state.info.capabilities?.auxilliaries ?? 0
-    if (auxes > 0) {
-      nodes.push({
-        id: 'aux',
-        label: `${label} aux routing`,
-        roles: ['router'],
-        ports: [
-          { id: 'in', direction: 'in', label: 'Any source', transport: ['sdi', 'hdmi'], maxLinks: auxes },
-          { id: 'out', direction: 'out', label: 'Aux outputs', transport: ['sdi', 'hdmi'], maxLinks: auxes },
-        ],
-        supports: ['route'],
-      })
-    }
-
+    // No aux node. The adapter can route, and nothing above the plugin
+    // drives it: signal routing is the operator's job at the desk, and a
+    // panel reporting an aux bus nobody can change from here is furniture.
     return nodes
   }
 
@@ -265,20 +268,6 @@ class AtemDevice {
       }
     }
 
-    if (nodeId === 'aux') {
-      return {
-        route: async ({ input, output }) => {
-          const source = Number(input)
-          const bus = Number(output)
-          if (!Number.isInteger(source) || !Number.isInteger(bus)) {
-            throw new DeviceError('bad-argument', 'ATEM routing takes numeric source and aux bus ids.')
-          }
-          await this.guard(() => this.client.setAuxSource(source, bus))
-        },
-        readState: async () => this.readState('aux'),
-      }
-    }
-
     return undefined
   }
 
@@ -322,14 +311,6 @@ class AtemDevice {
         ...this.qualityOption(state),
         raw: { recordingError: recordingErrorName(recording?.status?.error) },
       }
-    }
-
-    if (nodeId === 'aux') {
-      const routing: Record<string, string> = {}
-      state.video.auxilliaries.forEach((source, bus) => {
-        if (source !== undefined) routing[String(bus)] = String(source)
-      })
-      return { routing }
     }
 
     const streaming = state.streaming
