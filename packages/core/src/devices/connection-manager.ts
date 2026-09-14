@@ -167,12 +167,25 @@ export class ConnectionManager {
     try {
       return await connection.device.invoke(nodeId, action, args)
     } catch (error) {
-      // A failed command usually means the transport is gone; drop the
-      // connection so the next attempt reconnects rather than reusing a
-      // half-dead socket.
-      await this.close(deviceId)
-      this.noteFailure(deviceId, error)
+      // A failed command does not by itself mean the transport is gone: a
+      // device can reject one command and stay perfectly connected. Dropping
+      // the connection on every command error throws away a healthy socket
+      // and causes a reconnect storm, so ask the device instead.
+      if (!(await this.stillHealthy(connection))) {
+        await this.close(deviceId)
+        this.noteFailure(deviceId, error)
+      }
       throw error
+    }
+  }
+
+  private async stillHealthy(connection: Connection): Promise<boolean> {
+    try {
+      const health = await connection.device.health()
+      connection.health = health
+      return health.state !== 'disconnected'
+    } catch {
+      return false
     }
   }
 

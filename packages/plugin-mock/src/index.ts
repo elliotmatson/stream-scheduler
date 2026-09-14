@@ -42,7 +42,7 @@ const configSchema: ConfigField[] = [
       { id: 'none', label: 'None' },
       { id: 'unreachable', label: 'Refuses to connect' },
       { id: 'ignores-writes', label: 'Accepts commands and ignores them' },
-      { id: 'flaky', label: 'Fails every other command' },
+      { id: 'flaky', label: 'Fails the first command after connecting' },
     ],
     default: 'none',
   },
@@ -201,7 +201,11 @@ class MockDevice {
 
   private guard(): void {
     this.commandCount++
-    if (this.fault === 'flaky' && this.commandCount % 2 === 1) {
+    // Models the common real failure: the first command after a connection
+    // settles is rejected, and a retry succeeds. Failing on a repeating
+    // pattern instead would make every retry land on a failure too, which is
+    // a deterministic outage rather than flakiness.
+    if (this.fault === 'flaky' && this.commandCount === 1) {
       throw new DeviceError('flaky', 'Simulated intermittent failure.', { retryable: true })
     }
   }

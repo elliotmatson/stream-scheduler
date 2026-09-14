@@ -174,6 +174,18 @@ describe('ConnectionManager', () => {
     await manager.closeAll()
   })
 
+  it('keeps a healthy connection after a command-level rejection', async () => {
+    // A device can reject one command and stay perfectly connected. Dropping
+    // the socket every time would cause a reconnect storm mid-service.
+    const id = addDevice({ kind: 'encoder' })
+    const manager = managerFor()
+    const before = await manager.open(id)
+
+    await expect(manager.invoke(id, 'stream', 'startStreaming')).rejects.toThrow(/No stream target/)
+    expect(manager.get(id)).toBe(before)
+    await manager.closeAll()
+  })
+
   it('keeps running when a listener throws', async () => {
     const id = addDevice()
     const manager = managerFor()
