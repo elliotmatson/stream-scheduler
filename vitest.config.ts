@@ -14,6 +14,7 @@ export default defineConfig({
       '@scheduler/plugin-mock': src('plugin-mock'),
       '@scheduler/plugin-hyperdeck': src('plugin-hyperdeck'),
       '@scheduler/plugin-atem': src('plugin-atem'),
+      '@scheduler/plugin-youtube': src('plugin-youtube'),
     },
   },
   test: {

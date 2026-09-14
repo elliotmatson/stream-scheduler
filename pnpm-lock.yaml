@@ -171,6 +171,16 @@ importers:
         specifier: ^5.7.2
         version: 5.9.3
 
+  packages/plugin-youtube:
+    dependencies:
+      '@scheduler/plugin-sdk':
+        specifier: workspace:*
+        version: link:../plugin-sdk
+    devDependencies:
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
+
   packages/web:
     dependencies:
       react:
