@@ -34,7 +34,13 @@ export interface Device {
   /** Secret fields arrive as a masked marker; there is no read path for them. */
   config: Record<string, unknown>
   probedModel: string | null
-  capabilities: { model: string; firmware?: string; features: string[] } | null
+  capabilities: {
+    model: string
+    firmware?: string
+    features: string[]
+    /** Ways to reach the device outside this app, as the plugin builds them. */
+    links?: { label: string; url: string; note?: string }[]
+  } | null
   health: string
   lastError: string | null
   lastSeenAt: number | null
@@ -95,7 +101,12 @@ export interface StorageSlot {
   active?: boolean
 }
 
-export type ManualAction = 'startStreaming' | 'stopStreaming' | 'startRecording' | 'stopRecording'
+export type ManualAction =
+  | 'startStreaming'
+  | 'stopStreaming'
+  | 'startRecording'
+  | 'stopRecording'
+  | 'selectSlot'
 
 export interface RunStep {
   seq: number
@@ -123,6 +134,9 @@ export interface Run {
   startedAt: number | null
   endedAt: number | null
   failure: { code: string; message: string; step?: string; remediation?: string } | null
+  /** Where each prepared stream can be watched. Present once it has
+   *  prepared, whether or not it has gone live. */
+  links?: { label: string; url: string }[]
   steps?: RunStep[]
 }
 
@@ -164,7 +178,17 @@ export type ConfigField =
   | { type: 'textinput'; id: string; label: string; default?: string; required?: boolean; tooltip?: string }
   | { type: 'number'; id: string; label: string; default?: number; min?: number; max?: number; required?: boolean; tooltip?: string }
   | { type: 'checkbox'; id: string; label: string; default?: boolean; tooltip?: string }
-  | { type: 'dropdown'; id: string; label: string; choices: { id: string; label: string }[]; default?: string; required?: boolean; tooltip?: string }
+  | {
+      type: 'dropdown'
+      id: string
+      label: string
+      choices: { id: string; label: string }[]
+      default?: string
+      required?: boolean
+      tooltip?: string
+      /** Names a list the service supplies at runtime, e.g. 'playlists'. */
+      choicesFrom?: 'playlists'
+    }
   | { type: 'secret'; id: string; label: string; required?: boolean; tooltip?: string }
   | { type: 'static-text'; id: string; label: string; value: string }
 
@@ -259,8 +283,10 @@ export interface OutputSettings {
   slot?: number
 }
 
-/** Two outputs that would need the same hardware at the same time. */
+/** Two outputs that would need the same thing at the same time. */
 export interface OutputConflict {
+  kind?: 'device' | 'setting' | 'destination'
+  /** The thing being fought over: a device, or a destination. */
   deviceLabel: string
   first: { id: string; label: string }
   second: { id: string; label: string }
@@ -378,6 +404,13 @@ export const api = {
     request<{ state: string }>(`/api/runs/${id}/cancel`, { method: 'POST', body: JSON.stringify({ reason }) }),
   startNow: (occurrenceId: string) =>
     request<{ runId: string; state: string }>(`/api/occurrences/${occurrenceId}/start-now`, { method: 'POST' }),
+  /** Runs the prepare phase early, so an unlisted stream's link exists in
+   *  time to be sent round. Every output still starts at its own time. */
+  prepareNow: (occurrenceId: string) =>
+    request<{ runId: string; state: string; links: { label: string; url: string }[] }>(
+      `/api/occurrences/${occurrenceId}/prepare-now`,
+      { method: 'POST' },
+    ),
   skip: (occurrenceId: string) => request<unknown>(`/api/occurrences/${occurrenceId}/skip`, { method: 'POST' }),
   notificationKinds: () => request<ChannelKind[]>('/api/notifications/kinds'),
   notificationChannels: () =>
@@ -411,12 +444,19 @@ export const api = {
   deleteAccount: (id: string) => request<unknown>(`/api/accounts/${id}`, { method: 'DELETE' }),
 
   destinations: () => request<Destination[]>('/api/destinations'),
+  /** What a connected channel can file finished videos in. */
+  playlists: (provider: string, accountRef: string) =>
+    request<{ playlists: { id: string; title: string }[] }>(
+      `/api/destination-providers/${provider}/playlists?accountRef=${encodeURIComponent(accountRef)}`,
+    ),
   createDestination: (input: {
     providerId: string
     label: string
     accountId: string
     config: Record<string, unknown>
   }) => request<{ id: string }>('/api/destinations', { method: 'POST', body: JSON.stringify(input) }),
+  updateDestination: (id: string, input: { label?: string; config?: Record<string, unknown> }) =>
+    request<{ ok: true }>(`/api/destinations/${id}`, { method: 'PATCH', body: JSON.stringify(input) }),
   deleteDestination: (id: string) => request<unknown>(`/api/destinations/${id}`, { method: 'DELETE' }),
 
   credentials: () => request<Credential[]>('/api/credentials'),

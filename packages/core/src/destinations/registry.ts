@@ -98,21 +98,53 @@ export class DestinationRegistry {
     if (!row) throw new Error(`No destination with id "${destinationId}".`)
 
     const provider = this.get(row.plugin_id)
+    return provider.createDestination(
+      this.contextFor({
+        destinationId,
+        providerId: row.plugin_id,
+        accountRef: row.account_id,
+        config: JSON.parse(row.config) as ConfigValues,
+        ...(options.runId === undefined ? {} : { runId: options.runId }),
+      }),
+    )
+  }
+
+  /**
+   * An instance for an account that has no destination yet.
+   *
+   * What lets a form ask the service what it offers — a channel's playlists,
+   * say — before anything has been saved. Nothing is written by opening one.
+   */
+  async openForAccount(providerId: string, accountRef: string): Promise<DestinationInstance> {
+    const provider = this.get(providerId)
+    return provider.createDestination(
+      this.contextFor({ destinationId: `account:${accountRef}`, providerId, accountRef, config: {} }),
+    )
+  }
+
+  private contextFor(input: {
+    destinationId: string
+    providerId: string
+    accountRef: string | null
+    config: ConfigValues
+    runId?: string
+  }): DestinationContext {
+    const { destinationId } = input
     const logger = (this.deps.logger ?? silentLogger).child({ destinationId })
 
-    const context: DestinationContext = {
+    return {
       destinationId,
-      config: { ...(JSON.parse(row.config) as ConfigValues), accountRef: row.account_id ?? '' },
+      config: { ...input.config, accountRef: input.accountRef ?? '' },
       log: (level, message, data) => logger[level](message, data),
       quota: new LedgerQuota({
         db: this.deps.db,
         clock: this.deps.clock,
-        provider: row.plugin_id,
+        provider: input.providerId,
         // Budget belongs to the Google Cloud project behind the account, so
         // two destinations on one account share one ledger.
-        clientRef: this.clientRefFor(row.account_id),
+        clientRef: this.clientRefFor(input.accountRef),
         limit: this.deps.quotaLimit ?? DEFAULT_QUOTA_LIMIT,
-        ...(options.runId === undefined ? {} : { runId: options.runId }),
+        ...(input.runId === undefined ? {} : { runId: input.runId }),
       }),
       secrets: {
         read: async (ref) => (this.deps.vault.has(ref) ? this.deps.vault.reveal(ref) : undefined),
@@ -121,8 +153,6 @@ export class DestinationRegistry {
         },
       },
     }
-
-    return provider.createDestination(context)
   }
 
   /** The OAuth credentials a provider needs for an account. */

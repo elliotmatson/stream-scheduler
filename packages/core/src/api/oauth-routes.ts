@@ -4,6 +4,7 @@ import { z } from 'zod'
 import type { PendingAuthorization } from '@scheduler/plugin-sdk'
 import type { Application } from '../app.js'
 import { assertUnreferenced, ConflictError, NotFoundError } from './errors.js'
+import { originOf } from './origin.js'
 
 /**
  * Bring-your-own OAuth: each install supplies its own Google Cloud client.
@@ -222,6 +223,25 @@ export function registerOAuthRoutes(fastify: FastifyInstance, app: Application):
     })),
   )
 
+  /**
+   * What a channel has to file finished videos in.
+   *
+   * Asked of the account rather than a saved destination, because the form
+   * that needs it is the one creating the destination. A dropdown of the
+   * names somebody recognises beats a box wanting a `PL…` id copied out of
+   * a URL.
+   */
+  fastify.get('/api/destination-providers/:provider/playlists', async (request) => {
+    const { provider: providerId } = z.object({ provider: z.string() }).parse(request.params)
+    const { accountRef } = z.object({ accountRef: z.string().min(1) }).parse(request.query)
+
+    const instance = await app.destinations.openForAccount(providerId, accountRef)
+    if (!instance.listPlaylists) {
+      throw new ConflictError(`${app.destinations.get(providerId).displayName} has no playlists.`)
+    }
+    return { playlists: await instance.listPlaylists() }
+  })
+
   fastify.post('/api/destinations', async (request, reply) => {
     const body = z
       .object({
@@ -244,6 +264,41 @@ export function registerOAuthRoutes(fastify: FastifyInstance, app: Application):
       )
       .run(id, body.providerId, body.label, body.accountId, JSON.stringify(body.config), app.clock.now())
     return reply.code(201).send({ id })
+  })
+
+  /**
+   * Change a destination's name or its settings.
+   *
+   * Which playlist a channel files into, and who can see a broadcast, are
+   * things that change — and without this the only way to change one was to
+   * delete the destination and build it again, which every event pointing
+   * at it would refuse to let you do.
+   *
+   * The account is deliberately not editable: a destination is settings for
+   * *that* channel, and repointing it at another one silently changes where
+   * every event already using it goes out.
+   */
+  fastify.patch('/api/destinations/:id', async (request) => {
+    const { id } = z.object({ id: z.string() }).parse(request.params)
+    const body = z
+      .object({ label: z.string().min(1).optional(), config: z.record(z.unknown()).optional() })
+      .parse(request.body)
+
+    const row = app.db.prepare('SELECT * FROM destination WHERE id = ?').get(id) as
+      | { id: string; plugin_id: string; label: string; account_id: string | null; config: string }
+      | undefined
+    if (!row) throw new NotFoundError(`No destination with id "${id}".`)
+
+    const config = body.config ?? (JSON.parse(row.config) as Record<string, unknown>)
+    app.destinations.assertValidConfig(row.plugin_id, {
+      ...(config as Record<string, never>),
+      accountRef: row.account_id ?? '',
+    })
+
+    app.db
+      .prepare('UPDATE destination SET label = ?, config = ? WHERE id = ?')
+      .run(body.label ?? row.label, JSON.stringify(config), id)
+    return { ok: true }
   })
 
   fastify.delete('/api/destinations/:id', async (request) => {
@@ -287,31 +342,13 @@ export function registerOAuthRoutes(fastify: FastifyInstance, app: Application):
  * Where Google should send the browser back to.
  *
  * It has to be *exactly* what is registered on the OAuth client, character
- * for character, or the consent screen refuses with `redirect_uri_mismatch`
- * — so this is worth getting right rather than assuming.
- *
- * It comes off the request, so it is whatever a browser actually used:
- * `X-Forwarded-Proto` and `X-Forwarded-Host` first, because an app reached
- * over HTTPS through Tailscale Serve or any reverse proxy sees a plain HTTP
- * request to an internal name, and would otherwise advertise an `http://`
- * callback that Google will not even let you register. Failing those, the
- * request's own `Host`, which is right for reaching it directly on the LAN
- * or on loopback.
- *
+ * for character, or the consent screen refuses with `redirect_uri_mismatch`.
  * The out-of-band copy-paste flow is deprecated and is not used.
  */
 function redirectUriFor(request: FastifyRequest): string {
-  // A proxy may send a list; the first entry is the original client's.
-  const forwardedProto = header(request, 'x-forwarded-proto')?.split(',')[0]?.trim()
-  const scheme = forwardedProto === 'https' || forwardedProto === 'http' ? forwardedProto : 'http'
-  const host = header(request, 'x-forwarded-host')?.split(',')[0]?.trim() || request.headers.host
-  return `${scheme}://${host ?? '127.0.0.1:8500'}/oauth/callback`
+  return `${originOf(request)}/oauth/callback`
 }
 
-function header(request: FastifyRequest, name: string): string | undefined {
-  const value = request.headers[name]
-  return Array.isArray(value) ? value[0] : value
-}
 
 /** Google allows a plain-HTTP callback only on loopback. */
 function isLoopbackUri(uri: string): boolean {

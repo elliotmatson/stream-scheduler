@@ -88,10 +88,21 @@ export function ConfigFields({
   fields,
   values,
   onChange,
+  runtimeChoices,
+  onRefreshChoices,
 }: {
   fields: ConfigField[]
   values: Record<string, unknown>
   onChange: (values: Record<string, unknown>) => void
+  /**
+   * Choices only the service can supply, keyed by what the field asked for
+   * — a channel's playlists, say. Fetched by whoever renders this, because
+   * only they know which account is in play.
+   */
+  runtimeChoices?: Record<string, { id: string; label: string }[] | undefined>
+  /** Re-ask the service for one of those lists. A playlist made a minute
+   *  ago should not need a page reload to show up. */
+  onRefreshChoices?: (source: string) => void
 }): ReactNode {
   const set = (id: string, value: unknown): void => onChange({ ...values, [id]: value })
 
@@ -123,18 +134,40 @@ export function ConfigFields({
         }
 
         if (field.type === 'dropdown') {
+          const fetched = field.choicesFrom ? runtimeChoices?.[field.choicesFrom] : undefined
+          const choices = [...field.choices, ...(fetched ?? [])]
+          // A list that has to be fetched starts empty, and "none" has to
+          // stay expressible: a destination that files nowhere is normal.
+          const optional = field.choicesFrom !== undefined && !field.required
           return (
-            <Field key={field.id} label={label} hint={hint}>
-              <select
-                value={String(values[field.id] ?? field.default ?? field.choices[0]?.id ?? '')}
-                onChange={(event) => set(field.id, event.target.value)}
-              >
-                {field.choices.map((choice) => (
-                  <option key={choice.id} value={choice.id}>
-                    {choice.label}
-                  </option>
-                ))}
-              </select>
+            <Field
+              key={field.id}
+              label={label}
+              hint={
+                field.choicesFrom && fetched === undefined
+                  ? `${hint ? `${hint} ` : ''}Pick an account first.`
+                  : hint
+              }
+            >
+              <span className="row" style={{ gap: 8 }}>
+                <select
+                  style={{ flex: 1 }}
+                  value={String(values[field.id] ?? field.default ?? (optional ? '' : (choices[0]?.id ?? '')))}
+                  onChange={(event) => set(field.id, event.target.value || undefined)}
+                >
+                  {optional ? <option value="">— none —</option> : null}
+                  {choices.map((choice) => (
+                    <option key={choice.id} value={choice.id}>
+                      {choice.label}
+                    </option>
+                  ))}
+                </select>
+                {field.choicesFrom && onRefreshChoices ? (
+                  <button type="button" onClick={() => onRefreshChoices(field.choicesFrom!)}>
+                    Refresh
+                  </button>
+                ) : null}
+              </span>
             </Field>
           )
         }
@@ -169,6 +202,56 @@ export function ConfigFields({
         )
       })}
     </>
+  )
+}
+
+/**
+ * Copies a piece of text, and says it did.
+ *
+ * The clipboard API is only available in a secure context, and this app is
+ * routinely reached over plain HTTP on a LAN, so there is a fallback and —
+ * when even that is refused — the text stays selectable for copying by hand.
+ */
+export function CopyButton({ value, label = 'Copy' }: { value: string; label?: string }): ReactNode {
+  const [done, setDone] = useState(false)
+
+  useEffect(() => {
+    if (!done) return
+    const timer = setTimeout(() => setDone(false), 1500)
+    return () => clearTimeout(timer)
+  }, [done])
+
+  const copy = (): void => {
+    void (async () => {
+      try {
+        if (navigator.clipboard?.writeText) {
+          await navigator.clipboard.writeText(value)
+          setDone(true)
+          return
+        }
+      } catch {
+        // Falls through to the older path below.
+      }
+      try {
+        const field = document.createElement('textarea')
+        field.value = value
+        field.setAttribute('readonly', '')
+        field.style.position = 'fixed'
+        field.style.opacity = '0'
+        document.body.appendChild(field)
+        field.select()
+        setDone(document.execCommand('copy'))
+        document.body.removeChild(field)
+      } catch {
+        setDone(false)
+      }
+    })()
+  }
+
+  return (
+    <button onClick={copy} aria-label={`${label} ${value}`}>
+      {done ? 'Copied' : label}
+    </button>
   )
 }
 

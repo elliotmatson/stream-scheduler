@@ -146,7 +146,7 @@ class MockDevice {
         label: 'Mock recorder',
         roles: ['sink'],
         ports: [{ id: 'in', direction: 'in', label: 'Record input', transport: ['sdi', 'hdmi'], maxLinks: 1 }],
-        supports: ['startRecording', 'stopRecording', 'formatStorage'],
+        supports: ['startRecording', 'stopRecording', 'selectSlot', 'formatStorage'],
       })
     }
     return nodes
@@ -195,6 +195,11 @@ class MockDevice {
         stopRecording: async () => {
           this.guard()
           this.recording = false
+          this.emit(nodeId)
+        },
+        selectSlot: async ({ slot }) => {
+          this.guard()
+          if (this.fault !== 'ignores-writes') this.recordingSlot = slot
           this.emit(nodeId)
         },
         // Two steps, like the deck this stands in for: preparing hands back

@@ -60,6 +60,22 @@ mapped to a named, actionable error — "YouTube authorization expired. If your
 Google Cloud OAuth consent screen is set to Testing, tokens expire after 7 days;
 set it to In production." — not a stack trace.
 
+### One ingestion stream, and what it costs
+
+A destination reuses one ingestion stream by default: the scheduler makes a
+single reusable stream on the channel, finds it again by title, and binds
+every broadcast to it. The encoder's key then never changes, which removes a
+key push that can silently fail and saves a 50-unit insert per event.
+
+The cost is that the channel has **one key**, so two events live at the same
+moment are two encoders pushing the same key and one of them loses. Both
+broadcasts are created quite happily, so nothing says so until it happens —
+which is why overlapping outputs on one destination are now reported as a
+clash when the event is saved and again at pre-flight, with the remedy named:
+turn the setting off and each event gets a key of its own. Whether the service
+then allows two concurrent streams on one channel is between the operator and
+YouTube; this app does not pretend to know.
+
 ### Hosted client (later)
 
 The `account` table carries `oauth_client_ref` so a verified, project-owned client

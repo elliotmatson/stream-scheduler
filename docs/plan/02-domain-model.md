@@ -296,6 +296,12 @@ CREATE INDEX quota_day ON quota_ledger (provider, client_ref, day);
   does not have it: a HyperDeck's rollover is not persistent state — the
   deck spills onto the next mounted card on its own — so it is reported,
   never offered as a toggle.
+- **Clashes are reported, never silently resolved.** Three kinds: two outputs
+  wanting one device's transport at once, two wanting one device configured
+  two ways at once, and two pushing one destination's single ingestion stream
+  at once. Each names both outputs, the thing being fought over, the span, and
+  what to change. Saving is not blocked — somebody rearranging a morning is
+  mid-way through fixing it — but the clash follows them to pre-flight.
 - **`occurrence.local_date`** is stored, not derived at read time. Template
   rendering and the calendar both need the date *in the series' timezone*, and
   recomputing it from a UTC instant in a container running UTC is exactly where

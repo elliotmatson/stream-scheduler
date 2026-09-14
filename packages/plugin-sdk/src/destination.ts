@@ -74,6 +74,13 @@ export interface DestinationContext {
 
 export interface DestinationInstance {
   /**
+   * Named places a finished video can be filed — a YouTube playlist, a Vimeo
+   * showcase. Offered so the host can show a list instead of asking someone
+   * to paste an id out of a URL. Absent where the service has no such thing.
+   */
+  listPlaylists?(): Promise<{ id: string; title: string }[]>
+
+  /**
    * Create or adopt the remote broadcast and return where to push.
    *
    * Called during the run's prepare phase, typically T-30m, so that a bad

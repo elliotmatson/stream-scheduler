@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import type { ReactNode } from 'react'
 import {
   api,
@@ -97,6 +97,7 @@ function ProviderSection({
   const [showSetup, setShowSetup] = useState(false)
   const [busy, setBusy] = useState(false)
   const [addingDestination, setAddingDestination] = useState(false)
+  const [editing, setEditing] = useState<string>()
 
   const act = async (action: () => Promise<unknown>): Promise<void> => {
     setBusy(true)
@@ -181,28 +182,46 @@ function ProviderSection({
       </p>
       {destinations.length === 0 ? null : (
         <ul className="plain">
-          {destinations.map((destination) => (
-            <li key={destination.id} className="row" style={{ justifyContent: 'space-between' }}>
-              <span>
-                {destination.label}{' '}
-                <span className="muted">
-                  {Object.entries(destination.config)
-                    .map(([key, value]) => `${key}: ${String(value)}`)
-                    .join(' · ')}
+          {destinations.map((destination) =>
+            editing === destination.id ? (
+              <li key={destination.id}>
+                <DestinationForm
+                  provider={provider}
+                  accounts={accounts}
+                  destination={destination}
+                  onDone={() => {
+                    setEditing(undefined)
+                    onChanged()
+                  }}
+                  onError={onError}
+                />
+              </li>
+            ) : (
+              <li key={destination.id} className="row" style={{ justifyContent: 'space-between' }}>
+                <span>
+                  {destination.label}{' '}
+                  <span className="muted">
+                    {Object.entries(destination.config)
+                      .map(([key, value]) => `${key}: ${String(value)}`)
+                      .join(' · ')}
+                  </span>
                 </span>
-              </span>
-              <ConfirmButton
-                label="Remove"
-                disabled={busy}
-                onConfirm={() => void act(() => api.deleteDestination(destination.id))}
-              />
-            </li>
-          ))}
+                <span className="row">
+                  <button onClick={() => setEditing(destination.id)}>Edit</button>
+                  <ConfirmButton
+                    label="Remove"
+                    disabled={busy}
+                    onConfirm={() => void act(() => api.deleteDestination(destination.id))}
+                  />
+                </span>
+              </li>
+            ),
+          )}
         </ul>
       )}
 
       {accounts.length === 0 ? null : addingDestination ? (
-        <AddDestination
+        <DestinationForm
           provider={provider}
           accounts={accounts}
           onDone={() => {
@@ -302,35 +321,64 @@ function AddOAuthClient({
   )
 }
 
-function AddDestination({
+/** Adds a destination, or edits one. The same fields either way. */
+function DestinationForm({
   provider,
   accounts,
+  destination,
   onDone,
   onError,
 }: {
   provider: DestinationProvider
   accounts: Account[]
+  /** Absent when adding. */
+  destination?: Destination
   onDone: () => void
   onError: (message: string | undefined) => void
 }): ReactNode {
-  const [label, setLabel] = useState('')
-  const [accountId, setAccountId] = useState(accounts[0]?.id ?? '')
-  const [config, setConfig] = useState<Record<string, unknown>>({})
+  const [label, setLabel] = useState(destination?.label ?? '')
+  const [accountId, setAccountId] = useState(destination?.accountId ?? accounts[0]?.id ?? '')
+  const [config, setConfig] = useState<Record<string, unknown>>(destination?.config ?? {})
   const [saving, setSaving] = useState(false)
+  const [playlists, setPlaylists] = useState<{ id: string; label: string }[]>()
 
   // `accountRef` is filled in from the picker above, not typed by hand.
   const fields = provider.configSchema.filter((field) => field.id !== 'accountRef')
+  const wantsPlaylists = fields.some(
+    (field) => field.type === 'dropdown' && field.choicesFrom === 'playlists',
+  )
+
+  // Asked of the channel itself, and re-asked when the account changes or
+  // the operator presses Refresh — a playlist made a minute ago in YouTube
+  // should not need a page reload. A service that will not answer is not an
+  // error here: the field stays empty and the destination saves without one.
+  const loadPlaylists = useCallback((): void => {
+    if (!wantsPlaylists || !accountId) return
+    setPlaylists(undefined)
+    api
+      .playlists(provider.id, accountId)
+      .then((result) => setPlaylists(result.playlists.map((p) => ({ id: p.id, label: p.title }))))
+      .catch(() => setPlaylists([]))
+  }, [provider.id, accountId, wantsPlaylists])
+
+  useEffect(loadPlaylists, [loadPlaylists])
 
   const save = async (): Promise<void> => {
     setSaving(true)
     onError(undefined)
     try {
-      await api.createDestination({
-        providerId: provider.id,
-        label: label || provider.displayName,
-        accountId,
-        config,
-      })
+      if (destination) {
+        // Not the account: a destination is settings for *that* channel, and
+        // repointing it would move every event already using it.
+        await api.updateDestination(destination.id, { label: label || provider.displayName, config })
+      } else {
+        await api.createDestination({
+          providerId: provider.id,
+          label: label || provider.displayName,
+          accountId,
+          config,
+        })
+      }
       onDone()
     } catch (err) {
       onError(err instanceof Error ? err.message : String(err))
@@ -344,8 +392,15 @@ function AddDestination({
       <Field label="Name">
         <input value={label} placeholder={provider.displayName} onChange={(event) => setLabel(event.target.value)} />
       </Field>
-      <Field label="Account">
-        <select value={accountId} onChange={(event) => setAccountId(event.target.value)}>
+      <Field
+        label="Account"
+        hint={destination ? 'Fixed once set: moving it would move every event pointing here.' : undefined}
+      >
+        <select
+          value={accountId}
+          disabled={destination !== undefined}
+          onChange={(event) => setAccountId(event.target.value)}
+        >
           {accounts.map((account) => (
             <option key={account.id} value={account.id}>
               {account.displayName}
@@ -353,10 +408,16 @@ function AddDestination({
           ))}
         </select>
       </Field>
-      <ConfigFields fields={fields} values={config} onChange={setConfig} />
+      <ConfigFields
+        fields={fields}
+        values={config}
+        onChange={setConfig}
+        runtimeChoices={{ playlists }}
+        onRefreshChoices={(source) => source === 'playlists' && loadPlaylists()}
+      />
       <div className="row">
         <button className="primary" disabled={saving} onClick={() => void save()}>
-          {saving ? 'Saving…' : 'Add'}
+          {saving ? 'Saving…' : destination ? 'Save' : 'Add'}
         </button>
         <button onClick={onDone}>Cancel</button>
       </div>

@@ -9,6 +9,7 @@ import { DeviceError, fingerprint, VerificationError } from '@scheduler/plugin-s
 import type { ConfigValues, JsonObject, NodeDefinition, NodeState } from '@scheduler/plugin-sdk'
 import type { Application } from '../app.js'
 import type { Db } from '../db/index.js'
+import type { VerifyCheck } from '../devices/connection-manager.js'
 import {
   describeSchedule,
   expandOccurrences,
@@ -25,6 +26,7 @@ import { describeConflict, overlapsForSeries } from '../events/overlap.js'
 import { assertUnreferenced, ConflictError, NotFoundError } from './errors.js'
 import { registerNotifyRoutes } from './notify-routes.js'
 import { registerOAuthRoutes } from './oauth-routes.js'
+import { originOf } from './origin.js'
 
 export interface ServerOptions {
   app: Application
@@ -61,6 +63,14 @@ export async function createServer(options: ServerOptions): Promise<FastifyInsta
   }
 
   const fastify = Fastify({ logger: false, bodyLimit: 2 * 1024 * 1024 })
+
+  // Learn where people actually reach this app, for the links in alerts.
+  // Only page loads count: a container health check curling loopback every
+  // thirty seconds would otherwise keep resetting it to an address that
+  // works on one machine and nowhere else.
+  fastify.addHook('onRequest', async (request) => {
+    if (request.headers.accept?.includes('text/html')) app.setPublicOrigin(originOf(request))
+  })
   await fastify.register(websocket)
 
   fastify.setErrorHandler(async (raw, _request, reply) => {
@@ -262,6 +272,14 @@ function registerRoutes(fastify: FastifyInstance, app: Application): void {
     },
   } as const
 
+  /** Verifying a slot selection needs the slot, so it is built per request. */
+  const selectedSlotCheck = (slot: number): VerifyCheck => ({
+    what: 'Selected card',
+    expected: `slot ${slot}`,
+    satisfiedBy: (state: NodeState) => state.recording?.slots?.find((entry) => entry.active)?.id === slot,
+    settleMs: 10_000,
+  })
+
   fastify.get('/api/devices/:id/nodes/:nodeId/state', async (request) => {
     const { id, nodeId } = z.object({ id: z.string(), nodeId: z.string() }).parse(request.params)
     nodeOr404(app, id, nodeId)
@@ -401,7 +419,13 @@ function registerRoutes(fastify: FastifyInstance, app: Application): void {
       .object({
         id: z.string(),
         nodeId: z.string(),
-        action: z.enum(['startStreaming', 'stopStreaming', 'startRecording', 'stopRecording']),
+        action: z.enum([
+          'startStreaming',
+          'stopStreaming',
+          'startRecording',
+          'stopRecording',
+          'selectSlot',
+        ]),
       })
       .parse(request.params)
     const body = z
@@ -419,6 +443,19 @@ function registerRoutes(fastify: FastifyInstance, app: Application): void {
     const node = nodeOr404(app, id, nodeId)
     if (!node.supports.includes(action)) {
       throw new ConflictError(`"${node.label}" does not do ${action}.`)
+    }
+
+    if (action === 'selectSlot') {
+      if (body.slot === undefined) throw new ConflictError('Say which card to select.')
+      const state = await app.connections.applyAndVerify(
+        id,
+        nodeId,
+        'selectSlot',
+        { slot: body.slot },
+        selectedSlotCheck(body.slot),
+      )
+      app.logger.info('an operator selected a card by hand', { deviceId: id, nodeId, slot: body.slot })
+      return { state }
     }
 
     const check = MANUAL_ACTIONS[action]
@@ -867,6 +904,21 @@ function registerRoutes(fastify: FastifyInstance, app: Application): void {
     return { ok: true }
   })
 
+  /**
+   * Prepare an event early, so the broadcast exists and can be linked to.
+   *
+   * An unlisted stream has to be sent round before the day, and the link
+   * does not exist until the broadcast does. This runs the prepare phase
+   * and stops: every output still goes on air at its own time.
+   */
+  fastify.post('/api/occurrences/:id/prepare-now', async (request) => {
+    const { id } = z.object({ id: z.string() }).parse(request.params)
+    const runId = await app.engine.prepareNow(id)
+    // Deliberately not advanced: advancing an event whose window has already
+    // opened would put it on air, and this button does not do that.
+    return { runId, state: app.store.getRun(runId).state, links: watchLinks(app, runId) }
+  })
+
   fastify.post('/api/occurrences/:id/start-now', async (request) => {
     const { id } = z.object({ id: z.string() }).parse(request.params)
     const runId = await app.engine.startNow(id)
@@ -905,6 +957,10 @@ function registerRoutes(fastify: FastifyInstance, app: Application): void {
     // before they were ever written.
     return {
       ...toRunDto(run),
+      // Where each prepared stream can be watched. Pulled out of the step
+      // responses because that is where it lands, and buried in a timeline
+      // is no use to somebody who needs to send the link round.
+      links: watchLinks(app, id),
       steps: app.store.steps(id).map((step) => ({
         seq: step.seq,
         kind: step.kind,
@@ -987,6 +1043,25 @@ function renderNames(
 
 function isLoopback(host: string): boolean {
   return host === '127.0.0.1' || host === 'localhost' || host === '::1'
+}
+
+/**
+ * The watch links a run has produced so far.
+ *
+ * A prepare step records where the broadcast can be seen, so a stream that
+ * has finished preparing has a link whether or not it has gone live yet.
+ */
+function watchLinks(app: Application, runId: string): { label: string; url: string }[] {
+  const links: { label: string; url: string }[] = []
+  for (const step of app.store.steps(runId)) {
+    if (!step.response) continue
+    const response = JSON.parse(step.response) as { watchUrl?: unknown }
+    if (typeof response.watchUrl !== 'string') continue
+    // The step label reads "Main: create the broadcast"; the half before
+    // the colon is the output an operator named.
+    links.push({ label: (step.label ?? '').split(':')[0]?.trim() || 'Stream', url: response.watchUrl })
+  }
+  return links
 }
 
 function statusFor(error: Error): number {

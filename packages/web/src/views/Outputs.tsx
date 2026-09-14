@@ -65,7 +65,13 @@ export function Outputs({ series }: { series: Series }): ReactNode {
       <ErrorBanner error={error ?? actionError} />
 
       {(current?.conflicts ?? []).map((conflict) => (
-        <div key={`${conflict.first.id}-${conflict.second.id}`} className="banner warn" role="alert">
+        // Keyed by kind as well as by pair: one pair can clash over more
+        // than one thing, and two banners with one key is a rendering bug.
+        <div
+          key={`${conflict.kind ?? 'device'}-${conflict.first.id}-${conflict.second.id}`}
+          className="banner warn"
+          role="alert"
+        >
           {conflict.detail}
         </div>
       ))}
