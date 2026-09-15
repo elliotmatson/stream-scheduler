@@ -21,12 +21,16 @@ import {
   ErrorBanner,
   Fact,
   Field,
+  PageHead,
   StatusPill,
 } from '../components.tsx'
 import { bitrateHint, CUSTOM_VALUE, freeformHint, LEAVE_AS_IS, nowOn } from '../copy.ts'
 import { duration, relative } from '../format.ts'
 
-export function Devices({ focusId }: { focusId?: string } = {}): ReactNode {
+export function Devices({
+  focusId,
+  navigate,
+}: { focusId?: string; navigate?: (path: string) => void } = {}): ReactNode {
   const { data, error, reload } = useResource(() => api.devices(), [])
   // Health and what is in use change without anybody pressing anything.
   useLiveRefresh(reload)
@@ -62,19 +66,20 @@ export function Devices({ focusId }: { focusId?: string } = {}): ReactNode {
 
   return (
     <>
-      <div className="page-head">
-        <div>
-          <h1>Devices</h1>
-          <p className="muted" style={{ margin: '4px 0 0' }}>
-            The encoders, switchers and recorders this scheduler drives.
-          </p>
-        </div>
-        <div className="row">
+      <PageHead
+        title="Devices"
+        subtitle="The encoders, switchers and recorders this scheduler drives."
+        // Only when one was opened from a run or the status board. Reached
+        // from the nav there is nowhere to go back to.
+        {...(focusId && navigate
+          ? { back: { to: '/devices', label: 'Back to all devices', onNavigate: navigate } }
+          : {})}
+        actions={
           <button className="primary" onClick={() => setAdding((open) => !open)}>
             {adding ? 'Cancel' : 'Add a device'}
           </button>
-        </div>
-      </div>
+        }
+      />
       <ErrorBanner error={error ?? actionError} />
 
       <div className="stack">

@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import type { ReactNode } from 'react'
 import { api, useResource, type Series } from '../api.ts'
-import { Card, ConfirmButton, Empty, ErrorBanner } from '../components.tsx'
+import { Card, ConfirmButton, Empty, ErrorBanner, PageHead } from '../components.tsx'
 import { duration, timeIn } from '../format.ts'
 import { EventForm } from './EventForm.tsx'
 
@@ -30,17 +30,15 @@ export function SeriesList(): ReactNode {
 
   return (
     <>
-      <div className="page-head">
-        <div>
-          <h1>Events</h1>
-          <p className="muted" style={{ margin: '4px 0 0' }}>
-            What runs, when it runs, and what it is called.
-          </p>
-        </div>
-        <button className="primary" onClick={() => setAdding((open) => !open)}>
-          {adding ? 'Cancel' : 'Add an event'}
-        </button>
-      </div>
+      <PageHead
+        title="Events"
+        subtitle="What runs, when it runs, and what it is called."
+        actions={
+          <button className="primary" onClick={() => setAdding((open) => !open)}>
+            {adding ? 'Cancel' : 'Add an event'}
+          </button>
+        }
+      />
       <ErrorBanner error={error ?? actionError} />
 
       <div className="stack">

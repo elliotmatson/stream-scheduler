@@ -14,6 +14,7 @@ import {
   Empty,
   ErrorBanner,
   Field,
+  PageHead,
   StatusPill,
   Switch,
 } from '../components.tsx'
@@ -51,17 +52,15 @@ export function Notifications(): ReactNode {
 
   return (
     <>
-      <div className="page-head">
-        <div>
-          <h1>Notifications</h1>
-          <p className="muted" style={{ margin: '4px 0 0' }}>
-            Where to be told when something goes wrong.
-          </p>
-        </div>
-        <button className="primary" onClick={() => setAdding((open) => !open)}>
-          {adding ? 'Cancel' : 'Add a notification'}
-        </button>
-      </div>
+      <PageHead
+        title="Notifications"
+        subtitle="Where to be told when something goes wrong."
+        actions={
+          <button className="primary" onClick={() => setAdding((open) => !open)}>
+            {adding ? 'Cancel' : 'Add a notification'}
+          </button>
+        }
+      />
 
       <ErrorBanner error={error ?? actionError} />
 

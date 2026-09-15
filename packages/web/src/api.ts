@@ -130,6 +130,8 @@ export interface Run {
   id: string
   occurrenceId: string
   seriesLabel: string
+  /** The event's zone. Every time on the run's page is shown in it. */
+  timezone: string
   scheduledStart: number
   state: string
   attempt: number
@@ -474,7 +476,10 @@ export const api = {
   dashboard: () => request<Dashboard>('/api/dashboard'),
   runs: () => request<Run[]>('/api/runs'),
   run: (id: string) => request<Run>(`/api/runs/${id}`),
-  runTelemetry: (id: string) => request<RunTelemetry>(`/api/runs/${id}/telemetry`),
+  runTelemetry: (id: string, windowMs?: number) =>
+    request<RunTelemetry>(
+      `/api/runs/${id}/telemetry${windowMs === undefined ? '' : `?windowMs=${windowMs}`}`,
+    ),
   cancelRun: (id: string, reason: string) =>
     request<{ state: string }>(`/api/runs/${id}/cancel`, {
       method: 'POST',

@@ -16,6 +16,22 @@ export function timeIn(instant: number, timeZone: string): string {
   }).format(instant)
 }
 
+/**
+ * To the second, for a timeline of what happened.
+ *
+ * A step list is read when something went wrong, and "7:47 PM" against
+ * eight steps that all ran inside one minute says nothing about their
+ * order or the gaps between them.
+ */
+export function clockTimeIn(instant: number, timeZone: string): string {
+  return new Intl.DateTimeFormat(undefined, {
+    timeZone,
+    hour: 'numeric',
+    minute: '2-digit',
+    second: '2-digit',
+  }).format(instant)
+}
+
 export function dateIn(instant: number, timeZone: string): string {
   return new Intl.DateTimeFormat(undefined, {
     timeZone,

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import type { ReactNode } from 'react'
 import type { ConfigField } from './api.ts'
 import { describeStatus } from './copy.ts'
+import { IconBack, IconCopy, IconTick } from './icons.tsx'
 
 /**
  * A state, in one word, with what it means on hover.
@@ -255,9 +256,12 @@ export function ConfigFields({
 export function CopyButton({
   value,
   label = 'Copy',
+  icon = false,
 }: {
   value: string
   label?: string
+  /** Glyph only, for a row of actions that are already icons. */
+  icon?: boolean
 }): ReactNode {
   const [done, setDone] = useState(false)
 
@@ -292,6 +296,19 @@ export function CopyButton({
         setDone(false)
       }
     })()
+  }
+
+  if (icon) {
+    return (
+      <button
+        className="icon-button"
+        onClick={copy}
+        aria-label={`${label} ${value}`}
+        title={done ? 'Copied' : label}
+      >
+        {done ? <IconTick /> : <IconCopy />}
+      </button>
+    )
   }
 
   return (
@@ -376,6 +393,108 @@ export function Switch({
       <span className="switch-track">
         <span className="switch-thumb" />
       </span>
+    </button>
+  )
+}
+
+/**
+ * The top of every screen: where you are, and the way back out.
+ *
+ * One component rather than a `page-head` div per view, because the parts
+ * that have to agree across screens are exactly the parts that drifted —
+ * whether the way back is an arrow or a button, which side it is on, and
+ * whether the actions sit beside the title or under it. Back is an arrow
+ * at the top left on every page that has one, which is where a browser,
+ * a phone and every other application put it.
+ */
+export function PageHead({
+  title,
+  subtitle,
+  back,
+  actions,
+  level = 1,
+}: {
+  title: ReactNode
+  subtitle?: ReactNode
+  /** Rendered as the arrow. Omitted on a screen reached from the nav. */
+  back?: { to: string; label: string; onNavigate: (path: string) => void }
+  actions?: ReactNode
+  /** 2 for a head inside a card, which must not be a second `h1`. */
+  level?: 1 | 2
+}): ReactNode {
+  const Heading = level === 1 ? 'h1' : 'h2'
+  return (
+    <div className="page-head">
+      <div className="page-head-title">
+        {back ? (
+          <button
+            className="back-button"
+            title={back.label}
+            onClick={() => back.onNavigate(back.to)}
+          >
+            <IconBack />
+            <span>Back</span>
+          </button>
+        ) : null}
+        <div>
+          <Heading style={level === 2 ? { margin: 0 } : undefined}>{title}</Heading>
+          {subtitle ? (
+            <p className="muted" style={{ margin: '4px 0 0' }}>
+              {subtitle}
+            </p>
+          ) : null}
+        </div>
+      </div>
+      {actions ? <div className="row">{actions}</div> : null}
+    </div>
+  )
+}
+
+/**
+ * An action with a glyph instead of a word.
+ *
+ * Only for actions whose meaning the glyph carries on its own — back, open
+ * elsewhere, copy. Everything else keeps its label: an icon nobody can read
+ * is a button nobody presses. The label is always there for screen readers
+ * and on hover.
+ */
+export function IconButton({
+  label,
+  icon,
+  href,
+  disabled,
+  onClick,
+}: {
+  label: string
+  icon: ReactNode
+  /** Renders an anchor instead, for somewhere outside the app. */
+  href?: string
+  disabled?: boolean
+  onClick?: () => void
+}): ReactNode {
+  if (href !== undefined) {
+    return (
+      <a
+        className="icon-button"
+        href={href}
+        target="_blank"
+        rel="noreferrer"
+        aria-label={label}
+        title={`${label} — ${href}`}
+      >
+        {icon}
+      </a>
+    )
+  }
+  return (
+    <button
+      className="icon-button"
+      aria-label={label}
+      title={label}
+      disabled={disabled}
+      onClick={onClick}
+    >
+      {icon}
     </button>
   )
 }

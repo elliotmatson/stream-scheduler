@@ -161,6 +161,27 @@ describe('recording what the devices were doing', () => {
     expect(thinned[9].at).toBe(all[all.length - 1].at)
   })
 
+  it('narrows to the last stretch of a run when asked', async () => {
+    const { runId } = await seedRunningEvent()
+    for (let i = 0; i < 40; i++) {
+      clock.advance(60_000)
+      await app.telemetry.tick()
+    }
+
+    const all = json(await get(`/api/runs/${runId}/telemetry`)).outputs[0].samples
+    // Ten minutes of a forty-minute run.
+    const recent = json(await get(`/api/runs/${runId}/telemetry?windowMs=600000`)).outputs[0]
+      .samples
+
+    expect(recent.length).toBeGreaterThan(0)
+    expect(recent.length).toBeLessThan(all.length)
+    // Measured from the last reading, not from now, so a finished run does
+    // not narrow to nothing as the day goes on.
+    const latest = all[all.length - 1].at
+    expect(recent[recent.length - 1].at).toBe(latest)
+    expect(recent.every((sample: { at: number }) => sample.at >= latest - 600_000)).toBe(true)
+  })
+
   it('throws away readings older than the retention window', async () => {
     const { runId } = await seedRunningEvent()
     await app.telemetry.tick()

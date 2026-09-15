@@ -264,6 +264,158 @@ td,
   margin-bottom: 18px;
 }
 
+/* The title side of a head, with the way back to its left. */
+.page-head-title {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  min-width: 0;
+}
+
+/* The way out, top left, on every screen that has one. Labelled rather
+   than a bare glyph: an arrow alone is a guess about where it goes. Pulled
+   up so it sits on the title's line, not above it. */
+.back-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-top: 2px;
+  padding-left: 8px;
+  padding-right: 11px;
+  flex: none;
+  color: var(--muted);
+}
+
+.back-button:hover:not(:disabled) {
+  color: var(--text);
+}
+
+/* An action carried by its glyph. Sized to match a text button's height so
+   the two can sit in one row without the row growing. */
+.icon-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  min-height: 0;
+  padding: 0;
+  flex: none;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--muted);
+  text-decoration: none;
+}
+
+.icon-button:hover:not(:disabled) {
+  color: var(--text);
+  border-color: var(--border-strong, var(--border));
+  background: var(--surface-2);
+  text-decoration: none;
+}
+
+.icon-button:disabled {
+  opacity: 0.5;
+}
+
+/* The range picker above a run's charts. A heading with its controls on
+   the same line, so it reads as the top of the section it governs rather
+   than as three loose buttons between two cards. */
+.chart-controls {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 0 2px;
+}
+
+.chart-controls h2 {
+  margin: 0;
+  margin-right: auto;
+}
+
+/* on air ------------------------------------------------------------------ */
+
+/* One output inside a running event: a name with its actions pinned to the
+   right, and everything else on a second line underneath. Laid out rather
+   than wrapped, which is what made the actions look like they belonged to
+   nothing. */
+.onair-output {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 4px 10px;
+  padding: 8px 0;
+  border-top: 1px solid var(--border);
+}
+
+.onair-output:first-child {
+  border-top: 0;
+  padding-top: 0;
+}
+
+.onair-name {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  font-weight: 600;
+}
+
+.onair-meta {
+  grid-column: 2;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 10px;
+  font-size: 13px;
+}
+
+.onair-actions {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+/* A state as a dot. A row of full pills repeating the event's own state
+   reads as five alarms rather than one. */
+.state-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  flex: none;
+  background: var(--muted);
+}
+
+.state-dot.ok {
+  background: var(--good);
+}
+
+.state-dot.live {
+  background: var(--bad);
+}
+
+.state-dot.warn {
+  background: var(--warn);
+}
+
+.state-dot.bad {
+  background: var(--bad);
+}
+
+@media (max-width: 560px) {
+  /* The actions drop under the meta line rather than squeezing the name. */
+  .onair-output {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .onair-actions {
+    grid-column: 2;
+    padding-top: 2px;
+  }
+}
+
 /* type -------------------------------------------------------------------- */
 
 h1 {
@@ -1334,10 +1486,33 @@ button.link:hover {
   font-weight: 550;
 }
 
+/* The y-axis labels, then the plot. The labels are a fixed column so the
+   plots in a row of charts all start at the same x. */
+.chart-plot {
+  display: grid;
+  grid-template-columns: 52px minmax(0, 1fr);
+  gap: 6px;
+  align-items: stretch;
+}
+
+/* Evenly spaced ticks, so space-between lands each label on its own
+   gridline without positioning any of them by hand. */
+.chart-yaxis {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  align-items: flex-end;
+  text-align: right;
+  font-size: 10px;
+  line-height: 1;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
 .chart svg {
   display: block;
   width: 100%;
-  height: 64px;
+  height: 96px;
   overflow: visible;
 }
 
@@ -1371,17 +1546,34 @@ button.link:hover {
   opacity: 0.3;
 }
 
-.chart-scale {
+/* Offset by the width of the y-axis column so the first time sits under
+   the start of the line rather than under its labels. */
+.chart-xaxis {
   display: flex;
   justify-content: space-between;
-  font-size: 11px;
+  margin-left: 58px;
+  margin-top: 4px;
+  font-size: 10px;
   color: var(--muted);
   font-variant-numeric: tabular-nums;
-  margin-top: 2px;
+}
+
+.chart-xaxis span:nth-child(2) {
+  /* Centred on the middle of the plot, not on whatever is left over. */
+  flex: 1;
+  text-align: center;
+}
+
+/* The scale, behind the line: present enough to read a value against,
+   quiet enough not to compete with it. */
+.chart-grid {
+  stroke: var(--border);
+  stroke-width: 1;
+  opacity: 0.55;
 }
 
 .chart-empty {
-  height: 64px;
+  height: 96px;
   display: grid;
   place-items: center;
   font-size: 12px;

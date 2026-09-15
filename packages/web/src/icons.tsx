@@ -150,3 +150,42 @@ export function IconSettings(): ReactNode {
     </Glyph>
   )
 }
+
+/** An arrow back to where this page was opened from. */
+export function IconBack(): ReactNode {
+  return (
+    <Glyph>
+      <path d="M10 3 5 8l5 5" />
+    </Glyph>
+  )
+}
+
+/** A box with an arrow leaving it: opens somewhere outside this app. */
+export function IconExternal(): ReactNode {
+  return (
+    <Glyph>
+      <path d="M9 3h4v4" />
+      <path d="M13 3 7.5 8.5" />
+      <path d="M11.5 9.5V13H3V4.5h3.5" />
+    </Glyph>
+  )
+}
+
+/** Two sheets: put this on the clipboard. */
+export function IconCopy(): ReactNode {
+  return (
+    <Glyph>
+      <rect x="5.5" y="5.5" width="8" height="8" rx="1.5" />
+      <path d="M10.5 3H4a1 1 0 0 0-1 1v6.5" />
+    </Glyph>
+  )
+}
+
+/** A tick, for the moment after something was copied. */
+export function IconTick(): ReactNode {
+  return (
+    <Glyph>
+      <path d="M3.5 8.5 6.5 11.5 12.5 4.5" />
+    </Glyph>
+  )
+}

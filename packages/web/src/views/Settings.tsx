@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import type { ReactNode } from 'react'
 import { api, useResource, type SessionState } from '../api.ts'
-import { Card, ConfirmButton, ErrorBanner, Field } from '../components.tsx'
+import { Card, ConfirmButton, ErrorBanner, Field, PageHead } from '../components.tsx'
 
 /**
  * The things that belong to the install rather than to an event.
@@ -14,14 +14,7 @@ export function Settings({ onSessionChanged }: { onSessionChanged: () => void })
 
   return (
     <>
-      <div className="page-head">
-        <div>
-          <h1>Settings</h1>
-          <p className="muted" style={{ margin: '4px 0 0' }}>
-            How this install is reached, and who can reach it.
-          </p>
-        </div>
-      </div>
+      <PageHead title="Settings" subtitle="How this install is reached, and who can reach it." />
       <ErrorBanner error={error} />
 
       <div className="stack">
