@@ -347,6 +347,17 @@ export interface SweepResult {
   failed: { filename: string; reason: string }[]
 }
 
+/** One file on a device's media, as the device reports it. */
+export interface RemoteFile {
+  name: string
+  slot?: number
+  bytes?: number
+  /** When the device says it was written. Absent where it will not say. */
+  recordedAt?: number
+  durationMs?: number
+  codec?: string
+}
+
 export interface RetentionCandidate {
   artifact: {
     id: string
@@ -521,6 +532,32 @@ export const api = {
   run: (id: string) => request<Run>(`/api/runs/${id}`),
   /** What each recording output's policy says could go. */
   retention: () => request<{ outputs: RetentionReport[] }>('/api/retention'),
+  /** What is actually on one recorder's media, straight from the device. */
+  media: (deviceId: string, nodeId: string, slot?: number) =>
+    request<{ files: RemoteFile[] }>(
+      `/api/devices/${deviceId}/nodes/${nodeId}/media${slot === undefined ? '' : `?slot=${slot}`}`,
+    ),
+  /** Step one: what a selection would remove, and a token to do it with. */
+  prepareDelete: (deviceId: string, nodeId: string, names: string[], slot?: number) =>
+    request<{ deleted: false; confirm: string; files: string[] }>(
+      `/api/devices/${deviceId}/nodes/${nodeId}/media/delete`,
+      { method: 'POST', body: JSON.stringify({ names, ...(slot === undefined ? {} : { slot }) }) },
+    ),
+  /** Step two: removes precisely what the confirmation described. */
+  confirmDelete: (
+    deviceId: string,
+    nodeId: string,
+    names: string[],
+    confirm: string,
+    slot?: number,
+  ) =>
+    request<{ deleted: true; removed: string[]; failed: { name: string; reason: string }[] }>(
+      `/api/devices/${deviceId}/nodes/${nodeId}/media/delete`,
+      {
+        method: 'POST',
+        body: JSON.stringify({ names, confirm, ...(slot === undefined ? {} : { slot }) }),
+      },
+    ),
   /** Step one: the exact list, and a token to remove it with. */
   prepareSweep: (outputId: string) =>
     request<SweepPlan>('/api/retention/sweep', {

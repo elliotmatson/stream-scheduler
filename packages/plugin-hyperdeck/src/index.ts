@@ -17,7 +17,7 @@ import {
   SlotStatus,
   TransportStatus,
 } from 'hyperdeck-connection'
-import { connectFtp as realConnectFtp, type FtpConnect } from './ftp.js'
+import { connectFtp as realConnectFtp, ftpPath, type FtpConnect } from '@scheduler/device-ftp'
 
 /**
  * Blackmagic HyperDeck Studio / Extreme / Shuttle.
@@ -40,6 +40,16 @@ export const DEFAULT_PORT = 9993
  * is how one busy deck stops the whole scheduler.
  */
 export const COMMAND_TIMEOUT_MS = 10_000
+
+/**
+ * Where a slot's files live on the deck's file server.
+ *
+ * Slot 1 is the root and the others are numbered beneath it, which is how
+ * the deck's own web page lays them out.
+ */
+function directoryFor(slot: number | undefined): string {
+  return slot === undefined || slot === 1 ? '/' : `/${slot}`
+}
 
 /**
  * Codecs to suggest, not a list of what any particular deck has.
@@ -289,12 +299,38 @@ class HyperdeckDevice {
        */
       listMedia: async ({ slot }) => {
         const listing = await this.send(new Commands.DiskListCommand(slot?.toString()))
-        return listing.clips.map((clip) => ({
-          name: clip.name,
-          slot: listing.slotId,
-          ...(clip.duration === undefined ? {} : { durationMs: clip.duration }),
-          ...(clip.codec === undefined ? {} : { codec: clip.codec }),
-        }))
+        const slotId = listing.slotId
+
+        // What the deck knows about each clip, keyed by the name it uses.
+        // `disk list` is the only source for codec and duration.
+        const described = new Map(
+          listing.clips.map((clip) => [
+            clip.name,
+            {
+              ...(clip.duration === undefined ? {} : { durationMs: clip.duration }),
+              ...(clip.codec === undefined ? {} : { codec: clip.codec }),
+            },
+          ]),
+        )
+
+        // And the card itself for size and date, which the control
+        // protocol does not report at all — `disk list` names a clip and
+        // will not say how big it is or when it was made. Those are the
+        // two columns anybody managing files actually sorts by.
+        const directory = directoryFor(slotId)
+        const session = await this.connectFtp({ host: this.host })
+        try {
+          const files = await session.list(directory)
+          return files.map((file) => ({
+            name: file.name,
+            slot: slotId,
+            bytes: file.size,
+            ...(file.modifiedAt === undefined ? {} : { recordedAt: file.modifiedAt }),
+            ...(described.get(file.name) ?? {}),
+          }))
+        } finally {
+          await session.close().catch(() => {})
+        }
       },
       /**
        * Removes one clip, over FTP.
@@ -312,13 +348,13 @@ class HyperdeckDevice {
        * fails loudly.
        */
       deleteMedia: async ({ name, slot }) => {
-        const directory = slot === undefined ? '/' : `/${slot}`
+        const directory = directoryFor(slot)
         const session = await this.connectFtp({ host: this.host })
         try {
-          await session.remove(`${directory}/${name}`.replace('//', '/'))
+          await session.remove(ftpPath(directory, name))
 
           const left = await session.list(directory)
-          if (left.includes(name)) {
+          if (left.some((file) => file.name === name)) {
             throw new DeviceError(
               'delete-failed',
               `The deck still has "${name}" after being told to remove it.`,

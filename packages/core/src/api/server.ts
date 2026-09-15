@@ -58,6 +58,8 @@ export interface ServerOptions {
   webRoot?: string
 }
 
+const DELETE_CONFIRM_TTL_MS = 5 * 60_000
+
 export async function createServer(options: ServerOptions): Promise<FastifyInstance> {
   const { app } = options
   const host = options.host ?? '127.0.0.1'
@@ -1139,7 +1141,128 @@ function registerRoutes(fastify: FastifyInstance, app: Application): void {
    * something the operator never saw, because a recording finished in the
    * seconds between looking and pressing.
    */
-  fastify.post('/api/retention/sweep', async (request, reply) => {
+  /**
+   * Bulk deletes that have been described but not yet agreed to.
+   *
+   * In memory and short-lived on purpose. A confirmation is a record of
+   * what somebody was shown, not a durable grant, and a restart losing
+   * one costs a second look at the list — which is the right thing to
+   * lose.
+   */
+  const pendingDeletes = new Map<
+    string,
+    { deviceId: string; nodeId: string; names: string[]; slot?: number; at: number }
+  >()
+
+  /**
+   * What is on one recorder's media.
+   *
+   * Straight from the device, not the ledger: this screen is about the
+   * card as it actually is, including everything somebody else put there.
+   * The ledger's view of the same card is retention's business.
+   */
+  fastify.get('/api/devices/:id/nodes/:nodeId/media', async (request) => {
+    const { id, nodeId } = z.object({ id: z.string(), nodeId: z.string() }).parse(request.params)
+    const { slot } = z
+      .object({ slot: z.coerce.number().int().positive().optional() })
+      .parse(request.query ?? {})
+
+    const node = nodeOr404(app, id, nodeId)
+    if (!node.supports.includes('listMedia')) {
+      throw new ConflictError(`"${node.label}" cannot list what is on its media.`)
+    }
+
+    const state = await app.connections.invoke(id, nodeId, 'listMedia', {
+      ...(slot === undefined ? {} : { slot }),
+    })
+    const media = state?.raw?.media
+    return { files: Array.isArray(media) ? (media as unknown as MediaItem[]) : [] }
+  })
+
+  /**
+   * Removes files somebody has picked, one call, two steps.
+   *
+   * The same handshake as a sweep and as formatting, because it is the
+   * same kind of act: the first call answers with exactly what would go
+   * and a token, and the second removes precisely that. Bulk selection is
+   * the reason it matters here — ticking twelve boxes and pressing a
+   * button is far easier to do by accident than deleting twelve files one
+   * at a time.
+   */
+  fastify.post('/api/devices/:id/nodes/:nodeId/media/delete', async (request) => {
+    const { id, nodeId } = z.object({ id: z.string(), nodeId: z.string() }).parse(request.params)
+    const body = z
+      .object({
+        names: z.array(z.string().min(1)).min(1).max(500),
+        slot: z.number().int().positive().optional(),
+        confirm: z.string().min(1).optional(),
+      })
+      .parse(request.body)
+
+    const node = nodeOr404(app, id, nodeId)
+    if (!node.supports.includes('deleteMedia')) {
+      throw new ConflictError(`"${node.label}" cannot remove files.`)
+    }
+
+    // The same rail as the sweep: a card being written to is not one to be
+    // tidying up, whatever the hardware would allow.
+    const busy = eventMidRunOn(id)
+    if (busy) {
+      throw new ConflictError(
+        `"${busy}" is mid-run on this device. Deleting waits until it is done.`,
+      )
+    }
+    if (app.connections.lastStates(id).some(({ state }) => state.recording?.active === true)) {
+      throw new ConflictError('This device is recording. Deleting waits until it stops.')
+    }
+
+    if (body.confirm === undefined) {
+      const token = randomUUID()
+      pendingDeletes.set(token, {
+        deviceId: id,
+        nodeId,
+        names: body.names,
+        ...(body.slot === undefined ? {} : { slot: body.slot }),
+        at: app.clock.now(),
+      })
+      return { deleted: false, confirm: token, files: body.names }
+    }
+
+    const plan = pendingDeletes.get(body.confirm)
+    // One use, and only for the device it was issued against: a token that
+    // could be replayed, or pointed at another deck, is a worse button
+    // than no button.
+    pendingDeletes.delete(body.confirm)
+    if (!plan || plan.deviceId !== id || plan.nodeId !== nodeId) {
+      throw new ConflictError('That confirmation is no longer valid. Look at the list again.')
+    }
+    if (app.clock.now() - plan.at > DELETE_CONFIRM_TTL_MS) {
+      throw new ConflictError('That confirmation is more than five minutes old. Look again.')
+    }
+
+    const removed: string[] = []
+    const failed: { name: string; reason: string }[] = []
+    for (const name of plan.names) {
+      try {
+        await app.connections.invoke(id, nodeId, 'deleteMedia', {
+          name,
+          ...(plan.slot === undefined ? {} : { slot: plan.slot }),
+        })
+        removed.push(name)
+      } catch (error) {
+        failed.push({ name, reason: error instanceof Error ? error.message : String(error) })
+      }
+    }
+    app.logger.warn('an operator deleted files from a device', {
+      deviceId: id,
+      nodeId,
+      removed,
+      failed: failed.map((entry) => entry.name),
+    })
+    return { deleted: true, removed, failed }
+  })
+
+  fastify.post('/api/retention/sweep', async (request) => {
     const body = z
       .object({ outputId: z.string().min(1), confirm: z.string().min(1).optional() })
       .parse(request.body ?? {})
@@ -1166,9 +1289,10 @@ function registerRoutes(fastify: FastifyInstance, app: Application): void {
       })
       return { swept: true, ...outcome }
     } catch (error) {
-      if (error instanceof SweepRefused) {
-        return reply.code(409).send({ error: { code: 'sweep-refused', message: error.message } })
-      }
+      // Mapped rather than hand-rolled: every other refusal in this API is
+      // a ConflictError, and one endpoint answering in its own shape is a
+      // client that has to special-case it.
+      if (error instanceof SweepRefused) throw new ConflictError(error.message)
       throw error
     }
   })

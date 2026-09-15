@@ -404,6 +404,12 @@ td,
   background: var(--bad);
 }
 
+/* A file row ticked for a bulk action. Enough to see at a glance which
+   rows a Delete button is about to act on. */
+tr.is-picked td {
+  background: var(--accent-soft);
+}
+
 /* A figure that is not yet a problem but is the reason to look. */
 .warn-text {
   color: var(--warn);

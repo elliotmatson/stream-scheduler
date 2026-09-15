@@ -12,7 +12,16 @@ import type {
 } from '@scheduler/plugin-sdk'
 import { Enums } from 'atem-connection'
 import type { AtemState } from 'atem-connection'
+import { connectFtp as realConnectFtp, ftpPath, type FtpConnect } from '@scheduler/device-ftp'
 import { AtemConnectionStatus, createAtemClient, type AtemClient } from './client.js'
+
+/**
+ * Where an ATEM keeps its recordings on the drive it serves.
+ *
+ * The root: the switcher writes to the top of the disk rather than into a
+ * folder of its own, which is what its own file listing shows.
+ */
+const ATEM_MEDIA_DIR = '/'
 
 /**
  * Blackmagic ATEM switchers.
@@ -66,6 +75,8 @@ class AtemDevice {
     private readonly host: string,
     private readonly port: number,
     private readonly now: () => number,
+    /** Injected in tests, which have no FTP server to talk to. */
+    private readonly connectFtp: FtpConnect = realConnectFtp,
   ) {}
 
   async connect(): Promise<void> {
@@ -215,7 +226,7 @@ class AtemDevice {
             maxLinks: 1,
           },
         ],
-        supports: ['startRecording', 'stopRecording'],
+        supports: ['startRecording', 'stopRecording', 'listMedia', 'deleteMedia'],
       })
     }
 
@@ -261,6 +272,54 @@ class AtemDevice {
 
     if (nodeId === 'record') {
       return {
+        /**
+         * What is on the switcher's drive.
+         *
+         * Over FTP, because the control protocol has nothing to say about
+         * it: `atem-connection` exposes recording start, stop, duration,
+         * disk switching and settings, and no way to see what is on the
+         * media or to remove any of it. The drive is served the same way a
+         * HyperDeck's card is, which is also the only place a file's size
+         * and date exist.
+         */
+        listMedia: async () => {
+          const session = await this.connectFtp({ host: this.host })
+          try {
+            return (await session.list(ATEM_MEDIA_DIR)).map((file) => ({
+              name: file.name,
+              bytes: file.size,
+              ...(file.modifiedAt === undefined ? {} : { recordedAt: file.modifiedAt }),
+            }))
+          } finally {
+            await session.close().catch(() => {})
+          }
+        },
+        /**
+         * Removes one file, and checks it went.
+         *
+         * Same reasoning as the deck's: FTP servers vary in what they say
+         * about a delete that did not happen, and reporting success on a
+         * file still on the drive is worse than failing.
+         */
+        deleteMedia: async ({ name }) => {
+          const session = await this.connectFtp({ host: this.host })
+          try {
+            await session.remove(ftpPath(ATEM_MEDIA_DIR, name))
+            const left = await session.list(ATEM_MEDIA_DIR)
+            if (left.some((file) => file.name === name)) {
+              throw new DeviceError(
+                'delete-failed',
+                `The switcher still has "${name}" after being told to remove it.`,
+                {
+                  remediation:
+                    'The drive may be write-protected, or the switcher may be using the file. Check it is not recording.',
+                },
+              )
+            }
+          } finally {
+            await session.close().catch(() => {})
+          }
+        },
         startRecording: async ({ filename, quality }) => {
           // The ATEM records to its own media with a filename it is given
           // beforehand, unlike the HyperDeck where the name rides along with
@@ -567,6 +626,8 @@ export interface AtemPluginOptions {
   now?: () => number
   /** Injected by tests; production uses the real `atem-connection` client. */
   createClient?: () => AtemClient
+  /** Injected in tests, which have no FTP server to talk to. */
+  connectFtp?: FtpConnect
 }
 
 export function atemPlugin(options: AtemPluginOptions = {}): PluginDefinition {
@@ -582,7 +643,7 @@ export function atemPlugin(options: AtemPluginOptions = {}): PluginDefinition {
       const host = String(ctx.config.host ?? '')
       if (!host) throw new DeviceError('no-host', 'This ATEM has no address configured.')
       const port = typeof ctx.config.port === 'number' ? ctx.config.port : DEFAULT_PORT
-      const device = new AtemDevice(ctx, createClient(), host, port, now)
+      const device = new AtemDevice(ctx, createClient(), host, port, now, options.connectFtp)
       await device.connect()
 
       return defineDevice({
