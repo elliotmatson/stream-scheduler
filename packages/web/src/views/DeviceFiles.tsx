@@ -90,7 +90,11 @@ export function DeviceFiles({
       <PageHead
         level={2}
         title="Files"
-        subtitle="Everything on the media, including what this scheduler did not record."
+        subtitle={
+          open
+            ? 'Everything on the media, including what this scheduler did not record.'
+            : 'Everything on the media, including what this scheduler did not record. Reading a card takes a moment, so this asks only when you want it to.'
+        }
         actions={
           <>
             {slots.length > 1 ? (
@@ -124,11 +128,7 @@ export function DeviceFiles({
 
       <ErrorBanner error={error ?? problem} />
 
-      {!open ? (
-        <p className="muted" style={{ margin: 0 }}>
-          Reading a card takes a moment, so this asks only when you want it to.
-        </p>
-      ) : files.length === 0 ? (
+      {!open ? null : files.length === 0 ? (
         <Empty>Nothing on this media.</Empty>
       ) : (
         <>

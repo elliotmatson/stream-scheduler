@@ -369,7 +369,14 @@ function Recordings(): ReactNode {
       <PageHead
         level={2}
         title="Recordings"
-        subtitle="What is on the cards, and what the hourly sweep will take off them."
+        subtitle={
+          open
+            ? 'What is on the cards, and what the hourly sweep will take off them.'
+            : // One line, not two. The subtitle and the body used to say
+              // overlapping things, which read as the card explaining
+              // itself twice before it had shown anybody anything.
+              'What is on the cards, and what the hourly sweep will take off them. Reading one takes a moment, so this asks only when you want it to.'
+        }
         actions={
           <button onClick={() => setOpen((was) => !was)}>
             {open ? 'Hide' : 'Ask the devices'}
@@ -379,11 +386,7 @@ function Recordings(): ReactNode {
 
       <ErrorBanner error={error} />
 
-      {!open ? (
-        <p className="muted" style={{ margin: 0 }}>
-          Reading a card takes a moment, so this asks only when you want it to.
-        </p>
-      ) : outputs.length === 0 ? (
+      {!open ? null : outputs.length === 0 ? (
         <Empty>No recording outputs are set up.</Empty>
       ) : (
         <div className="stack" style={{ gap: 10 }}>

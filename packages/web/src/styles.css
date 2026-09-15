@@ -438,6 +438,16 @@ tr.is-picked td {
   border-top: 0;
 }
 
+/* A column, not whatever width the word happens to be. "disconnected" is
+   half again as wide as "connected", and letting each row size its own
+   pill left the device names on a ragged edge that the eye has to re-find
+   on every line. */
+.device-row-item > .pill:first-child {
+  flex: 0 0 auto;
+  justify-content: center;
+  min-width: 112px;
+}
+
 .device-row-item:hover:not(:disabled) {
   background: var(--surface-2);
 }

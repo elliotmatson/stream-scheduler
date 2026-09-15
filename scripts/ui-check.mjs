@@ -92,6 +92,7 @@ async function main() {
       ['forms', () => discoveryAndPreview(browser, host.base)],
       ['run timeline', () => theRunTimeline(browser, host.base, started.runId)],
       ['file browser', () => theFileBrowser(browser, host.base)],
+      ['device list', () => theDeviceList(browser, host.base)],
     ]) {
       try {
         await run()
@@ -310,6 +311,52 @@ async function theRunTimeline(browser, base, runId) {
 
   check('timeline: no console errors', problems.length === 0, problems.slice(0, 3).join(' | '))
   if (problems.length > 0) await shoot(page, 'timeline')
+  await context.close()
+}
+
+/**
+ * The device list, which is read by scanning down it.
+ *
+ * The status pill sizes itself to its word, and "disconnected" is half
+ * again as wide as "connected" — so without a fixed column the names sat
+ * on a ragged edge the eye has to re-find on every row. A CSS rule is the
+ * only thing holding that, and CSS rules stop matching quietly.
+ */
+async function theDeviceList(browser, base) {
+  const context = await browser.newContext()
+  const page = await context.newPage()
+  const problems = []
+  watch(page, problems, 'device list')
+
+  await page.goto(`${base}/#/devices`)
+  await page.locator('.device-row-item').first().waitFor({ timeout: TIMEOUT })
+
+  const lefts = await page
+    .locator('.device-row-item .device-row-name')
+    .evaluateAll((nodes) => nodes.map((node) => Math.round(node.getBoundingClientRect().left)))
+  check(
+    'device names line up whatever the status says',
+    new Set(lefts).size === 1,
+    lefts.join(', '),
+  )
+  if (new Set(lefts).size !== 1) await shoot(page, 'device-names-ragged')
+
+  // The drawer opens on what is wrong, not on an input nobody came for.
+  await page.locator('.device-row-item', { hasText: 'Chapel encoder' }).first().click()
+  const drawer = page.locator('aside.drawer')
+  await drawer.waitFor({ timeout: TIMEOUT })
+  const banner = drawer.locator('.banner.error').first()
+  const tags = drawer.locator('.field-label:text-is("Tags")').first()
+  await banner.waitFor({ timeout: TIMEOUT }).catch(() => undefined)
+  const bannerTop = await banner.evaluate((n) => n.getBoundingClientRect().top).catch(() => -1)
+  const tagsTop = await tags.evaluate((n) => n.getBoundingClientRect().top).catch(() => -1)
+  check(
+    'the drawer leads with the failure, not the tag box',
+    bannerTop > 0 && tagsTop > bannerTop,
+    `banner ${bannerTop}, tags ${tagsTop}`,
+  )
+
+  check('device list: no console errors', problems.length === 0, problems.slice(0, 3).join(' | '))
   await context.close()
 }
 
