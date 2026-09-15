@@ -562,8 +562,9 @@ export interface SessionState {
   /** False means no password is set: anyone who can reach the port is in. */
   required: boolean
   signedIn: boolean
-  /** Set by SCHEDULER_UI_PASSWORD, so this app cannot change it. */
-  managedByEnvironment: boolean
+  /** The stored password originally came from SCHEDULER_UI_PASSWORD. It can
+   *  still be changed here; that variable is no longer read. */
+  seededFromEnvironment: boolean
   minPasswordLength: number
 }
 

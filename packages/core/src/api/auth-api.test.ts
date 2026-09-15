@@ -87,7 +87,7 @@ describe('with no password set', () => {
     expect(JSON.parse((await get('/api/session')).body)).toMatchObject({
       required: false,
       signedIn: true,
-      managedByEnvironment: false,
+      seededFromEnvironment: false,
     })
   })
 
@@ -243,7 +243,7 @@ describe('with the password set by the environment', () => {
     expect(signedIn.statusCode).toBe(200)
   })
 
-  it('will not be changed from the UI, because the environment would win back', async () => {
+  it('can then be changed from the UI, which takes it over', async () => {
     const cookie = (await post('/api/login', { password: 'from-the-environment' })).cookies.find(
       (c) => c.name === SESSION_COOKIE,
     )
@@ -252,14 +252,15 @@ describe('with the password set by the environment', () => {
       { password: 'something else' },
       { cookie: `${SESSION_COOKIE}=${cookie?.value ?? ''}` },
     )
-    expect(changed.statusCode).toBe(409)
-    expect(JSON.parse(changed.body).error).toMatch(/SCHEDULER_UI_PASSWORD/)
+    expect(changed.statusCode).toBe(200)
+    expect((await post('/api/login', { password: 'something else' })).statusCode).toBe(200)
+    expect((await post('/api/login', { password: 'from-the-environment' })).statusCode).toBe(401)
   })
 
-  it('says it is managed, so the UI does not offer a control that cannot work', async () => {
+  it('says where the password came from, so the UI can explain itself', async () => {
     expect(JSON.parse((await get('/api/session')).body)).toMatchObject({
       required: true,
-      managedByEnvironment: true,
+      seededFromEnvironment: true,
     })
   })
 })
