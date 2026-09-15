@@ -138,18 +138,17 @@ export const STREAMING_PLATFORMS: StreamingPlatform[] = [
       'appears.',
   },
   {
-    id: 'resi',
-    name: 'Resi',
-    whereToFind: 'Resi Control → your encoder → the RTMP input it is set to.',
-    note:
-      'Resi gives an ingest URL per encoder profile. This points a Blackmagic box at it in place ' +
-      'of a Resi encoder; scheduling on the Resi side is still Resi’s.',
-  },
-  {
     id: 'boxcast',
     name: 'BoxCast',
-    whereToFind: 'BoxCast dashboard → the broadcast → "Stream to BoxCast", under RTMP.',
-    note: 'The URL is per broadcast source, so paste the one BoxCast shows for yours.',
+    ingestUrl: 'rtmp://rtmp.boxcast.com/live',
+    whereToFind:
+      'BoxCast dashboard → Sources → your RTMP source. It shows a Server URL and a Stream Key ' +
+      'with copy buttons beside each.',
+    findKeyUrl: 'https://dashboard.boxcast.com/sources',
+    note:
+      'The stream key changes with every broadcast unless your account has the static RTMP ' +
+      'feature switched on — without it this needs replacing each week. Ask BoxCast for a static ' +
+      'source if you are scheduling a recurring service against it.',
   },
   {
     id: 'owncast',

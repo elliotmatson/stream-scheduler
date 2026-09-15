@@ -25,12 +25,27 @@ describe('the platform catalogue', () => {
     // Vimeo, Kick and LinkedIn issue one per account or per broadcast.
     // Prefilling a plausible wrong URL is worse than prefilling nothing:
     // the mistake shows up as a stream that silently does not appear.
-    for (const id of ['vimeo', 'kick', 'linkedin', 'resi', 'boxcast']) {
+    for (const id of ['vimeo', 'kick', 'linkedin']) {
       expect(platformById(id)?.ingestUrl).toBeUndefined()
       expect(platformById(id)?.note ?? platformById(id)?.whereToFind).toMatch(/paste|per|issue/i)
     }
     expect(platformById('facebook')?.ingestUrl).toMatch(/^rtmps:\/\//)
     expect(platformById('twitch')?.ingestUrl).toMatch(/^rtmp:\/\//)
+    expect(platformById('boxcast')?.ingestUrl).toMatch(/^rtmp:\/\//)
+  })
+
+  it('lists no service without checking it takes RTMP at all', () => {
+    // Resi was here and should not have been: its whole proposition is a
+    // resilient store-and-forward protocol instead of RTMP, and its
+    // published RTMP feature is about the streams it sends out, not ones
+    // it accepts in. An entry that sends somebody down a wrong path is
+    // worse than no entry, because this list is read by people who are
+    // trusting it to save them the search.
+    expect(platformById('resi')).toBeUndefined()
+  })
+
+  it('warns that a BoxCast key expires unless the account is set up for it', () => {
+    expect(platformById('boxcast')?.note).toMatch(/static/i)
   })
 
   it('offers Twitch the automatic ingest first', () => {
