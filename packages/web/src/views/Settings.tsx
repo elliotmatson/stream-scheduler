@@ -5,9 +5,10 @@ import {
   useResource,
   type BackupInspection,
   type BackupSchedule,
+  type BackupStatus,
   type SessionState,
 } from '../api.ts'
-import { Card, ConfirmButton, Empty, ErrorBanner, Field, PageHead } from '../components.tsx'
+import { Card, ConfirmButton, ErrorBanner, Field, PageHead } from '../components.tsx'
 import { dateTimeIn, relative } from '../format.ts'
 
 /**
@@ -18,6 +19,10 @@ import { dateTimeIn, relative } from '../format.ts'
  */
 export function Settings({ onSessionChanged }: { onSessionChanged: () => void }): ReactNode {
   const { data, error, reload } = useResource(() => api.session(), [])
+  // Asked for once here and handed to both cards below: backing up and
+  // putting one back read the same status, and two fetches of it would be
+  // two chances for the two cards to disagree.
+  const backup = useResource(() => api.backupStatus(), [])
 
   return (
     <>
@@ -35,7 +40,12 @@ export function Settings({ onSessionChanged }: { onSessionChanged: () => void })
           />
         ) : null}
 
-        <Backup />
+        <Backup data={backup.data} error={backup.error} onChanged={backup.reload} />
+        <Restore
+          lastRestore={backup.data?.lastRestore}
+          stagedRestore={backup.data?.stagedRestore}
+          onChanged={backup.reload}
+        />
       </div>
     </>
   )
@@ -53,36 +63,18 @@ const here = Intl.DateTimeFormat().resolvedOptions().timeZone
  * secrets no key can open — and the first is handled for you while the
  * second can only be handled by somebody who knows it is a question.
  */
-function Backup(): ReactNode {
-  const { data, error, reload } = useResource(() => api.backupStatus(), [])
-  const [file, setFile] = useState<File>()
-  const [looked, setLooked] = useState<BackupInspection>()
-  const [busy, setBusy] = useState(false)
-  const [problem, setProblem] = useState<string>()
-  const [staged, setStaged] = useState<string>()
-  const chooser = useRef<HTMLInputElement>(null)
-
-  const run = async (action: () => Promise<void>): Promise<void> => {
-    setBusy(true)
-    setProblem(undefined)
-    try {
-      await action()
-    } catch (err) {
-      setProblem(err instanceof Error ? err.message : String(err))
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  const forget = (): void => {
-    setFile(undefined)
-    setLooked(undefined)
-    if (chooser.current) chooser.current.value = ''
-  }
-
+function Backup({
+  data,
+  error,
+  onChanged,
+}: {
+  data: BackupStatus | undefined
+  error: string | undefined
+  onChanged: () => void
+}): ReactNode {
   return (
     <Card title="Backup">
-      <ErrorBanner error={error ?? problem} />
+      <ErrorBanner error={error} />
 
       <p className="muted" style={{ marginTop: 0 }}>
         One file: a complete, consistent copy of everything this install knows, taken without
@@ -124,25 +116,74 @@ function Backup(): ReactNode {
             </a>
           </div>
 
-          <Schedule schedule={data.schedule} onChanged={reload} />
+          <Schedule schedule={data.schedule} onChanged={onChanged} />
         </>
       ) : null}
+    </Card>
+  )
+}
 
-      {data?.lastRestore ? (
-        <div className="banner" style={{ marginTop: 12 }}>
-          This install started by restoring a backup taken {relative(data.lastRestore.takenAt)}. The
-          database it replaced was kept, at <code>{data.lastRestore.previousDatabase}</code>.
+/**
+ * Putting one back.
+ *
+ * Its own card rather than the bottom of the backup one. They are opposite
+ * operations that happen years apart, and the one that replaces everything
+ * should not be something you arrive at by scrolling past the one that
+ * does not.
+ */
+function Restore({
+  lastRestore,
+  stagedRestore,
+  onChanged,
+}: {
+  lastRestore: BackupStatus['lastRestore']
+  stagedRestore: BackupStatus['stagedRestore']
+  onChanged: () => void
+}): ReactNode {
+  const [file, setFile] = useState<File>()
+  const [looked, setLooked] = useState<BackupInspection>()
+  const [busy, setBusy] = useState(false)
+  const [problem, setProblem] = useState<string>()
+  const [staged, setStaged] = useState<string>()
+  const chooser = useRef<HTMLInputElement>(null)
+
+  const run = async (action: () => Promise<void>): Promise<void> => {
+    setBusy(true)
+    setProblem(undefined)
+    try {
+      await action()
+    } catch (err) {
+      setProblem(err instanceof Error ? err.message : String(err))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const forget = (): void => {
+    setFile(undefined)
+    setLooked(undefined)
+    if (chooser.current) chooser.current.value = ''
+  }
+
+  const reload = onChanged
+
+  return (
+    <Card title="Restore">
+      <ErrorBanner error={problem} />
+
+      {lastRestore ? (
+        <div className="banner">
+          This install started by restoring a backup taken {relative(lastRestore.takenAt)}. The
+          database it replaced was kept, at <code>{lastRestore.previousDatabase}</code>.
         </div>
       ) : null}
 
-      <h3 style={{ marginBottom: 4 }}>Restore</h3>
-
-      {data?.stagedRestore ? (
+      {stagedRestore ? (
         <div className="stack" style={{ gap: 8 }}>
           <div className="banner warn">
-            A backup taken {dateTimeIn(data.stagedRestore.takenAt, here)} is waiting. Restart the
-            app to finish restoring it. The database in place now will be kept alongside it rather
-            than deleted.
+            A backup taken {dateTimeIn(stagedRestore.takenAt, here)} is waiting. Restart the app to
+            finish restoring it. The database in place now will be kept alongside it rather than
+            deleted.
           </div>
           <div className="row">
             <button
@@ -225,9 +266,7 @@ function Backup(): ReactNode {
                 </button>
               </div>
             </>
-          ) : file ? null : (
-            <Empty>No file chosen.</Empty>
-          )}
+          ) : null}
         </div>
       )}
     </Card>

@@ -55,7 +55,7 @@ export function Notifications(): ReactNode {
     <>
       <PageHead
         title="Notifications"
-        subtitle="Where to be told when something goes wrong."
+        subtitle="Where this tells you what happened. Problems by default; the rest if you ask."
         actions={
           <button className="primary" onClick={() => setAdding((open) => !open)}>
             {adding ? 'Cancel' : 'Add a notification'}
@@ -129,7 +129,9 @@ export function Notifications(): ReactNode {
 
               {channel.lastError ? <div className="banner error">{channel.lastError}</div> : null}
               <p className="muted" style={{ margin: '8px 0 0' }}>
-                Last delivered {channel.lastSentAt ? relative(channel.lastSentAt) : 'never'}.
+                {channel.lastSentAt
+                  ? `Last delivered ${relative(channel.lastSentAt)}.`
+                  : 'Nothing delivered yet.'}
               </p>
             </Card>
           ),

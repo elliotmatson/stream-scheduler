@@ -145,17 +145,22 @@ function SignedIn({
               </span>
             ) : (
               // Says plainly whether what you are looking at is current.
+              //
+              // Not "connected": a device row says that too, about a
+              // completely different link — this app to a deck, rather than
+              // this browser to this app. Two green pills a few inches
+              // apart meaning different things is worse than a longer word.
               <span
                 // The happy one is hidden on a phone, where it would cost a
                 // third of the bar to say that nothing is wrong.
                 className={`pill ${live.connected ? 'ok when-wide' : 'bad'}`}
                 title={
                   live.connected
-                    ? 'These screens are following the server. They update themselves.'
+                    ? 'This page is following the server, so it updates itself.'
                     : 'Not following the server, so what you see may be out of date. Trying again.'
                 }
               >
-                {live.connected ? 'connected' : 'reconnecting'}
+                {live.connected ? 'live updates' : 'reconnecting'}
               </span>
             )}
             <ThemeToggle preference={theme.preference} onChange={theme.setPreference} />

@@ -344,8 +344,9 @@ function DevicePanel({
           <DeviceForm plugins={plugins} device={device} onDone={onEdited} />
         ) : null}
 
-        <TagEditor kind="device" id={device.id} tags={device.tags ?? []} onChanged={onTagged} />
-
+        {/* First, because it is what somebody opened the drawer to read.
+          The tag editor used to sit here and pushed the failure down the
+          panel behind an input nobody came for. */}
         {device.lastError ? <div className="banner error">{device.lastError}</div> : null}
 
         <div className="row" style={{ gap: 18, marginTop: 8 }}>
@@ -421,6 +422,19 @@ function DevicePanel({
             Connect, and this fills in with what the device can actually do.
           </p>
         )}
+
+        {/* Last, and labelled. Tags are set once and read on the list
+          screen, so they belong at the bottom of the thing rather than
+          across the top of it — and an unlabelled input under the title
+          reads as "type something here", which is not what it is. */}
+        <div className="stack" style={{ marginTop: 16, gap: 6 }}>
+          <span className="field-label">Tags</span>
+          <TagEditor kind="device" id={device.id} tags={device.tags ?? []} onChanged={onTagged} />
+          <p className="muted" style={{ margin: 0, fontSize: 12 }}>
+            Your own labels, for finding this on the device list. Nothing here changes what the
+            device does.
+          </p>
+        </div>
       </aside>
     </>
   )
