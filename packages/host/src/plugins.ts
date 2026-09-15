@@ -1,6 +1,7 @@
 import { atemPlugin } from '@scheduler/plugin-atem'
 import { youtubeProvider } from '@scheduler/plugin-youtube'
 import { hyperdeckPlugin } from '@scheduler/plugin-hyperdeck'
+import { magewellPlugin } from '@scheduler/plugin-magewell'
 import { mockPlugin } from '@scheduler/plugin-mock'
 import { obsPlugin } from '@scheduler/plugin-obs'
 import { propresenterPlugin } from '@scheduler/plugin-propresenter'
@@ -27,6 +28,7 @@ export function bundledPlugins(): PluginDefinition[] {
     obsPlugin(),
     propresenterPlugin(),
     vmixPlugin(),
+    magewellPlugin(),
     mockPlugin(),
   ]
 }

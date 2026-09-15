@@ -140,6 +140,9 @@ importers:
       '@scheduler/plugin-hyperdeck':
         specifier: workspace:*
         version: link:../plugin-hyperdeck
+      '@scheduler/plugin-magewell':
+        specifier: workspace:*
+        version: link:../plugin-magewell
       '@scheduler/plugin-mock':
         specifier: workspace:*
         version: link:../plugin-mock
@@ -200,6 +203,16 @@ importers:
       hyperdeck-server-connection:
         specifier: ^0.2.0
         version: 0.2.0
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
+
+  packages/plugin-magewell:
+    dependencies:
+      '@scheduler/plugin-sdk':
+        specifier: workspace:*
+        version: link:../plugin-sdk
+    devDependencies:
       typescript:
         specifier: ^5.7.2
         version: 5.9.3

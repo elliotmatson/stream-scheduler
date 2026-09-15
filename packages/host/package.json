@@ -12,6 +12,7 @@
     "@scheduler/core": "workspace:*",
     "@scheduler/plugin-atem": "workspace:*",
     "@scheduler/plugin-hyperdeck": "workspace:*",
+    "@scheduler/plugin-magewell": "workspace:*",
     "@scheduler/plugin-mock": "workspace:*",
     "@scheduler/plugin-obs": "workspace:*",
     "@scheduler/plugin-propresenter": "workspace:*",
