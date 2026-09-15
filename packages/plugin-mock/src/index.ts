@@ -177,7 +177,14 @@ class MockDevice {
             maxLinks: 1,
           },
         ],
-        supports: ['startRecording', 'stopRecording', 'selectSlot', 'formatStorage', 'listMedia'],
+        supports: [
+          'startRecording',
+          'stopRecording',
+          'selectSlot',
+          'formatStorage',
+          'listMedia',
+          'deleteMedia',
+        ],
       })
     }
     return nodes
@@ -246,6 +253,23 @@ class MockDevice {
           this.guard()
           if (this.fault !== 'ignores-writes') this.recordingSlot = slot
           this.emit(nodeId)
+        },
+        // Refuses while recording, the way a card in use does. The host
+        // already refuses a sweep on a busy deck; this is the second line,
+        // so a bug in the first one fails loudly rather than quietly
+        // deleting off a card being written to.
+        deleteMedia: async ({ name, slot }) => {
+          this.guard()
+          if (this.recording) {
+            throw new DeviceError('busy', 'This device is recording and will not remove files.')
+          }
+          const before = this.clips.length
+          this.clips = this.clips.filter(
+            (clip) => !(clip.name === name && (slot === undefined || clip.slot === slot)),
+          )
+          if (this.clips.length === before) {
+            throw new DeviceError('not-found', `There is no file called "${name}" on this device.`)
+          }
         },
         listMedia: async ({ slot }) =>
           this.clips

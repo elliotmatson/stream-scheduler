@@ -36,6 +36,15 @@ export interface RetentionCandidate {
   artifact: RecordingArtifact
   /** True when the device's own listing agrees the file is there. */
   onDevice: boolean
+  /**
+   * What the device calls it, where the device has told us.
+   *
+   * Not the same string as `artifact.filename`: we ask for "service-5" and
+   * the deck writes "service-5.mov", or "service-5_1.mov" when the name
+   * was taken. Anything that acts on the file — deleting it, above all —
+   * has to use the deck's name, not ours.
+   */
+  deviceName?: string
   ageMs: number
 }
 
@@ -105,12 +114,16 @@ export function assess(input: {
   // it is lying about what is there. The rail that matters lives on
   // `wouldDelete` below, where it actually decides something.
   const ours = input.artifacts
-    .map((artifact) => ({
-      artifact,
-      // A device that cannot list its media is taken at the ledger's word.
-      onDevice: names === undefined || matches(names, artifact.filename),
-      ageMs: Math.max(input.now - artifact.startedAt, 0),
-    }))
+    .map((artifact) => {
+      const listed = names === undefined ? undefined : listedAs(names, artifact.filename)
+      return {
+        artifact,
+        // A device that cannot list its media is taken at the ledger's word.
+        onDevice: names === undefined || listed !== undefined,
+        ...(listed === undefined ? {} : { deviceName: listed }),
+        ageMs: Math.max(input.now - artifact.startedAt, 0),
+      }
+    })
     .sort((a, b) => b.artifact.startedAt - a.artifact.startedAt)
 
   const keepLast = input.policy.keepLast ?? DEFAULT_KEEP_LAST
@@ -161,9 +174,10 @@ function sameFile(filename: string, listed: string): boolean {
   return withoutExtension === filename || withoutExtension.startsWith(`${filename}_`)
 }
 
-function matches(names: Set<string>, filename: string): boolean {
-  for (const name of names) if (sameFile(filename, name)) return true
-  return false
+/** The name the device gave our file, if it has it at all. */
+function listedAs(names: Set<string>, filename: string): string | undefined {
+  for (const name of names) if (sameFile(filename, name)) return name
+  return undefined
 }
 
 /** Every recording output that has a device, with its policy. */
@@ -225,4 +239,27 @@ export async function reportAll(deps: {
     )
   }
   return reports
+}
+
+/**
+ * The event, if any, that is mid-run on this device.
+ *
+ * Three things are refused while one is: erasing a card, re-pointing an
+ * encoder, and sweeping old recordings. All three would be undone by — or
+ * worse, would interfere with — a run part-way through its window.
+ */
+export function eventMidRunOn(db: Db, deviceId: string): string | undefined {
+  return (
+    db
+      .prepare(
+        `SELECT s.label AS label
+           FROM run r
+           JOIN occurrence o ON o.id = r.occurrence_id
+           JOIN event_series s ON s.id = o.series_id
+           JOIN event_output eo ON eo.series_id = s.id AND eo.enabled = 1
+          WHERE r.state NOT IN ('completed', 'failed', 'cancelled') AND eo.device_id = ?
+          LIMIT 1`,
+      )
+      .get(deviceId) as { label: string } | undefined
+  )?.label
 }

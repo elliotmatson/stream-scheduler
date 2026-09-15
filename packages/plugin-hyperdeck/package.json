@@ -16,6 +16,7 @@
   },
   "dependencies": {
     "@scheduler/plugin-sdk": "workspace:*",
+    "basic-ftp": "^6.2.1",
     "hyperdeck-connection": "^2.0.1"
   },
   "devDependencies": {

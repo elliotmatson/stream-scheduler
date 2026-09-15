@@ -333,6 +333,20 @@ export interface RetentionReport {
   unknownToUs: string[]
 }
 
+export interface SweepPlan {
+  swept: false
+  confirm: string
+  outputLabel: string
+  seriesLabel: string
+  files: { filename: string; slot: number | null }[]
+}
+
+export interface SweepResult {
+  swept: true
+  removed: { filename: string }[]
+  failed: { filename: string; reason: string }[]
+}
+
 export interface RetentionCandidate {
   artifact: {
     id: string
@@ -505,8 +519,20 @@ export const api = {
   dashboard: () => request<Dashboard>('/api/dashboard'),
   runs: () => request<Run[]>('/api/runs'),
   run: (id: string) => request<Run>(`/api/runs/${id}`),
-  /** What each recording output's policy says could go. Nothing is deleted. */
+  /** What each recording output's policy says could go. */
   retention: () => request<{ outputs: RetentionReport[] }>('/api/retention'),
+  /** Step one: the exact list, and a token to remove it with. */
+  prepareSweep: (outputId: string) =>
+    request<SweepPlan>('/api/retention/sweep', {
+      method: 'POST',
+      body: JSON.stringify({ outputId }),
+    }),
+  /** Step two: removes precisely the files the plan named. */
+  confirmSweep: (outputId: string, confirm: string) =>
+    request<SweepResult>('/api/retention/sweep', {
+      method: 'POST',
+      body: JSON.stringify({ outputId, confirm }),
+    }),
   runTelemetry: (id: string, windowMs?: number) =>
     request<RunTelemetry>(
       `/api/runs/${id}/telemetry${windowMs === undefined ? '' : `?windowMs=${windowMs}`}`,

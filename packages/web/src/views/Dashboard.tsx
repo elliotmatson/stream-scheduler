@@ -1,6 +1,14 @@
 import { useState } from 'react'
 import type { ReactNode } from 'react'
-import { api, useLive, useLiveRefresh, useResource, type DashboardOutput } from '../api.ts'
+import {
+  api,
+  useLive,
+  useLiveRefresh,
+  useResource,
+  type DashboardOutput,
+  type SweepPlan,
+  type SweepResult,
+} from '../api.ts'
 import {
   Card,
   CopyButton,
@@ -217,6 +225,95 @@ export function Dashboard({ navigate }: { navigate: (path: string) => void }): R
  * that is wrong with it.
  */
 /**
+ * Removing recordings, in two steps.
+ *
+ * Nothing about this is a single click. The first press asks the server
+ * what would go and shows the filenames; the second removes precisely
+ * those and nothing else. That is not caution theatre — the server
+ * genuinely deletes the list it handed back, so what is on the screen is
+ * what goes, even if a recording finishes in between.
+ */
+function SweepButton({
+  outputId,
+  count,
+  names,
+}: {
+  outputId: string
+  count: number
+  names: string[]
+}): ReactNode {
+  const [plan, setPlan] = useState<SweepPlan>()
+  const [result, setResult] = useState<SweepResult>()
+  const [busy, setBusy] = useState(false)
+  const [problem, setProblem] = useState<string>()
+
+  const run = async (action: () => Promise<void>): Promise<void> => {
+    setBusy(true)
+    setProblem(undefined)
+    try {
+      await action()
+    } catch (err) {
+      setProblem(err instanceof Error ? err.message : String(err))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  if (result) {
+    return (
+      <span className="muted">
+        Removed {result.removed.length}
+        {result.failed.length > 0 ? `, ${result.failed.length} refused` : ''}.
+      </span>
+    )
+  }
+
+  return (
+    <span className="row" style={{ gap: 8 }}>
+      <span className="warn-text" title={names.join(', ')}>
+        {count} past the keep-by date
+      </span>
+
+      {plan === undefined ? (
+        <button
+          disabled={busy}
+          title="Asks what would go, and shows you before anything is removed."
+          onClick={() =>
+            void run(async () => {
+              setPlan(await api.prepareSweep(outputId))
+            })
+          }
+        >
+          {busy ? 'Checking…' : 'Sweep…'}
+        </button>
+      ) : (
+        <>
+          <span className="bad" title={plan.files.map((file) => file.filename).join(', ')}>
+            Delete {plan.files.length} file{plan.files.length === 1 ? '' : 's'}?
+          </span>
+          <button
+            className="danger solid"
+            disabled={busy || plan.files.length === 0}
+            onClick={() =>
+              void run(async () => {
+                setResult(await api.confirmSweep(outputId, plan.confirm))
+              })
+            }
+          >
+            {busy ? 'Removing…' : 'Yes, delete'}
+          </button>
+          <button disabled={busy} onClick={() => setPlan(undefined)}>
+            Cancel
+          </button>
+        </>
+      )}
+
+      {problem ? <span className="bad">{problem}</span> : null}
+    </span>
+  )
+}
+
+/**
  * What each recording output's policy says could go.
  *
  * Deliberately a statement, not a button. Automated deletion of somebody's
@@ -278,12 +375,11 @@ function Recordings(): ReactNode {
                   </span>
                 )}
                 {entry.wouldDelete.length > 0 ? (
-                  <span
-                    className="warn-text"
-                    title={entry.wouldDelete.map((c) => c.artifact.filename).join(', ')}
-                  >
-                    {entry.wouldDelete.length} past the keep-by date
-                  </span>
+                  <SweepButton
+                    outputId={entry.outputId}
+                    count={entry.wouldDelete.length}
+                    names={entry.wouldDelete.map((c) => c.artifact.filename)}
+                  />
                 ) : null}
                 {entry.unknownToUs.length > 0 ? (
                   <span title={entry.unknownToUs.join(', ')}>
