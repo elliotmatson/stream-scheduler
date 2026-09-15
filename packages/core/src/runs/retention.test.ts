@@ -8,7 +8,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { Application } from '../app.js'
 import { createServer } from '../api/server.js'
 import { silentLogger } from '../log.js'
-import { assess, DEFAULT_KEEP_LAST, policyOf } from './retention.js'
+import { assess, DEFAULT_KEEP_LAST, isConfigured, policyOf } from './retention.js'
 import type { RecordingArtifact } from './artifacts.js'
 
 /**
@@ -38,7 +38,12 @@ const artifact = (name: string, ageDays: number, over = {}): RecordingArtifact =
   ...over,
 })
 
-const report = (artifacts: RecordingArtifact[], policy = {}, media?: { name: string }[]) =>
+const report = (
+  artifacts: RecordingArtifact[],
+  policy = {},
+  media?: { name: string }[],
+  freeMs?: number,
+) =>
   assess({
     outputId: 'out-1',
     outputLabel: 'Archive copy',
@@ -48,6 +53,7 @@ const report = (artifacts: RecordingArtifact[], policy = {}, media?: { name: str
     policy,
     artifacts,
     ...(media === undefined ? {} : { media }),
+    ...(freeMs === undefined ? {} : { freeMs }),
     now: NOW,
   })
 
@@ -84,13 +90,68 @@ describe('deciding what is past its keep-by date', () => {
 
   it('keeps the newest few whatever the dates say', () => {
     // A quiet season: everything on the card is older than the policy.
-    const quiet = [artifact('a', 90), artifact('b', 120), artifact('c', 150), artifact('d', 180)]
+    const quiet = Array.from({ length: 12 }, (_, index) =>
+      artifact(`week-${index}`, 60 + index * 7),
+    )
     const answer = report(quiet, { keepDays: 30 })
 
-    // Without this rail a month off would empty the card.
-    expect(names(answer.wouldDelete)).toEqual(['d'])
+    // Without this rail a month off would empty the card. Ten kept, which
+    // is the default nobody had to type.
+    expect(names(answer.wouldDelete)).toEqual(['week-10', 'week-11'])
     expect(answer.policy.keepLast).toBeUndefined()
-    expect(DEFAULT_KEEP_LAST).toBe(3)
+    expect(answer.effectiveKeepLast).toBe(DEFAULT_KEEP_LAST)
+    expect(DEFAULT_KEEP_LAST).toBe(10)
+  })
+
+  it('sweeps early when the card is running out of room', () => {
+    // The case a keep-for date cannot cover: a fortnight of extra services
+    // fills a card long before anything on it is thirty days old.
+    const recent = [
+      artifact('this-week', 1),
+      artifact('last-week', 8),
+      artifact('the-week-before', 15),
+    ]
+    const policy = { keepDays: 30, keepLast: 1, minFreeHours: 4 }
+
+    // Plenty of room: age still decides, and nothing here is old enough.
+    const roomy = report(recent, policy, undefined, 20 * 3_600_000)
+    expect(roomy.wouldDelete).toEqual([])
+    expect(roomy.underPressure).toBe(false)
+
+    // Under the floor: everything past the newest one is eligible, which
+    // is what keeping the newest one was a promise about.
+    const tight = report(recent, policy, undefined, 2 * 3_600_000)
+    expect(names(tight.wouldDelete)).toEqual(['last-week', 'the-week-before'])
+    expect(tight.underPressure).toBe(true)
+    expect(tight.freeMs).toBe(2 * 3_600_000)
+  })
+
+  it('does not read a device that says nothing about room as nearly full', () => {
+    // A deck that cannot report headroom must not have its silence taken
+    // for an empty card.
+    const answer = report([artifact('a', 1), artifact('b', 2)], { minFreeHours: 4, keepLast: 0 })
+    expect(answer.underPressure).toBe(false)
+    expect(answer.wouldDelete).toEqual([])
+  })
+
+  it('treats a free-space floor on its own as a policy', () => {
+    // Somebody who only cares that the card never fills should not have to
+    // invent a keep-for date to get that.
+    expect(isConfigured({ minFreeHours: 4 })).toBe(true)
+    expect(isConfigured({ keepDays: 30 })).toBe(true)
+    expect(isConfigured({ keepLast: 3 })).toBe(false)
+    expect(isConfigured({})).toBe(false)
+
+    const answer = report(
+      [artifact('a', 1), artifact('b', 2), artifact('c', 3)],
+      {
+        minFreeHours: 4,
+        keepLast: 1,
+      },
+      undefined,
+      60_000,
+    )
+    expect(names(answer.wouldDelete)).toEqual(['b', 'c'])
   })
 
   it('never proposes a recording that is still being written', () => {
@@ -165,6 +226,14 @@ describe('reading a policy off an output', () => {
     expect(policyOf({ retention: { keepDays: 30, keepLast: 2 } })).toEqual({
       keepDays: 30,
       keepLast: 2,
+    })
+
+    // The free-space floor gets the same treatment: zero hours free is not
+    // a floor anybody meant to type.
+    expect(policyOf({ retention: { minFreeHours: 0 } })).toEqual({})
+    expect(policyOf({ retention: { keepDays: 30, minFreeHours: 6 } })).toEqual({
+      keepDays: 30,
+      minFreeHours: 6,
     })
   })
 })

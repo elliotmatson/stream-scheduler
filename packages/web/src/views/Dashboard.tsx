@@ -6,6 +6,7 @@ import {
   useLiveRefresh,
   useResource,
   type DashboardOutput,
+  type RetentionReport,
   type SweepPlan,
   type SweepResult,
 } from '../api.ts'
@@ -313,13 +314,43 @@ function SweepButton({
   )
 }
 
+/** `30 days, newest 10` — the policy on one line. */
+function summarisePolicy(entry: RetentionReport): string {
+  const parts = []
+  if (entry.policy.keepDays !== undefined) parts.push(`${entry.policy.keepDays} days`)
+  if (entry.policy.minFreeHours !== undefined) {
+    parts.push(`under ${entry.policy.minFreeHours}h free`)
+  }
+  if (parts.length === 0) return 'kept forever'
+  // The number the server actually applied, not this screen's guess at
+  // what the default is.
+  return `${parts.join(' or ')}, newest ${entry.effectiveKeepLast} always`
+}
+
+/** The same thing spelled out, for the tooltip. */
+function describePolicy(entry: RetentionReport): string {
+  if (entry.policy.keepDays === undefined && entry.policy.minFreeHours === undefined) {
+    return 'No policy, so nothing here is ever deleted.'
+  }
+  const reasons = []
+  if (entry.policy.keepDays !== undefined) {
+    reasons.push(`are more than ${entry.policy.keepDays} days old`)
+  }
+  if (entry.policy.minFreeHours !== undefined) {
+    reasons.push(
+      `the card drops below ${entry.policy.minFreeHours} hours of recording time, whatever their age`,
+    )
+  }
+  return `Swept every hour. Recordings go when they ${reasons.join(', or when ')} — except the newest ${entry.effectiveKeepLast}, which are always kept, and anything this scheduler did not record.`
+}
+
 /**
- * What each recording output's policy says could go.
+ * What is on the cards, and what each policy says about it.
  *
- * Deliberately a statement, not a button. Automated deletion of somebody's
- * Sunday has to earn its place: this screen is how the decision gets
- * looked at before anything is allowed to act on it. Asking the decks is
- * the slow part, so it loads on its own rather than with the rest of the
+ * The hourly sweep enforces these on its own, so this screen is how
+ * somebody checks what it has been doing and what it is about to do —
+ * and the button is for not waiting the hour. Asking the decks is the
+ * slow part, so it loads on its own rather than with the rest of the
  * page, and only when somebody opens it.
  */
 function Recordings(): ReactNode {
@@ -338,7 +369,7 @@ function Recordings(): ReactNode {
       <PageHead
         level={2}
         title="Recordings"
-        subtitle="What is on the cards, and what a keep-for policy says could go."
+        subtitle="What is on the cards, and what the hourly sweep will take off them."
         actions={
           <button onClick={() => setOpen((was) => !was)}>
             {open ? 'Hide' : 'Ask the devices'}
@@ -367,13 +398,15 @@ function Recordings(): ReactNode {
                 <span>
                   {entry.kept.length} recording{entry.kept.length === 1 ? '' : 's'} of ours
                 </span>
-                {entry.policy.keepDays === undefined ? (
-                  <span>kept forever</span>
-                ) : (
-                  <span>
-                    keep {entry.policy.keepDays} days, newest {entry.policy.keepLast ?? 3} always
+                <span title={describePolicy(entry)}>{summarisePolicy(entry)}</span>
+                {entry.underPressure ? (
+                  <span
+                    className="warn-text"
+                    title="The card is below the free-space floor this output sets, so age has stopped deciding: everything past the newest few is eligible."
+                  >
+                    low on space
                   </span>
-                )}
+                ) : null}
                 {entry.wouldDelete.length > 0 ? (
                   <SweepButton
                     outputId={entry.outputId}
@@ -392,9 +425,11 @@ function Recordings(): ReactNode {
           ))}
 
           <p className="muted" style={{ margin: 0, fontSize: 12 }}>
-            {eligible === 0
-              ? 'Nothing is past its keep-by date.'
-              : `${eligible} recording${eligible === 1 ? '' : 's'} would go if deleting were switched on. Nothing is deleted: this scheduler cannot delete anything yet.`}
+            {configured.length === 0
+              ? 'No output has a keep-for policy, so nothing is ever deleted.'
+              : eligible === 0
+                ? 'Nothing is past its keep-by date. Outputs with a policy are swept every hour.'
+                : `${eligible} recording${eligible === 1 ? '' : 's'} past the policy. The hourly sweep will remove ${eligible === 1 ? 'it' : 'them'}, or you can do it now.`}
           </p>
         </div>
       )}
