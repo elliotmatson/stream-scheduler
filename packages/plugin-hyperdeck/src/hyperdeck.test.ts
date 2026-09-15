@@ -58,6 +58,18 @@ function makeDeck(): FakeDeck {
     formats: ['QuickTimeProResHQ', 'QuickTimeProResLT'],
     configurationReads: 0,
     formatted: [] as number[],
+    // What `disk list` would answer with. A real deck names its clips and
+    // says how long they are, and has no answer for when they were made.
+    //
+    // Dot-free codec names on purpose: hyperdeck-connection parses the
+    // codec with `\w+`, so a name like "H.264High" makes it drop the clip
+    // silently. Whether real decks report a dotted name for H.264 is a
+    // question for the hardware (#3) — this fake must not paper over it by
+    // pretending the parser is more forgiving than it is.
+    clips: [
+      { name: '2026-09-06 Sunday Service.mov', codec: 'ProRes422HQ', duration: '00:52:14:00' },
+      { name: '2026-08-30 Sunday Service.mov', codec: 'ProRes422HQ', duration: '00:48:02:00' },
+    ],
   }
   const server = new HyperdeckServer('127.0.0.1', PORT)
 
@@ -148,6 +160,15 @@ function makeDeck(): FakeDeck {
     'recording time': String(state.recordingTimeSeconds),
     'video format': '1080p50',
   })
+  server.onDiskList = async (command) => ({
+    'slot id': String(command.parameters['slot id'] ?? state.selectedSlot),
+    ...Object.fromEntries(
+      state.clips.map((clip, index) => [
+        String(index + 1),
+        `${clip.name} ${clip.codec} 1080p50 ${clip.duration}`,
+      ]),
+    ),
+  })
 
   return { server, state }
 }
@@ -225,6 +246,7 @@ describe('connecting', () => {
       'stopRecording',
       'selectSlot',
       'formatStorage',
+      'listMedia',
     ])
   })
 })
@@ -461,5 +483,31 @@ describe('state reporting', () => {
 
     await hyperdeck.dispose()
     expect((await hyperdeck.health()).state).toBe('disconnected')
+  })
+})
+
+describe('what is on the card', () => {
+  it('lists the clips the deck reports, with what it knows about each', async () => {
+    const hyperdeck = await connect()
+    const listed = await hyperdeck.invoke('record', 'listMedia', {})
+
+    const media = (listed?.raw?.media ?? []) as { name: string; codec?: string; slot?: number }[]
+    expect(media.map((item) => item.name)).toEqual([
+      '2026-09-06 Sunday Service.mov',
+      '2026-08-30 Sunday Service.mov',
+    ])
+    expect(media[0]?.codec).toBe('ProRes422HQ')
+    expect(media[0]?.slot).toBe(1)
+  })
+
+  it('asks about one slot when told which', async () => {
+    const hyperdeck = await connect()
+    const asked: string[] = []
+    deck.server.onDiskList = async (command) => {
+      asked.push(String(command.parameters['slot id']))
+      return { 'slot id': String(command.parameters['slot id']) }
+    }
+    await hyperdeck.invoke('record', 'listMedia', { slot: 2 })
+    expect(asked).toEqual(['2'])
   })
 })

@@ -109,6 +109,15 @@ class MockDevice {
   private formatToken: { slot: number; token: string } | undefined
   private formatCount = 0
   private readonly blanked = new Set<number>()
+  /**
+   * What is on the cards, in the order it was written.
+   *
+   * A real deck names a clip and remembers nothing about when it was made;
+   * this keeps `recordedAt` because a fake that is harder to inspect than
+   * the hardware helps nobody, and retention never reads it — the ledger
+   * is where "when" comes from.
+   */
+  private clips: { name: string; slot: number; recordedAt: number; codec: string }[] = []
   private readonly connectedAt: number
 
   constructor(
@@ -168,7 +177,7 @@ class MockDevice {
             maxLinks: 1,
           },
         ],
-        supports: ['startRecording', 'stopRecording', 'selectSlot', 'formatStorage'],
+        supports: ['startRecording', 'stopRecording', 'selectSlot', 'formatStorage', 'listMedia'],
       })
     }
     return nodes
@@ -216,6 +225,14 @@ class MockDevice {
             this.recordingSince ??= this.now()
             this.filename = filename
             if (slot !== undefined) this.recordingSlot = slot
+            // The card keeps what was written to it, the way a real one
+            // does — which is what makes a retention report testable.
+            this.clips.push({
+              name: `${filename}.mov`,
+              slot: slot ?? this.recordingSlot,
+              recordedAt: this.now(),
+              codec: 'ProRes422HQ',
+            })
           }
           this.emit(nodeId)
         },
@@ -230,6 +247,11 @@ class MockDevice {
           if (this.fault !== 'ignores-writes') this.recordingSlot = slot
           this.emit(nodeId)
         },
+        listMedia: async ({ slot }) =>
+          this.clips
+            .filter((clip) => slot === undefined || clip.slot === slot)
+            .filter((clip) => !this.blanked.has(clip.slot))
+            .map((clip) => ({ ...clip })),
         // Two steps, like the deck this stands in for: preparing hands back
         // a token and erases nothing, and only that token erases the card.
         formatStorage: async ({ slot, confirm }) => {
@@ -248,7 +270,10 @@ class MockDevice {
             )
           }
           this.formatToken = undefined
-          if (this.fault !== 'ignores-writes') this.blanked.add(slot)
+          if (this.fault !== 'ignores-writes') {
+            this.blanked.add(slot)
+            this.clips = this.clips.filter((clip) => clip.slot !== slot)
+          }
           this.emit(nodeId)
           return {}
         },

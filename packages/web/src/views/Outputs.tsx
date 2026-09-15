@@ -318,13 +318,51 @@ function OutputRow(props: RowProps): ReactNode {
               </Field>
             </>
           ) : (
-            <Field label="Filename" hint="The device adds its own extension.">
-              <input
-                value={draft.filename}
-                placeholder={series.templates.filename ?? '{{date "yyyy-MM-dd"}} {{event.name}}'}
-                onChange={(event) => set('filename', event.target.value)}
-              />
-            </Field>
+            <>
+              <Field label="Filename" hint="The device adds its own extension.">
+                <input
+                  value={draft.filename}
+                  placeholder={series.templates.filename ?? '{{date "yyyy-MM-dd"}} {{event.name}}'}
+                  onChange={(event) => set('filename', event.target.value)}
+                />
+              </Field>
+
+              {/* A policy this scheduler keeps, not a setting on the deck:
+                  the device has no notion of how long a file is worth. */}
+              <div className="row" style={{ gap: 18, alignItems: 'flex-start' }}>
+                <Field
+                  label="Keep for (days)"
+                  hint="Leave blank to keep recordings forever, which is the default."
+                >
+                  <input
+                    type="number"
+                    min={1}
+                    max={3650}
+                    value={draft.keepDays}
+                    placeholder="forever"
+                    onChange={(event) => set('keepDays', event.target.value)}
+                  />
+                </Field>
+                <Field
+                  label="Always keep the newest"
+                  hint="However old they are, so a quiet month cannot empty the card."
+                >
+                  <input
+                    type="number"
+                    min={0}
+                    max={100}
+                    value={draft.keepLast}
+                    placeholder="3"
+                    disabled={!draft.keepDays}
+                    onChange={(event) => set('keepLast', event.target.value)}
+                  />
+                </Field>
+              </div>
+              <p className="muted" style={{ margin: 0, fontSize: 12 }}>
+                Nothing is deleted yet. This says what would go; see Recordings on the status
+                screen.
+              </p>
+            </>
           )}
         </div>
       </details>
@@ -525,6 +563,9 @@ interface RowDraft {
   /** Blank means "leave the device as it is". */
   quality: string
   slot: string
+  /** Blank means recordings are kept forever, which is the default. */
+  keepDays: string
+  keepLast: string
   enabled: boolean
 }
 
@@ -546,15 +587,40 @@ function toDraft(
     filename: output?.templates.filename ?? '',
     quality: output?.settings.quality ?? '',
     slot: output?.settings.slot === undefined ? '' : String(output.settings.slot),
+    keepDays:
+      output?.settings.retention?.keepDays === undefined
+        ? ''
+        : String(output.settings.retention.keepDays),
+    keepLast:
+      output?.settings.retention?.keepLast === undefined
+        ? ''
+        : String(output.settings.retention.keepLast),
     enabled: output?.enabled ?? true,
     ...(kind === 'recording' ? { destinationId: null, credentialId: null } : {}),
   }
 }
 
-function settingsOf(draft: RowDraft): { quality?: string; slot?: number } {
-  const out: { quality?: string; slot?: number } = {}
+function settingsOf(draft: RowDraft): {
+  quality?: string
+  slot?: number
+  retention?: { keepDays?: number; keepLast?: number }
+} {
+  const out: {
+    quality?: string
+    slot?: number
+    retention?: { keepDays?: number; keepLast?: number }
+  } = {}
   if (draft.quality) out.quality = draft.quality
   if (draft.slot) out.slot = Number(draft.slot)
+
+  // Only sent when there is an age to go on. Without one there is nothing
+  // to be eligible, so "keep the newest 3 of forever" is not a policy.
+  if (draft.keepDays) {
+    out.retention = {
+      keepDays: Number(draft.keepDays),
+      ...(draft.keepLast === '' ? {} : { keepLast: Number(draft.keepLast) }),
+    }
+  }
   return out
 }
 

@@ -61,6 +61,19 @@ export function defineDevice(spec: DeviceSpec): DeviceInstance {
         return { raw: result.confirm === undefined ? {} : { confirm: result.confirm } }
       }
 
+      // Answers with a list rather than with state, for the same reason
+      // formatting answers with a token: what is on the media is not a
+      // property of the device's transport.
+      if (action === 'listMedia') {
+        if (!actions.listMedia) {
+          throw new DeviceError('unsupported-action', `"${nodeId}" cannot list its media.`)
+        }
+        const media = await actions.listMedia(
+          typeof args.slot === 'number' ? { slot: args.slot } : {},
+        )
+        return { raw: { media: media as unknown as JsonObject[] } }
+      }
+
       const handler = actions[action]
       if (!handler) {
         throw new DeviceError(

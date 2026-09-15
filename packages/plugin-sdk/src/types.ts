@@ -39,6 +39,8 @@ export type NodeAction =
   | 'selectSlot'
   /** Erases a card or disk. Two-step by design; see `NodeActions`. */
   | 'formatStorage'
+  /** Lists what is on the media. Read-only. */
+  | 'listMedia'
 
 export interface StreamTarget {
   url: string
@@ -46,6 +48,27 @@ export interface StreamTarget {
   /** A quality profile the device named in `NodeState.options`. Absent
    *  leaves the device on whatever it is set to. */
   quality?: string
+}
+
+/**
+ * One recording sitting on a device's media.
+ *
+ * Deliberately thin. A deck's protocol will name its clips and say how long
+ * they are, and will not say when they were made or how many bytes they
+ * take — so neither does this. What the host knows about when a file was
+ * written, it knows because it asked for the recording itself.
+ */
+export interface MediaItem {
+  /** As the device names it. */
+  name: string
+  /** Which slot it is on, where the device has more than one. */
+  slot?: number
+  durationMs?: number
+  /** As the device describes it, e.g. 'H.264High'. */
+  codec?: string
+  /** Only where the device reports one. A HyperDeck does not. */
+  bytes?: number
+  recordedAt?: number
 }
 
 /** One card, disk or slot a recorder can write to. */
@@ -235,6 +258,15 @@ export interface NodeActions {
   /** Put the device on a card without recording to it yet. A recording
    *  names its own slot; this is for an operator standing at the app. */
   selectSlot?(options: { slot: number }): Promise<void>
+  /**
+   * What is on the media.
+   *
+   * Read-only, and separate from anything that deletes: a device that can
+   * say what it holds is common, and one that can be told to remove a
+   * single file over the same protocol is not. Declaring them apart means
+   * a deck can show its contents without implying it can be swept.
+   */
+  listMedia?(options: { slot?: number }): Promise<MediaItem[]>
   stopRecording?(): Promise<void>
   route?(options: { input: string; output: string }): Promise<void>
   /**

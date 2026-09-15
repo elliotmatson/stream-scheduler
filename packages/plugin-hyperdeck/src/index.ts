@@ -226,7 +226,7 @@ class HyperdeckDevice {
             maxLinks: 1,
           },
         ],
-        supports: ['startRecording', 'stopRecording', 'selectSlot', 'formatStorage'],
+        supports: ['startRecording', 'stopRecording', 'selectSlot', 'formatStorage', 'listMedia'],
       },
     ]
   }
@@ -258,6 +258,24 @@ class HyperdeckDevice {
         const select = new Commands.SlotSelectCommand()
         select.slotId = slot
         await this.send(select)
+      },
+      /**
+       * What is on the card.
+       *
+       * `disk list` names every clip on a slot with its codec, format and
+       * duration — and not when it was made or how large it is, which the
+       * protocol has no answer for. Rather than invent either, this reports
+       * what the deck says and lets the host supply the dates from its own
+       * record of what it recorded.
+       */
+      listMedia: async ({ slot }) => {
+        const listing = await this.send(new Commands.DiskListCommand(slot?.toString()))
+        return listing.clips.map((clip) => ({
+          name: clip.name,
+          slot: listing.slotId,
+          ...(clip.duration === undefined ? {} : { durationMs: clip.duration }),
+          ...(clip.codec === undefined ? {} : { codec: clip.codec }),
+        }))
       },
       /**
        * Erases a card. The deck's own protocol is a handshake — `format

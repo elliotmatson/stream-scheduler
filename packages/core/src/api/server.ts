@@ -7,7 +7,13 @@ import fastifyStatic from '@fastify/static'
 import fastifyCookie from '@fastify/cookie'
 import { z } from 'zod'
 import { DeviceError, fingerprint, VerificationError } from '@scheduler/plugin-sdk'
-import type { ConfigValues, JsonObject, NodeDefinition, NodeState } from '@scheduler/plugin-sdk'
+import type {
+  ConfigValues,
+  JsonObject,
+  MediaItem,
+  NodeDefinition,
+  NodeState,
+} from '@scheduler/plugin-sdk'
 import type { Application } from '../app.js'
 import type { Db } from '../db/index.js'
 import type { VerifyCheck } from '../devices/connection-manager.js'
@@ -20,6 +26,7 @@ import {
 import { bumpSeriesVersion, materializeSeries } from '../schedule/materialize.js'
 import { isValidTimeZone, zonedWallTimeToUtc } from '../schedule/zoned.js'
 import { ConfigInvalidError, UnknownPluginError } from '../plugins/registry.js'
+import { reportAll } from '../runs/retention.js'
 import { renderTemplate, TemplateError } from '../template/render.js'
 import { sanitizeFilename } from '../template/index.js'
 import {
@@ -793,6 +800,14 @@ function registerRoutes(fastify: FastifyInstance, app: Application): void {
       .object({
         quality: z.string().min(1).optional(),
         slot: z.number().int().positive().optional(),
+        // Bounded rather than free: a keepDays of 0 would make every
+        // recording eligible the moment it finished.
+        retention: z
+          .object({
+            keepDays: z.number().int().min(1).max(3650).optional(),
+            keepLast: z.number().int().min(0).max(100).optional(),
+          })
+          .optional(),
       })
       .default({}),
     enabled: z.boolean().default(true),
@@ -1101,6 +1116,36 @@ function registerRoutes(fastify: FastifyInstance, app: Application): void {
         samples: decimate(samples, points),
       })),
     }
+  })
+
+  /**
+   * What each recording output's policy says could go.
+   *
+   * Nothing is deleted here, and nothing is deleted anywhere yet: this
+   * answers the question so somebody can look at the answer before the
+   * ability to act on it exists. Asking the devices is the slow part — one
+   * listing per node however many outputs write to it — and it is a screen
+   * somebody opens deliberately, not one that polls.
+   */
+  fastify.get('/api/retention', async () => {
+    const reports = await reportAll({
+      db,
+      ledger: app.ledger,
+      clock: app.clock,
+      listMedia: async (deviceId, nodeId) => {
+        try {
+          const state = await app.connections.invoke(deviceId, nodeId, 'listMedia')
+          const media = state?.raw?.media
+          return Array.isArray(media) ? (media as unknown as MediaItem[]) : undefined
+        } catch {
+          // A deck that is off, or one that cannot list its media at all,
+          // is not an error here: the ledger still knows what we put on it,
+          // and the report says so without the device's corroboration.
+          return undefined
+        }
+      },
+    })
+    return { outputs: reports }
   })
 
   fastify.post('/api/runs/:id/cancel', async (request) => {
