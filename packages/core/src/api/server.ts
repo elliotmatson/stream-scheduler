@@ -21,6 +21,7 @@ import {
   describeSchedule,
   expandOccurrences,
   InvalidScheduleError,
+  nextOccurrenceAfter,
   validateSchedule,
 } from '../schedule/recurrence.js'
 import { bumpSeriesVersion, materializeSeries } from '../schedule/materialize.js'
@@ -644,11 +645,28 @@ function registerRoutes(fastify: FastifyInstance, app: Application): void {
     enabled: z.boolean().default(true),
   })
 
-  fastify.get('/api/series', async () =>
-    (db.prepare('SELECT * FROM event_series ORDER BY label').all() as SeriesRowShape[]).map(
-      toSeriesDto,
-    ),
-  )
+  fastify.get('/api/series', async () => {
+    const now = app.clock.now()
+    return (db.prepare('SELECT * FROM event_series ORDER BY label').all() as SeriesRowShape[]).map(
+      (row) => ({
+        ...toSeriesDto(row),
+        // When it next runs, or null if it never does again. Answered from
+        // the rule rather than the occurrence table: the table only reaches
+        // the materialization horizon, and an event beyond it has not
+        // stopped, it just has not been written down yet.
+        nextAt: nextOccurrenceAfter(
+          {
+            timezone: row.timezone,
+            rrule: row.rrule,
+            dtstart: row.dtstart,
+            durationMs: row.duration_ms,
+            exdates: JSON.parse(row.exdates) as number[],
+          },
+          now,
+        ),
+      }),
+    )
+  })
 
   fastify.post('/api/series', async (request, reply) => {
     const parsed = seriesBody.parse(request.body)

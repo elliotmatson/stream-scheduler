@@ -3,6 +3,7 @@ import {
   describeSchedule,
   expandOccurrences,
   InvalidScheduleError,
+  nextOccurrenceAfter,
   validateSchedule,
 } from './recurrence.js'
 import type { SeriesSchedule } from './recurrence.js'
@@ -197,5 +198,50 @@ describe('describeSchedule', () => {
   it('summarises a rule in plain language', () => {
     expect(describeSchedule(sundayService)).toMatch(/week/i)
     expect(describeSchedule({ ...sundayService, rrule: null })).toBe('Does not repeat')
+  })
+})
+
+describe('when an event next runs', () => {
+  const SUNDAY = Date.parse('2026-03-08T15:00:00Z') // 09:00 America/Chicago
+
+  const schedule = (over: Partial<SeriesSchedule> = {}): SeriesSchedule => ({
+    timezone: 'America/Chicago',
+    rrule: 'FREQ=WEEKLY;BYDAY=SU',
+    dtstart: SUNDAY,
+    durationMs: 90 * 60_000,
+    ...over,
+  })
+
+  it('finds the next one for a rule that keeps going', () => {
+    const next = nextOccurrenceAfter(schedule(), SUNDAY + 86_400_000)
+    expect(next).toBe(SUNDAY + 7 * 86_400_000)
+  })
+
+  it('counts an occurrence already under way as the next one', () => {
+    // Halfway through a service, the event is not finished.
+    const next = nextOccurrenceAfter(schedule(), SUNDAY + 45 * 60_000)
+    expect(next).toBe(SUNDAY)
+  })
+
+  it('says a one-off in the past has nothing left', () => {
+    const oneOff = schedule({ rrule: null })
+    expect(nextOccurrenceAfter(oneOff, SUNDAY + 365 * 86_400_000)).toBeNull()
+    // And is still pending before its date.
+    expect(nextOccurrenceAfter(oneOff, SUNDAY - 86_400_000)).toBe(SUNDAY)
+  })
+
+  it('says a repeat whose rule has run out has nothing left', () => {
+    // The case a "has no rrule" check would miss entirely: it repeats, and
+    // it is still finished.
+    const exhausted = schedule({ rrule: 'FREQ=WEEKLY;BYDAY=SU;COUNT=3' })
+    const afterTheLast = SUNDAY + 30 * 86_400_000
+    expect(nextOccurrenceAfter(exhausted, afterTheLast)).toBeNull()
+    expect(nextOccurrenceAfter(exhausted, SUNDAY + 86_400_000)).toBe(SUNDAY + 7 * 86_400_000)
+  })
+
+  it('does not call a yearly event finished', () => {
+    // The reason the look-ahead is years rather than months.
+    const yearly = schedule({ rrule: 'FREQ=YEARLY' })
+    expect(nextOccurrenceAfter(yearly, SUNDAY + 86_400_000)).not.toBeNull()
   })
 })

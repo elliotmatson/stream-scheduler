@@ -409,6 +409,17 @@ td,
   color: var(--warn);
 }
 
+/* An event with no dates left. Still listed, still editable — a schedule
+   is the only thing that brings it back — but visibly not pending. */
+.card.is-finished {
+  opacity: 0.72;
+}
+
+.card.is-finished:hover,
+.card.is-finished:focus-within {
+  opacity: 1;
+}
+
 @media (max-width: 560px) {
   /* The actions drop under the meta line rather than squeezing the name. */
   .onair-output {

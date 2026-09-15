@@ -94,11 +94,28 @@ function SeriesCard({
 }): ReactNode {
   const { data: preview } = useResource(() => api.preview(series.id), [series.id])
 
+  // `nextAt` is null when nothing is left: a one-off whose date has gone,
+  // or a repeat whose rule has run out. Undefined means an older server
+  // that does not answer the question, and an unanswered question is not
+  // an event to mark as over.
+  const finished = series.nextAt === null
+
   return (
-    <Card>
+    <Card className={finished ? 'is-finished' : undefined}>
       <div className="page-head" style={{ marginBottom: 8 }}>
         <div>
-          <h2 style={{ marginBottom: 2 }}>{series.label}</h2>
+          <h2 style={{ marginBottom: 2 }}>
+            {series.label}
+            {finished ? (
+              <span
+                className="pill warn"
+                style={{ marginLeft: 8, verticalAlign: 'middle' }}
+                title="Every date this event was going to run has passed. It will not run again unless its schedule is changed."
+              >
+                finished
+              </span>
+            ) : null}
+          </h2>
           <span
             className="muted"
             title="How often it repeats, the zone its times are read in, and how long its window is."
