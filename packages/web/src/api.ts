@@ -326,7 +326,20 @@ export interface Destination {
 }
 
 /** What a backup would hold, and what restoring one would need. */
+export interface BackupSchedule {
+  enabled: boolean
+  everyHours: number
+  keep: number
+  /** Where they go. Set outside the app, so shown rather than edited. */
+  directory: string
+  lastAt?: number
+  /** Why the last one did not happen, absent once one works. */
+  lastError?: string
+  count: number
+}
+
 export interface BackupStatus {
+  schedule: BackupSchedule
   keyId: string
   keySource: string
   keySourceLabel: string
@@ -814,6 +827,11 @@ export const api = {
   // -- backup and restore -------------------------------------------------
 
   backupStatus: () => request<BackupStatus>('/api/backup/status'),
+  setBackupSchedule: (next: { enabled?: boolean; everyHours?: number; keep?: number }) =>
+    request<BackupSchedule>('/api/backup/schedule', {
+      method: 'PUT',
+      body: JSON.stringify(next),
+    }),
   /**
    * Describes an uploaded backup without changing anything, and hands back
    * the token the restore below needs. Nothing can be restored that was
