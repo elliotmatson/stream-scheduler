@@ -5,6 +5,7 @@ import { mockPlugin } from '@scheduler/plugin-mock'
 import { obsPlugin } from '@scheduler/plugin-obs'
 import { propresenterPlugin } from '@scheduler/plugin-propresenter'
 import { streamingEncoderPlugin } from '@scheduler/plugin-streaming-encoder'
+import { vmixPlugin } from '@scheduler/plugin-vmix'
 import type { DestinationProvider, PluginDefinition } from '@scheduler/plugin-sdk'
 
 /**
@@ -25,6 +26,7 @@ export function bundledPlugins(): PluginDefinition[] {
     streamingEncoderPlugin(),
     obsPlugin(),
     propresenterPlugin(),
+    vmixPlugin(),
     mockPlugin(),
   ]
 }
