@@ -14,6 +14,7 @@
     "@scheduler/plugin-hyperdeck": "workspace:*",
     "@scheduler/plugin-mock": "workspace:*",
     "@scheduler/plugin-obs": "workspace:*",
+    "@scheduler/plugin-propresenter": "workspace:*",
     "@scheduler/plugin-sdk": "workspace:*",
     "@scheduler/plugin-streaming-encoder": "workspace:*",
     "@scheduler/plugin-youtube": "workspace:*"
