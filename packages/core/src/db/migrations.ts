@@ -454,6 +454,41 @@ CREATE INDEX recording_artifact_output ON recording_artifact (output_id, started
 CREATE INDEX recording_artifact_device ON recording_artifact (device_id, node_id);
 `,
   },
+  {
+    id: 11,
+    name: 'tags',
+    sql: `
+-- Labels somebody puts on things, so twenty devices in a rack can be
+-- narrowed to the three in one building.
+--
+-- One table for every kind of resource rather than a column on each, so
+-- adding tags to a new kind is a row, not a migration. The pair is the
+-- primary key: tagging the same thing twice with the same word is the same
+-- fact stated twice, not two facts.
+--
+-- The tag itself is just its text. No table of tags, no colours, no
+-- hierarchy: a tag nobody has put on anything should stop existing, and
+-- that falls out for free when the only record of a tag is its use.
+CREATE TABLE tag (
+  -- 'device', 'series'. Not constrained: a new kind of taggable thing
+  -- should not need this file reopened.
+  resource_kind TEXT NOT NULL,
+  resource_id   TEXT NOT NULL,
+  -- Stored as typed, matched case-insensitively. "Sanctuary" and
+  -- "sanctuary" are one tag that two people spelled differently, and a
+  -- filter that misses half a rack over a capital letter is worse than
+  -- useless.
+  tag           TEXT NOT NULL,
+  created_at    INTEGER NOT NULL,
+  PRIMARY KEY (resource_kind, resource_id, tag COLLATE NOCASE)
+) WITHOUT ROWID;
+
+-- The two directions this is read: everything on one thing, and everything
+-- with one tag.
+CREATE INDEX tag_by_resource ON tag (resource_kind, resource_id);
+CREATE INDEX tag_by_name ON tag (tag COLLATE NOCASE, resource_kind);
+`,
+  },
 ]
 
 interface GraphNode {

@@ -28,6 +28,7 @@ import { bumpSeriesVersion, materializeSeries } from '../schedule/materialize.js
 import { isValidTimeZone, zonedWallTimeToUtc } from '../schedule/zoned.js'
 import { ConfigInvalidError, UnknownPluginError } from '../plugins/registry.js'
 import { eventMidRunOn as midRunOn, reportAll } from '../runs/retention.js'
+import { MAX_TAG_LENGTH, type TaggableKind } from '../tags/index.js'
 import { SweepRefused } from '../runs/sweep.js'
 import { renderTemplate, TemplateError } from '../template/render.js'
 import { sanitizeFilename } from '../template/index.js'
@@ -60,6 +61,22 @@ export interface ServerOptions {
 }
 
 const DELETE_CONFIRM_TTL_MS = 5 * 60_000
+
+/** The kinds the API will tag. Widened here rather than in the database. */
+const TAGGABLE = ['device', 'series'] as const satisfies readonly TaggableKind[]
+
+/**
+ * Refuses a tag on something that is not there.
+ *
+ * Without this, a typo in an id writes rows that nothing will ever read
+ * and nothing will ever clean up, because tags are removed by the thing
+ * they are on being removed.
+ */
+function assertTaggableExists(db: Db, kind: TaggableKind, id: string): void {
+  const table = kind === 'device' ? 'device' : 'event_series'
+  const found = db.prepare(`SELECT 1 FROM ${table} WHERE id = ?`).get(id)
+  if (!found) throw new NotFoundError(`No ${kind} with id "${id}".`)
+}
 
 export async function createServer(options: ServerOptions): Promise<FastifyInstance> {
   const { app } = options
@@ -144,10 +161,50 @@ function registerRoutes(fastify: FastifyInstance, app: Application): void {
     return plugin.discover()
   })
 
+  // -- tags ---------------------------------------------------------------
+
+  /**
+   * Every tag in use on a kind of thing, with how many carry it.
+   *
+   * What the filter control offers, and the reason there is no tag table:
+   * the list of tags that exist *is* the list of tags in use.
+   */
+  fastify.get('/api/tags/:kind', async (request) => {
+    const { kind } = z.object({ kind: z.enum(TAGGABLE) }).parse(request.params)
+    return { tags: app.tags.known(kind) }
+  })
+
+  /**
+   * Replaces the tags on one thing.
+   *
+   * A whole list rather than add and remove, because that is what the UI
+   * edits: two calls to reach one state is a state that can be
+   * half-reached. What comes back is what was stored, trimmed and
+   * de-duplicated, so the screen never has to guess whether its input
+   * survived.
+   */
+  fastify.put('/api/tags/:kind/:id', async (request) => {
+    const { kind, id } = z
+      .object({ kind: z.enum(TAGGABLE), id: z.string().min(1) })
+      .parse(request.params)
+    const { tags } = z
+      .object({ tags: z.array(z.string().max(MAX_TAG_LENGTH)).max(50) })
+      .parse(request.body)
+
+    assertTaggableExists(db, kind, id)
+    return { tags: app.tags.set(kind, id, tags, app.clock.now()) }
+  })
+
   // -- devices ------------------------------------------------------------
 
   fastify.get('/api/devices', async () => {
     const rows = db.prepare('SELECT * FROM device ORDER BY label').all() as DeviceRowShape[]
+    // One query for the lot rather than one per row: a rack of twenty is
+    // twenty round trips otherwise, for a handful of words.
+    const tags = app.tags.forMany(
+      'device',
+      rows.map((row) => row.id),
+    )
     // Which events are mid-run on each device, so the manual controls can
     // say whose stream they are about to interfere with.
     const busy = db
@@ -179,6 +236,7 @@ function registerRoutes(fastify: FastifyInstance, app: Application): void {
         lastSeenAt: row.last_seen_at,
         enabled: row.enabled === 1,
         nodes: connection?.nodes ?? [],
+        tags: tags.get(row.id) ?? [],
       }
     })
   })
@@ -235,6 +293,7 @@ function registerRoutes(fastify: FastifyInstance, app: Application): void {
     const { id } = z.object({ id: z.string() }).parse(request.params)
     assertUnreferenced(db, 'device_id', id, 'device')
     await app.connections.close(id)
+    app.tags.clear('device', id)
     db.prepare('DELETE FROM device WHERE id = ?').run(id)
     return { ok: true }
   })
@@ -649,25 +708,29 @@ function registerRoutes(fastify: FastifyInstance, app: Application): void {
 
   fastify.get('/api/series', async () => {
     const now = app.clock.now()
-    return (db.prepare('SELECT * FROM event_series ORDER BY label').all() as SeriesRowShape[]).map(
-      (row) => ({
-        ...toSeriesDto(row),
-        // When it next runs, or null if it never does again. Answered from
-        // the rule rather than the occurrence table: the table only reaches
-        // the materialization horizon, and an event beyond it has not
-        // stopped, it just has not been written down yet.
-        nextAt: nextOccurrenceAfter(
-          {
-            timezone: row.timezone,
-            rrule: row.rrule,
-            dtstart: row.dtstart,
-            durationMs: row.duration_ms,
-            exdates: JSON.parse(row.exdates) as number[],
-          },
-          now,
-        ),
-      }),
+    const rows = db.prepare('SELECT * FROM event_series ORDER BY label').all() as SeriesRowShape[]
+    const tags = app.tags.forMany(
+      'series',
+      rows.map((row) => row.id),
     )
+    return rows.map((row) => ({
+      ...toSeriesDto(row),
+      tags: tags.get(row.id) ?? [],
+      // When it next runs, or null if it never does again. Answered from
+      // the rule rather than the occurrence table: the table only reaches
+      // the materialization horizon, and an event beyond it has not
+      // stopped, it just has not been written down yet.
+      nextAt: nextOccurrenceAfter(
+        {
+          timezone: row.timezone,
+          rrule: row.rrule,
+          dtstart: row.dtstart,
+          durationMs: row.duration_ms,
+          exdates: JSON.parse(row.exdates) as number[],
+        },
+        now,
+      ),
+    }))
   })
 
   fastify.post('/api/series', async (request, reply) => {
@@ -744,6 +807,7 @@ function registerRoutes(fastify: FastifyInstance, app: Application): void {
 
   fastify.delete('/api/series/:id', async (request) => {
     const { id } = z.object({ id: z.string() }).parse(request.params)
+    app.tags.clear('series', id)
     db.prepare('DELETE FROM event_series WHERE id = ?').run(id)
     return { ok: true }
   })

@@ -5,6 +5,7 @@ import {
   useLiveRefresh,
   useResource,
   type DashboardOutput,
+  type Run,
   type RunStep,
   type TelemetrySample,
 } from '../api.ts'
@@ -476,6 +477,18 @@ function Step({ step, timezone }: { step: RunStep; timezone: string }): ReactNod
 export function Runs({ navigate }: { navigate: (path: string) => void }): ReactNode {
   const { data, error, reload } = useResource(() => api.runs(), [])
   useLiveRefresh(reload)
+  const [query, setQuery] = useState('')
+  const [state, setState] = useState('all')
+  const [sort, setSort] = useState('started')
+
+  const all = data ?? []
+  // Runs carry no tags of their own — they belong to an event, and
+  // tagging each of a year's fifty-two runs separately is not a thing
+  // anybody would do. Filtering is by event name and by outcome.
+  const shown = all
+    .filter((run) => state === 'all' || run.state === state)
+    .filter((run) => run.seriesLabel.toLowerCase().includes(query.trim().toLowerCase()))
+    .sort(sortRuns(sort))
 
   return (
     <>
@@ -489,8 +502,50 @@ export function Runs({ navigate }: { navigate: (path: string) => void }): ReactN
       </div>
       <ErrorBanner error={error} />
       <Card>
-        {(data ?? []).length === 0 ? (
+        {all.length > 1 ? (
+          <div className="filter-bar">
+            <input
+              className="filter-search"
+              type="search"
+              value={query}
+              placeholder="Search by event"
+              aria-label="Search by event"
+              onChange={(event) => setQuery(event.target.value)}
+            />
+            <label className="row" style={{ gap: 6 }}>
+              <span className="muted" style={{ fontSize: 12 }}>
+                Outcome
+              </span>
+              <select value={state} onChange={(event) => setState(event.target.value)}>
+                <option value="all">Any</option>
+                <option value="completed">Completed</option>
+                <option value="failed">Failed</option>
+                <option value="cancelled">Cancelled</option>
+                <option value="running">Running</option>
+              </select>
+            </label>
+            <label className="row" style={{ gap: 6 }}>
+              <span className="muted" style={{ fontSize: 12 }}>
+                Sort
+              </span>
+              <select value={sort} onChange={(event) => setSort(event.target.value)}>
+                <option value="started">Newest first</option>
+                <option value="oldest">Oldest first</option>
+                <option value="event">Event</option>
+              </select>
+            </label>
+            {shown.length !== all.length ? (
+              <span className="muted" style={{ fontSize: 12 }}>
+                {shown.length} of {all.length}
+              </span>
+            ) : null}
+          </div>
+        ) : null}
+
+        {all.length === 0 ? (
           <Empty>Nothing has run yet.</Empty>
+        ) : shown.length === 0 ? (
+          <Empty>No runs match that.</Empty>
         ) : (
           <div className="table-wrap">
             <table>
@@ -503,7 +558,7 @@ export function Runs({ navigate }: { navigate: (path: string) => void }): ReactN
                 </tr>
               </thead>
               <tbody>
-                {(data ?? []).map((run) => (
+                {shown.map((run) => (
                   <tr key={run.id}>
                     <td>{run.seriesLabel}</td>
                     <td className="muted">{run.startedAt ? relative(run.startedAt) : '—'}</td>
@@ -527,4 +582,17 @@ export function Runs({ navigate }: { navigate: (path: string) => void }): ReactN
       </Card>
     </>
   )
+}
+
+/**
+ * Newest first by default: a run list is read after something happened,
+ * and what happened is at the top.
+ */
+function sortRuns(by: string): (a: Run, b: Run) => number {
+  if (by === 'oldest') return (a, b) => (a.startedAt ?? 0) - (b.startedAt ?? 0)
+  if (by === 'event') {
+    return (a, b) =>
+      a.seriesLabel.localeCompare(b.seriesLabel) || (b.startedAt ?? 0) - (a.startedAt ?? 0)
+  }
+  return (a, b) => (b.startedAt ?? 0) - (a.startedAt ?? 0)
 }

@@ -4,6 +4,28 @@ import { api, useResource, type Series } from '../api.ts'
 import { Card, ConfirmButton, Empty, ErrorBanner, PageHead } from '../components.tsx'
 import { duration, timeIn } from '../format.ts'
 import { EventForm } from './EventForm.tsx'
+import { FilterBar, matches, TagEditor } from '../tags.tsx'
+
+/** Ways somebody looks for an event once there are more than a handful. */
+const SERIES_SORTS = [
+  { id: 'label', label: 'Name' },
+  { id: 'next', label: 'Next run' },
+]
+
+/**
+ * Soonest first when sorting by next run, with finished events last.
+ *
+ * An event with nothing left has no next run to compare, and putting it
+ * at the top because null sorts low would bury the ones that matter.
+ */
+function sortSeries(by: string): (a: Series, b: Series) => number {
+  if (by === 'next') {
+    return (a, b) =>
+      (a.nextAt ?? Number.POSITIVE_INFINITY) - (b.nextAt ?? Number.POSITIVE_INFINITY) ||
+      a.label.localeCompare(b.label)
+  }
+  return (a, b) => a.label.localeCompare(b.label)
+}
 
 /** The stored template keys, in the words the form uses for them. */
 const TEMPLATE_LABELS: Record<string, string> = {
@@ -14,9 +36,17 @@ const TEMPLATE_LABELS: Record<string, string> = {
 
 export function SeriesList(): ReactNode {
   const { data, error, reload } = useResource(() => api.series(), [])
+  const { data: known, reload: reloadTags } = useResource(() => api.tags('series'), [])
+  const [query, setQuery] = useState('')
+  const [chosen, setChosen] = useState<string[]>([])
+  const [sort, setSort] = useState('label')
   const [adding, setAdding] = useState(false)
   const [editing, setEditing] = useState<string>()
   const [actionError, setActionError] = useState<string>()
+
+  const shown = (data ?? [])
+    .filter((series) => matches(series, query, chosen))
+    .sort(sortSeries(sort))
 
   const remove = async (id: string): Promise<void> => {
     setActionError(undefined)
@@ -51,6 +81,21 @@ export function SeriesList(): ReactNode {
           />
         ) : null}
 
+        {(data ?? []).length > 1 ? (
+          <FilterBar
+            query={query}
+            onQuery={setQuery}
+            tags={known?.tags ?? []}
+            chosen={chosen}
+            onChosen={setChosen}
+            sort={sort}
+            sorts={SERIES_SORTS}
+            onSort={setSort}
+            count={shown.length}
+            total={(data ?? []).length}
+          />
+        ) : null}
+
         {(data ?? []).length === 0 && !adding ? (
           <Card>
             <Empty>
@@ -59,7 +104,7 @@ export function SeriesList(): ReactNode {
           </Card>
         ) : null}
 
-        {(data ?? []).map((series) =>
+        {shown.map((series) =>
           editing === series.id ? (
             <EventForm
               key={series.id}
@@ -75,6 +120,10 @@ export function SeriesList(): ReactNode {
               series={series}
               onEdit={() => setEditing(series.id)}
               onRemove={() => void remove(series.id)}
+              onTagged={() => {
+                reload()
+                reloadTags()
+              }}
             />
           ),
         )}
@@ -87,10 +136,12 @@ function SeriesCard({
   series,
   onEdit,
   onRemove,
+  onTagged,
 }: {
   series: Series
   onEdit: () => void
   onRemove: () => void
+  onTagged: () => void
 }): ReactNode {
   const { data: preview } = useResource(() => api.preview(series.id), [series.id])
 
@@ -134,6 +185,8 @@ function SeriesCard({
           <ConfirmButton label="Remove" onConfirm={onRemove} />
         </div>
       </div>
+
+      <TagEditor kind="series" id={series.id} tags={series.tags ?? []} onChanged={onTagged} />
 
       {Object.keys(series.templates).length > 0 ? (
         <div className="table-wrap">

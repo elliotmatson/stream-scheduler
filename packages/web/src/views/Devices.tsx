@@ -27,6 +27,26 @@ import {
 import { bitrateHint, CUSTOM_VALUE, freeformHint, LEAVE_AS_IS, nowOn } from '../copy.ts'
 import { duration, relative } from '../format.ts'
 import { DeviceFiles } from './DeviceFiles.tsx'
+import { FilterBar, matches, TagEditor } from '../tags.tsx'
+
+/** The three ways anybody looks for a device in a full rack. */
+const DEVICE_SORTS = [
+  { id: 'label', label: 'Name' },
+  { id: 'health', label: 'Health' },
+  { id: 'seen', label: 'Last seen' },
+]
+
+/** Unreachable first when sorting by health: the ones needing attention
+ *  are the reason somebody opened this screen. */
+function sortDevices(by: string): (a: Device, b: Device) => number {
+  if (by === 'health') {
+    const rank = (device: Device): number =>
+      device.health === 'connected' ? 2 : device.health === 'degraded' ? 1 : 0
+    return (a, b) => rank(a) - rank(b) || a.label.localeCompare(b.label)
+  }
+  if (by === 'seen') return (a, b) => (b.lastSeenAt ?? 0) - (a.lastSeenAt ?? 0)
+  return (a, b) => a.label.localeCompare(b.label)
+}
 
 /**
  * Files are stamped by the device's own clock, so they are shown in the
@@ -42,6 +62,10 @@ export function Devices({
   const { data, error, reload } = useResource(() => api.devices(), [])
   // Health and what is in use change without anybody pressing anything.
   useLiveRefresh(reload)
+  const { data: known, reload: reloadTags } = useResource(() => api.tags('device'), [])
+  const [query, setQuery] = useState('')
+  const [chosen, setChosen] = useState<string[]>([])
+  const [sort, setSort] = useState('label')
   const { data: plugins } = useResource(() => api.plugins(), [])
   const [busy, setBusy] = useState<string>()
   const [actionError, setActionError] = useState<string>()
@@ -61,16 +85,20 @@ export function Devices({
     }
   }
 
-  const devices = data ?? []
+  const all = data ?? []
+  // Narrowed for display only. The focus-scroll below still works against
+  // the whole rack, because arriving from a link should not depend on
+  // whatever filter was left set.
+  const devices = all.filter((device) => matches(device, query, chosen)).sort(sortDevices(sort))
 
   // Arrived from a link on another screen — the status board, or a run's
   // own page. Scrolled to and marked rather than filtered down to: the
   // rest of the rack is context somebody standing at it still wants.
   useEffect(() => {
-    if (!focusId || devices.length === 0) return
+    if (!focusId || all.length === 0) return
     const card = document.getElementById(`device-${focusId}`)
     card?.scrollIntoView({ behavior: 'smooth', block: 'center' })
-  }, [focusId, devices.length])
+  }, [focusId, all.length])
 
   return (
     <>
@@ -98,6 +126,21 @@ export function Devices({
               setAdding(false)
               reload()
             }}
+          />
+        ) : null}
+
+        {all.length > 1 ? (
+          <FilterBar
+            query={query}
+            onQuery={setQuery}
+            tags={known?.tags ?? []}
+            chosen={chosen}
+            onChosen={setChosen}
+            sort={sort}
+            sorts={DEVICE_SORTS}
+            onSort={setSort}
+            count={devices.length}
+            total={all.length}
           />
         ) : null}
 
@@ -131,6 +174,12 @@ export function Devices({
               onConnect={() => void act(device.id, () => api.connectDevice(device.id))}
               onEdit={() => setEditing(device.id)}
               onRemove={() => void act(device.id, () => api.deleteDevice(device.id))}
+              onTagged={() => {
+                reload()
+                // The filter offers the tags that exist, so a new one has
+                // to reach it as soon as it is typed.
+                reloadTags()
+              }}
             />
           ),
         )}
@@ -147,6 +196,7 @@ function DeviceCard({
   onConnect,
   onEdit,
   onRemove,
+  onTagged,
 }: {
   device: Device
   /** The plugin's own name for this kind of box, e.g. "Blackmagic HyperDeck". */
@@ -154,6 +204,7 @@ function DeviceCard({
   /** Linked to from elsewhere, so it is worth pointing at. */
   focused?: boolean
   busy: boolean
+  onTagged: () => void
   onConnect: () => void
   onEdit: () => void
   onRemove: () => void
@@ -185,6 +236,8 @@ function DeviceCard({
           <ConfirmButton label="Remove" disabled={busy} onConfirm={onRemove} />
         </div>
       </div>
+
+      <TagEditor kind="device" id={device.id} tags={device.tags ?? []} onChanged={onTagged} />
 
       {device.lastError ? <div className="banner error">{device.lastError}</div> : null}
 

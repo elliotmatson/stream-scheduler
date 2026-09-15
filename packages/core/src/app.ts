@@ -25,6 +25,7 @@ import { RunStore } from './runs/store.js'
 import { Notifier } from './notify/notifier.js'
 import { PreflightChecker, DEFAULT_PREFLIGHT_LEAD_MS } from './notify/preflight.js'
 import { RecordingLedger } from './runs/artifacts.js'
+import { Tags } from './tags/index.js'
 import { eventMidRunOn } from './runs/retention.js'
 import { Sweeper } from './runs/sweep.js'
 import { runFailedNotification } from './notify/run-events.js'
@@ -94,6 +95,8 @@ export class Application {
   readonly thresholds: Thresholds
   /** What this scheduler has recorded, and where it put it. */
   readonly ledger: RecordingLedger
+  /** Labels on devices and events, for finding things in a full rack. */
+  readonly tags: Tags
   /** Removes recordings a policy says are past their keep-by date. */
   readonly sweeper: Sweeper
   readonly auth: Auth
@@ -160,6 +163,7 @@ export class Application {
     // Stateless SQL over the same database as the planner's own, so the
     // two are the same ledger rather than two views of one.
     this.ledger = new RecordingLedger({ db: init.db })
+    this.tags = new Tags({ db: init.db })
     this.sweeper = new Sweeper({
       db: init.db,
       ledger: this.ledger,
