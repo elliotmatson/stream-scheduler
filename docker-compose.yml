@@ -6,21 +6,25 @@ services:
     build: .
     image: stream-scheduler:local
     restart: unless-stopped
-    # Device discovery uses broadcast and mDNS, which do not cross a bridge
-    # network. Host networking is the practical default for a control VLAN;
-    # switch to a published port if you add every device by IP instead.
-    network_mode: host
+    # Published to loopback, which is what decides who can reach this. Change
+    # to "8500:8500" to open it to the network, and set a password first.
+    #
+    # Not host networking. That was here for device discovery, which no
+    # adapter actually implements — every device is added by address, and an
+    # outbound connection to one works the same either way. Host networking
+    # also makes this file impossible to extend, which is what
+    # docker-compose.cloudflare.yml needs to do.
+    ports:
+      - '127.0.0.1:8500:8500'
     environment:
       # Required. Without a key source the app refuses to start rather than
       # storing stream keys and OAuth tokens in plaintext.
       SCHEDULER_SECRET: ${SCHEDULER_SECRET:?set SCHEDULER_SECRET to a long random string}
       SCHEDULER_PORT: 8500
-      # Host networking means this binds the machine's own interfaces, so
-      # loopback keeps it to this machine. Before changing this to 0.0.0.0,
-      # set a password — either SCHEDULER_UI_PASSWORD below or in Settings
-      # once it is running — because without one anyone who can reach the
-      # port can start broadcasts and read stream keys.
-      SCHEDULER_HOST: 127.0.0.1
+      # Inside the container, where binding anything narrower would stop
+      # Docker reaching it at all. What decides who can get to the app is
+      # the ports line above, not this.
+      SCHEDULER_HOST: 0.0.0.0
       # Sets the password on a new install. It is copied into the database
       # the first time the app starts and never read again, so you can
       # change it in Settings afterwards and it will stick. Leaving this
