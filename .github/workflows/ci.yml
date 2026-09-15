@@ -55,6 +55,38 @@ jobs:
         # exactly as Docker does and drives one event end to end.
         run: pnpm run smoke
 
+      - name: Cache the browser
+        id: browser-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+
+      - name: Install Chromium
+        # --with-deps on a miss only: the system libraries are already there
+        # on a hit, and installing them again costs a minute for nothing.
+        run: |
+          if [ "${{ steps.browser-cache.outputs.cache-hit }}" = "true" ]; then
+            pnpm exec playwright install chromium
+          else
+            pnpm exec playwright install --with-deps chromium
+          fi
+
+      - name: Browser checks
+        # Nothing above this line ever asks for a page. A React runtime
+        # error, a screen that renders blank, or a style rule that quietly
+        # stops matching would pass everything else.
+        run: pnpm run ui-check
+
+      - name: What the browser saw when it failed
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ui-check-artifacts
+          path: ui-check-artifacts/
+          if-no-files-found: ignore
+          retention-days: 7
+
   docker:
     runs-on: ubuntu-latest
     permissions:

@@ -6,15 +6,14 @@
  * only appear in the shipped artifact under native ESM (a CommonJS dependency
  * imported by name, a missing file in the build output, a bad entrypoint).
  * This runs `node packages/host/dist/main.js` exactly as Docker does.
+ *
+ * The boot and the seeding live in scripts/lib/harness.mjs, shared with the
+ * browser checks so the two cannot drift apart.
  */
-import { spawn } from 'node:child_process'
-import { mkdtempSync, rmSync } from 'node:fs'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { apiAt, reporter, startHost, statusAt, waitForHealth } from './lib/harness.mjs'
 
 const PORT = Number(process.env.SMOKE_PORT ?? 8599)
 const BASE = `http://127.0.0.1:${PORT}`
-const configDir = mkdtempSync(join(tmpdir(), 'scheduler-smoke-'))
 
 const STREAM_KEY = 'live_smoke-test-secret-key'
 const DEVICE_PASSWORD = 'smoke-test-device-password'
@@ -23,79 +22,22 @@ const CHAT_WEBHOOK =
   'https://chat.googleapis.invalid/v1/spaces/AAA/messages?key=k&token=smoke-chat-token'
 const UI_PASSWORD = 'smoke-test-ui-password'
 
-let child
-let failures = 0
+const tally = reporter()
+const check = (name, condition, detail = '') => tally.check(name, condition, detail)
 
-function check(name, condition, detail = '') {
-  if (condition) {
-    process.stdout.write(`  ok   ${name}\n`)
-  } else {
-    failures++
-    process.stdout.write(`  FAIL ${name}${detail ? ` — ${detail}` : ''}\n`)
-  }
-}
+/** The host under test, started in main(). */
+let host
 
 async function api(method, path, body) {
   return apiAt(BASE, method, path, body)
 }
 
-async function apiAt(base, method, path, body, headers = {}) {
-  const response = await fetch(`${base}${path}`, {
-    method,
-    headers: { 'content-type': 'application/json', ...headers },
-    // Fastify rejects a JSON content-type with an empty body, so bodyless
-    // POSTs still send `{}`.
-    ...(method === 'GET' ? {} : { body: JSON.stringify(body ?? {}) }),
-  })
-  const text = await response.text()
-  const json = text ? JSON.parse(text) : {}
-  if (!response.ok) throw new Error(`${method} ${path} -> ${response.status} ${text}`)
-  return json
-}
-
-/** Status only, for the routes whose whole point is refusing. */
-async function statusAt(base, path, headers = {}) {
-  const response = await fetch(`${base}${path}`, { headers })
-  return response.status
-}
-
-async function waitForHealth(timeoutMs = 20_000, base = BASE, process_ = () => child) {
-  const deadline = Date.now() + timeoutMs
-  while (Date.now() < deadline) {
-    const running = process_()
-    if (running?.exitCode !== null && running?.exitCode !== undefined) {
-      throw new Error(`host exited early with code ${running.exitCode}`)
-    }
-    try {
-      const response = await fetch(`${base}/healthz`)
-      if (response.ok) return
-    } catch {
-      // not up yet
-    }
-    await new Promise((resolve) => setTimeout(resolve, 200))
-  }
-  throw new Error('host did not become healthy in time')
-}
-
 async function main() {
-  child = spawn(process.execPath, ['packages/host/dist/main.js'], {
-    env: {
-      ...process.env,
-      SCHEDULER_CONFIG_DIR: configDir,
-      SCHEDULER_SECRET: 'smoke-test-master-secret',
-      SCHEDULER_PORT: String(PORT),
-      SCHEDULER_LOG_LEVEL: 'warn',
-    },
-    stdio: ['ignore', 'pipe', 'pipe'],
-  })
-  let output = ''
-  child.stdout.on('data', (chunk) => (output += chunk))
-  child.stderr.on('data', (chunk) => (output += chunk))
-
+  host = startHost({ port: PORT })
   try {
-    await waitForHealth()
+    await waitForHealth(host)
   } catch (error) {
-    process.stdout.write(output)
+    process.stdout.write(host.output())
     throw error
   }
   check('host starts and answers /healthz', true)
@@ -554,25 +496,11 @@ async function main() {
  * suite ever asked the running app for a page.
  */
 async function passwordChecks() {
-  const port = PORT + 1
-  const base = `http://127.0.0.1:${port}`
-  const dir = mkdtempSync(join(tmpdir(), 'scheduler-smoke-auth-'))
-  const locked = spawn(process.execPath, ['packages/host/dist/main.js'], {
-    env: {
-      ...process.env,
-      SCHEDULER_CONFIG_DIR: dir,
-      SCHEDULER_SECRET: 'smoke-test-master-secret',
-      SCHEDULER_PORT: String(port),
-      SCHEDULER_LOG_LEVEL: 'warn',
-      SCHEDULER_UI_PASSWORD: UI_PASSWORD,
-    },
-    stdio: ['ignore', 'pipe', 'pipe'],
-  })
-  locked.stdout.on('data', () => {})
-  locked.stderr.on('data', () => {})
+  const locked = startHost({ port: PORT + 1, env: { SCHEDULER_UI_PASSWORD: UI_PASSWORD } })
+  const base = locked.base
 
   try {
-    await waitForHealth(20_000, base, () => locked)
+    await waitForHealth(locked)
 
     // The health check has no way to sign in, and a container restarting in
     // a loop because of that would be worse than the exposure.
@@ -599,8 +527,7 @@ async function passwordChecks() {
     }
     check('a wrong password is refused', refused)
   } finally {
-    locked.kill('SIGTERM')
-    rmSync(dir, { recursive: true, force: true })
+    locked.stop()
   }
 }
 
@@ -608,14 +535,14 @@ try {
   await main()
   await passwordChecks()
 } catch (error) {
-  failures++
-  process.stdout.write(`  FAIL ${error instanceof Error ? error.message : String(error)}\n`)
+  tally.fail(error instanceof Error ? error.message : String(error))
 } finally {
-  child?.kill('SIGTERM')
-  rmSync(configDir, { recursive: true, force: true })
+  host?.stop()
 }
 
 process.stdout.write(
-  failures === 0 ? '\nsmoke: all checks passed\n' : `\nsmoke: ${failures} check(s) failed\n`,
+  tally.failures === 0
+    ? '\nsmoke: all checks passed\n'
+    : `\nsmoke: ${tally.failures} check(s) failed\n`,
 )
-process.exit(failures === 0 ? 0 : 1)
+process.exit(tally.failures === 0 ? 0 : 1)

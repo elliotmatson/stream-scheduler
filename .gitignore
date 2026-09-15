@@ -10,3 +10,4 @@ coverage/
 .env.local
 .DS_Store
 /tmp-config/
+ui-check-artifacts/
