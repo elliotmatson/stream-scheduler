@@ -23,9 +23,9 @@ import {
 /**
  * Where streams go.
  *
- * Three layers, in the order you have to set them up: the Google Cloud OAuth
- * client this install uses, the channel it is signed in to, and the
- * destination — a channel plus the settings every broadcast inherits.
+ * Three layers, in the order you have to set them up: the OAuth client this
+ * install registers with the service, the channel it is signed in to, and
+ * the destination — a channel plus the settings every broadcast inherits.
  * Underneath, stream keys typed in by hand, for a service without an
  * integration.
  */
@@ -133,8 +133,9 @@ function ProviderSection({
 
   const connect = async (clientRef: string): Promise<void> => {
     const { url } = await api.startOAuth(provider.id, clientRef)
-    // Google must be visited in a real browser, not an iframe, and the
-    // callback lands back on this server.
+    // Sign-in has to happen in a real browser, not an iframe — Google and
+    // Twitch both refuse to be framed — and the callback lands back on this
+    // server.
     window.open(url, '_blank', 'noopener')
   }
 
@@ -535,8 +536,9 @@ function StreamKeys({
         <button onClick={() => setOpen((value) => !value)}>{open ? 'Cancel' : 'Add a key'}</button>
       </div>
       <p className="muted" style={{ marginTop: 0 }}>
-        For a service with no integration here: an ingest URL and key, typed in once. Anything that
-        issues a key per broadcast — YouTube, for one — belongs above instead.
+        For a service with no integration here: an ingest URL and key, typed in once. A service
+        listed above is better connected there — it fills the title in for you, and YouTube makes
+        the broadcast too.
       </p>
 
       {credentials.length === 0 ? (

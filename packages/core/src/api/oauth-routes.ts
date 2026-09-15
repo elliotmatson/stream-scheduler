@@ -411,6 +411,7 @@ function instructionsFor(
   provider: string,
   redirectUri: string,
 ): { steps: string[]; redirectUri: string; warning: string; warnings: string[] } {
+  if (provider === 'twitch') return twitchInstructions(redirectUri)
   if (provider !== 'youtube') {
     return { steps: [], redirectUri, warning: '', warnings: [] }
   }
@@ -450,6 +451,60 @@ function instructionsFor(
       'Under APIs & Services > Credentials, create an OAuth client ID of type "Web application".',
       `Add exactly this authorized redirect URI: ${redirectUri}`,
       'Copy the client ID and client secret back into this app.',
+    ],
+    // Kept for older clients; `warnings` is the one to render.
+    warning: warnings[0]!,
+    warnings,
+  }
+}
+
+/**
+ * Twitch's version of the same setup.
+ *
+ * Shorter than Google's because there is no API to enable and no consent
+ * screen to publish, but it has two traps of its own: the developer console
+ * is closed to accounts without 2FA, and the client type decides whether
+ * refresh tokens work at all.
+ */
+function twitchInstructions(redirectUri: string): {
+  steps: string[]
+  redirectUri: string
+  warning: string
+  warnings: string[]
+} {
+  // Twitch registers plain http only for localhost, so an app reached at a
+  // LAN or Tailscale address needs HTTPS before the callback is accepted.
+  const unregisterable = redirectUri.startsWith('http://') && !isLoopbackUri(redirectUri)
+
+  const warnings = [
+    // The one that decides whether this integration works past the first
+    // hour, and it cannot be changed afterwards.
+    'Set the client type to "Confidential". A public client gets no usable refresh token, so the ' +
+      'connection would stop working within the hour — and the setting is greyed out once the app ' +
+      'is registered, so getting it wrong means making a new one.',
+    ...(unregisterable
+      ? [
+          `You are reaching this app at ${new URL(redirectUri).origin}, and Twitch accepts a plain http:// ` +
+            'redirect only for localhost. Reach the app over HTTPS — Tailscale Serve or any reverse proxy ' +
+            'in front of it — or register the app while reaching this page on localhost.',
+        ]
+      : []),
+    'Generating a new client secret invalidates every token issued with the old one, so every connected ' +
+      'account has to be reconnected after you do it.',
+  ]
+
+  return {
+    redirectUri,
+    steps: [
+      'Turn on two-factor authentication for the Twitch account first: dev.twitch.tv refuses to open ' +
+        'the developer console without it, and there is no way around that.',
+      'Open dev.twitch.tv/console/apps and choose "Register Your Application".',
+      'Give it a name. Twitch requires the name to be unique across all Twitch apps, so add your ' +
+        'church or organisation to it.',
+      `Add exactly this OAuth redirect URL: ${redirectUri}`,
+      'Pick any category — "Website Integration" fits — and set the client type to "Confidential".',
+      'Open the registered app with "Manage", copy the client ID, then press "New Secret" and copy that too.',
+      'Paste both back into this app.',
     ],
     // Kept for older clients; `warnings` is the one to render.
     warning: warnings[0]!,
