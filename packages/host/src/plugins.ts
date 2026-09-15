@@ -4,11 +4,12 @@ import { hyperdeckPlugin } from '@scheduler/plugin-hyperdeck'
 import { magewellPlugin } from '@scheduler/plugin-magewell'
 import { mockPlugin } from '@scheduler/plugin-mock'
 import { obsPlugin } from '@scheduler/plugin-obs'
+import { planningCenterSource } from '@scheduler/plugin-planning-center'
 import { propresenterPlugin } from '@scheduler/plugin-propresenter'
 import { streamingEncoderPlugin } from '@scheduler/plugin-streaming-encoder'
 import { twitchProvider } from '@scheduler/plugin-twitch'
 import { vmixPlugin } from '@scheduler/plugin-vmix'
-import type { DestinationProvider, PluginDefinition } from '@scheduler/plugin-sdk'
+import type { DestinationProvider, PlanSource, PluginDefinition } from '@scheduler/plugin-sdk'
 
 /**
  * The composition root's plugin list.
@@ -51,4 +52,19 @@ export function bundledDestinations(
   saveRefreshToken: (accountRef: string, refreshToken: string) => Promise<void>,
 ): DestinationProvider[] {
   return [youtubeProvider({ resolveClient }), twitchProvider({ resolveClient, saveRefreshToken })]
+}
+
+/**
+ * The schedule sources this build ships with.
+ *
+ * `resolveCredentials` is injected by the host for the same reason the
+ * destinations' `resolveClient` is: a source asks for its token and is
+ * given one, and never learns that a vault exists.
+ */
+export function bundledPlanSources(
+  resolveCredentials: (
+    sourceId: string,
+  ) => Promise<{ applicationId: string; secret: string } | undefined>,
+): PlanSource[] {
+  return [planningCenterSource({ resolveCredentials: () => resolveCredentials('planning-center') })]
 }

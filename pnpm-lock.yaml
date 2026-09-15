@@ -149,6 +149,9 @@ importers:
       '@scheduler/plugin-obs':
         specifier: workspace:*
         version: link:../plugin-obs
+      '@scheduler/plugin-planning-center':
+        specifier: workspace:*
+        version: link:../plugin-planning-center
       '@scheduler/plugin-propresenter':
         specifier: workspace:*
         version: link:../plugin-propresenter
@@ -238,6 +241,16 @@ importers:
       obs-websocket-js:
         specifier: ^5.0.8
         version: 5.0.8
+    devDependencies:
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
+
+  packages/plugin-planning-center:
+    dependencies:
+      '@scheduler/plugin-sdk':
+        specifier: workspace:*
+        version: link:../plugin-sdk
     devDependencies:
       typescript:
         specifier: ^5.7.2

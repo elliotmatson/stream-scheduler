@@ -344,6 +344,41 @@ export interface BackupSchedule {
   count: number
 }
 
+export interface PlanSourceStatus {
+  state: 'ok' | 'not_configured' | 'credentials_rejected' | 'error'
+  message?: string
+  account?: string
+}
+
+export interface PlanSourceSummary {
+  id: string
+  displayName: string
+  status: PlanSourceStatus
+}
+
+export interface PlanGroup {
+  id: string
+  name: string
+}
+
+export interface PlannedService {
+  externalId: string
+  startsAt: number
+  endsAt?: number
+  detail?: {
+    planTitle?: string
+    seriesTitle?: string
+    timeName?: string
+    planDate?: string
+    planUrl?: string
+  }
+}
+
+export interface PlanSourceInstructions {
+  steps: string[]
+  warnings: string[]
+}
+
 export interface BackupStatus {
   schedule: BackupSchedule
   keyId: string
@@ -829,6 +864,24 @@ export const api = {
     request<{ id: string }>('/api/credentials', { method: 'POST', body: JSON.stringify(input) }),
   deleteCredential: (id: string) =>
     request<unknown>(`/api/credentials/${id}`, { method: 'DELETE' }),
+
+  // -- where the schedule comes from --------------------------------------
+
+  planSources: () => request<{ sources: PlanSourceSummary[] }>('/api/plan-sources'),
+  planSourceInstructions: (id: string) =>
+    request<PlanSourceInstructions>(`/api/plan-sources/${id}/instructions`),
+  savePlanCredentials: (id: string, input: { applicationId: string; secret: string }) =>
+    request<{ status: PlanSourceStatus }>(`/api/plan-sources/${id}/credentials`, {
+      method: 'PUT',
+      body: JSON.stringify(input),
+    }),
+  clearPlanCredentials: (id: string) =>
+    request<unknown>(`/api/plan-sources/${id}/credentials`, { method: 'DELETE' }),
+  planGroups: (id: string) => request<{ groups: PlanGroup[] }>(`/api/plan-sources/${id}/groups`),
+  plannedServices: (id: string, groupId: string) =>
+    request<{ services: PlannedService[] }>(
+      `/api/plan-sources/${id}/groups/${encodeURIComponent(groupId)}/services`,
+    ),
 
   // -- backup and restore -------------------------------------------------
 

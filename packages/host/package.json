@@ -15,6 +15,7 @@
     "@scheduler/plugin-magewell": "workspace:*",
     "@scheduler/plugin-mock": "workspace:*",
     "@scheduler/plugin-obs": "workspace:*",
+    "@scheduler/plugin-planning-center": "workspace:*",
     "@scheduler/plugin-propresenter": "workspace:*",
     "@scheduler/plugin-sdk": "workspace:*",
     "@scheduler/plugin-streaming-encoder": "workspace:*",

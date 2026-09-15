@@ -6,6 +6,7 @@ import { createConsoleLogger, silentLogger, type Logger, type LogLevel } from '.
 import { ConnectionManager } from './devices/connection-manager.js'
 import { PluginRegistry } from './plugins/registry.js'
 import { DestinationRegistry } from './destinations/registry.js'
+import { PlanSourceRegistry } from './plans/registry.js'
 import {
   envSecretSource,
   keyFileSource,
@@ -96,6 +97,8 @@ export class Application {
   readonly vault: SecretVault
   readonly registry: PluginRegistry
   readonly destinations: DestinationRegistry
+  /** Where schedules can come from: Planning Center, and whatever follows. */
+  readonly planSources: PlanSourceRegistry
   readonly connections: ConnectionManager
   readonly store: RunStore
   readonly planner: EventPlanner
@@ -152,6 +155,7 @@ export class Application {
     vault: SecretVault
     registry: PluginRegistry
     destinations: DestinationRegistry
+    planSources: PlanSourceRegistry
     connections: ConnectionManager
     store: RunStore
     planner: EventPlanner
@@ -173,6 +177,7 @@ export class Application {
     this.vault = init.vault
     this.registry = init.registry
     this.destinations = init.destinations
+    this.planSources = init.planSources
     this.connections = init.connections
     this.store = init.store
     this.planner = init.planner
@@ -297,6 +302,10 @@ export class Application {
     const destinations = new DestinationRegistry({ db, clock, vault, logger })
     for (const provider of options.destinationProviders ?? []) destinations.register(provider)
 
+    // Registered after construction by the host, like the destinations
+    // above: a source's credential lookup has to close over a built app.
+    const planSources = new PlanSourceRegistry({ db, vault })
+
     const connections = new ConnectionManager({
       db,
       registry,
@@ -394,6 +403,7 @@ export class Application {
       vault,
       registry,
       destinations,
+      planSources,
       connections,
       store,
       planner,
