@@ -41,6 +41,17 @@ export class SecretVault {
     this.masterKey = masterKey
   }
 
+  /**
+   * Which key this vault is using, as an id rather than as a key.
+   *
+   * A hash prefix: enough to say "the same key" or "a different one" and
+   * worth nothing to anybody who has it. That is what makes it safe to
+   * write into a backup, which is the whole reason it is exposed.
+   */
+  get keyId(): string {
+    return this.masterKey.keyId
+  }
+
   store(plaintext: string, id = randomId()): string {
     const nonce = randomBytes(12)
     const cipher = createCipheriv(ALGORITHM, this.masterKey.key, nonce)
