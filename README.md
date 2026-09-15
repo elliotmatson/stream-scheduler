@@ -66,6 +66,11 @@ records, stops and tidies up — without anyone touching it.
   templated title and description, automatic playlist insertion, a reusable
   ingestion stream so the encoder key never changes, and a quota ledger that
   keeps a reserve for the calls that make a stream happen
+- **Twitch**: bring-your-own OAuth, with the channel's title and category set
+  from the same templates before each service and the stream key read from
+  Twitch rather than pasted, so a reset key fixes itself. Twitch has no
+  per-broadcast object, so there is no video made in advance — that
+  difference is stated in the app rather than left to be discovered
 - Alerts to **Google Chat**, Slack, a generic webhook or email, grouped by
   how bad a thing is: problems are sent by default and "it worked" messages
   only if you ask. Plus a pre-flight check the evening before that catches an
@@ -269,6 +274,39 @@ URI to paste. One of them matters more than the rest:
 > over HTTPS. Register every address you will connect from: the URI is
 > whatever you browsed to at the time, and Google accepts a list.
 
+## Connecting Twitch
+
+Same shape as YouTube — each install registers its own app at
+[dev.twitch.tv/console/apps](https://dev.twitch.tv/console/apps) — but what
+the integration does is different, because **Twitch has no broadcast
+object**. A channel has one stream key that never changes, and going live is
+just pushing to it. So there is nothing to create beforehand and no watch
+link to hand out in advance. What this does instead is the part people do by
+hand every week: set the channel's title and category from the event's
+templates before the service starts, and read the key rather than trust one
+pasted in a year ago.
+
+`GET /api/oauth/twitch/instructions` returns the steps and the redirect URI
+to paste. Three of them catch people out:
+
+> **Turn on two-factor authentication first.** `dev.twitch.tv` will not open
+> the developer console for an account without it, and there is no way
+> around that.
+
+> **Set the client type to "Confidential".** A public client gets no usable
+> refresh token, so the connection would look fine and stop working within
+> the hour. The setting is greyed out once the app is registered, so getting
+> it wrong means making a new app.
+
+> **Twitch rotates refresh tokens.** A refresh can hand back a new one and
+> invalidate the old, so the new value is written back to the vault as it
+> arrives. Regenerating the client secret in the Twitch console invalidates
+> every token issued with the old one, and every account has to be
+> reconnected after you do it.
+
+Only two scopes are asked for: `channel:manage:broadcast` to set the title
+and category, and `channel:read:stream_key` to read the key.
+
 ## Layout
 
 ```
@@ -279,6 +317,7 @@ packages/
   plugin-hyperdeck/ Blackmagic HyperDeck recorders
   plugin-streaming-encoder/  Blackmagic Streaming Encoder HD / 4K, Web Presenter
   plugin-youtube/   YouTube broadcasts, OAuth and quota
+  plugin-twitch/    Twitch channel title, category and stream key
   plugin-mock/      a fake encoder and recorder, for tests and evaluation
   host/             the composition root: the only place that names plugins
   web/              the React UI

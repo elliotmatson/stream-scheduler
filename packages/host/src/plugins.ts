@@ -6,6 +6,7 @@ import { mockPlugin } from '@scheduler/plugin-mock'
 import { obsPlugin } from '@scheduler/plugin-obs'
 import { propresenterPlugin } from '@scheduler/plugin-propresenter'
 import { streamingEncoderPlugin } from '@scheduler/plugin-streaming-encoder'
+import { twitchProvider } from '@scheduler/plugin-twitch'
 import { vmixPlugin } from '@scheduler/plugin-vmix'
 import type { DestinationProvider, PluginDefinition } from '@scheduler/plugin-sdk'
 
@@ -44,6 +45,10 @@ export function bundledDestinations(
     client: { clientId: string; clientSecret: string }
     refreshToken: string
   }>,
+  /** Writes a rotated refresh token back. Twitch hands out a new one on
+   *  refresh and invalidates the old, so a provider with nowhere to put it
+   *  works until the first refresh and then locks the account out. */
+  saveRefreshToken: (accountRef: string, refreshToken: string) => Promise<void>,
 ): DestinationProvider[] {
-  return [youtubeProvider({ resolveClient })]
+  return [youtubeProvider({ resolveClient }), twitchProvider({ resolveClient, saveRefreshToken })]
 }

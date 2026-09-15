@@ -97,8 +97,11 @@ export const STREAMING_PLATFORMS: StreamingPlatform[] = [
     findKeyUrl: 'https://dashboard.twitch.tv/settings/stream',
     keyPattern: '^live_\\d+_[A-Za-z0-9]+$',
     note:
-      'The automatic URL picks the nearest ingest for you and is the right answer almost always. ' +
-      'Name a region only if you have measured that it is better.',
+      'Connecting a Twitch account above is better than a key: it sets the channel title and ' +
+      'category from your templates before each service and reads the key itself, so a reset key ' +
+      'fixes itself. Twitch has no per-broadcast video, so unlike YouTube there is no watch link ' +
+      'made in advance. The automatic URL here picks the nearest ingest and is the right answer ' +
+      'almost always; name a region only if you have measured that it is better.',
   },
   {
     id: 'vimeo',

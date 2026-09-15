@@ -192,6 +192,23 @@ export class DestinationRegistry {
     }
   }
 
+  /**
+   * Replaces the stored refresh token for an account.
+   *
+   * Needed because some services rotate refresh tokens: a refresh hands back
+   * a new one and invalidates the old. A provider that cannot write the new
+   * value back works until the first refresh and then locks the account out
+   * — so this is not an optimisation, it is the difference between an
+   * integration that keeps working and one that dies quietly a week later.
+   */
+  updateRefreshToken(accountRef: string, refreshToken: string): void {
+    const row = this.deps.db
+      .prepare('SELECT secret_ref FROM account WHERE id = ?')
+      .get(accountRef) as { secret_ref: string } | undefined
+    if (!row) throw new Error(`No connected account with id "${accountRef}".`)
+    this.deps.vault.store(refreshToken, row.secret_ref)
+  }
+
   private clientRefFor(accountId: string | null): string {
     if (!accountId) return 'unattached'
     const row = this.deps.db

@@ -158,6 +158,9 @@ importers:
       '@scheduler/plugin-streaming-encoder':
         specifier: workspace:*
         version: link:../plugin-streaming-encoder
+      '@scheduler/plugin-twitch':
+        specifier: workspace:*
+        version: link:../plugin-twitch
       '@scheduler/plugin-vmix':
         specifier: workspace:*
         version: link:../plugin-vmix
@@ -257,6 +260,16 @@ importers:
         version: 5.9.3
 
   packages/plugin-streaming-encoder:
+    dependencies:
+      '@scheduler/plugin-sdk':
+        specifier: workspace:*
+        version: link:../plugin-sdk
+    devDependencies:
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
+
+  packages/plugin-twitch:
     dependencies:
       '@scheduler/plugin-sdk':
         specifier: workspace:*

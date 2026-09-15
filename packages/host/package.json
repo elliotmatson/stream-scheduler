@@ -18,6 +18,7 @@
     "@scheduler/plugin-propresenter": "workspace:*",
     "@scheduler/plugin-sdk": "workspace:*",
     "@scheduler/plugin-streaming-encoder": "workspace:*",
+    "@scheduler/plugin-twitch": "workspace:*",
     "@scheduler/plugin-vmix": "workspace:*",
     "@scheduler/plugin-youtube": "workspace:*"
   },

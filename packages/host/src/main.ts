@@ -28,10 +28,16 @@ export async function startHost(): Promise<{ stop: () => Promise<void>; url: str
   // Registered after construction so the credential lookup can close over a
   // fully built app. Providers ask for credentials; they never reach into
   // the database or the vault themselves.
-  for (const provider of bundledDestinations(async (accountRef) => {
-    const { clientId, clientSecret, refreshToken } = app.destinations.resolveOAuthClient(accountRef)
-    return { client: { clientId, clientSecret }, refreshToken }
-  })) {
+  for (const provider of bundledDestinations(
+    async (accountRef) => {
+      const { clientId, clientSecret, refreshToken } =
+        app.destinations.resolveOAuthClient(accountRef)
+      return { client: { clientId, clientSecret }, refreshToken }
+    },
+    async (accountRef, refreshToken) => {
+      app.destinations.updateRefreshToken(accountRef, refreshToken)
+    },
+  )) {
     app.destinations.register(provider)
   }
 
