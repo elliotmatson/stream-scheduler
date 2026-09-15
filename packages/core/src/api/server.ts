@@ -1191,6 +1191,40 @@ function registerRoutes(fastify: FastifyInstance, app: Application): void {
     }
   })
 
+  /**
+   * Forgets a run.
+   *
+   * Its steps go with it, and so do its telemetry samples — both are only
+   * ever read through the run, so leaving them would be litter nobody can
+   * see.
+   *
+   * Two things deliberately survive. The recording ledger keeps its rows,
+   * because the files are still on the card: that ledger is the only
+   * record that they are ours, and dropping it would make a morning's
+   * footage permanently invisible to retention. And the quota ledger
+   * keeps its rows, because it is an account of units actually spent
+   * against a daily limit, and an account that can be erased by deleting
+   * the thing that spent them is not an account.
+   */
+  fastify.delete('/api/runs/:id', async (request) => {
+    const { id } = z.object({ id: z.string() }).parse(request.params)
+    const run = db.prepare('SELECT state FROM run WHERE id = ?').get(id) as
+      { state: string } | undefined
+    if (!run) throw new NotFoundError(`No run with id "${id}".`)
+
+    // A run still going is driving devices. Deleting the record of it
+    // while it does that leaves the engine working from something that no
+    // longer exists.
+    if (!['completed', 'failed', 'cancelled'].includes(run.state)) {
+      throw new ConflictError('This run has not finished. Stop it before removing it.')
+    }
+
+    db.prepare('DELETE FROM telemetry_sample WHERE run_id = ?').run(id)
+    // Steps cascade from the run's own foreign key.
+    db.prepare('DELETE FROM run WHERE id = ?').run(id)
+    return { deleted: true }
+  })
+
   fastify.post('/api/runs/:id/cancel', async (request) => {
     const { id } = z.object({ id: z.string() }).parse(request.params)
     const { reason } = z.object({ reason: z.string().optional() }).parse(request.body ?? {})
