@@ -47,6 +47,7 @@ const configSchema: ConfigField[] = [
       { id: 'slow-to-settle', label: 'Takes a few reads to report a change' },
       { id: 'ignores-quality', label: 'Takes a quality profile and stays where it was' },
       { id: 'never-answers', label: 'Accepts commands and never answers' },
+      { id: 'names-its-own-files', label: 'Records under a name of its own choosing' },
     ],
     default: 'none',
   },
@@ -80,6 +81,16 @@ type Fault =
    *  kind of real failure: the stream comes up, at the wrong bitrate, and
    *  nothing says so unless the setting is read back. */
   | 'ignores-quality'
+  /**
+   * Takes the filename it was given and records under a different one.
+   *
+   * Not a malfunction — it is how most software behaves. OBS, ProPresenter
+   * and any audio console writing a dated session own their own output
+   * naming and will say afterwards what they used. The host has to store
+   * *that* name, or the file it just made can never be matched to the
+   * ledger and so can never be swept.
+   */
+  | 'names-its-own-files'
   /**
    * Takes the command and never resolves.
    *
@@ -242,12 +253,19 @@ class MockDevice {
           if (this.fault !== 'ignores-writes') {
             this.recording = true
             this.recordingSince ??= this.now()
-            this.filename = filename
+            // Software that owns its own output ignores the name it was
+            // handed and stamps its own. It still says which it used, and
+            // that is the one the card ends up holding.
+            const chosen =
+              this.fault === 'names-its-own-files'
+                ? `${new Date(this.now()).toISOString().slice(0, 19).replace(/[:T]/g, '-')} Recording`
+                : filename
+            this.filename = chosen
             if (slot !== undefined) this.recordingSlot = slot
             // The card keeps what was written to it, the way a real one
             // does — which is what makes a retention report testable.
             this.clips.push({
-              name: `${filename}.mov`,
+              name: `${chosen}.mov`,
               slot: slot ?? this.recordingSlot,
               recordedAt: this.now(),
               codec: 'ProRes422HQ',
