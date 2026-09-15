@@ -227,7 +227,7 @@ function Route({
   if (device) return <Devices focusId={device[1]!} navigate={navigate} />
   if (path === '/settings') return <Settings onSessionChanged={onSessionChanged} />
   if (path === '/schedule') return <Schedule navigate={navigate} />
-  if (path === '/devices') return <Devices />
+  if (path === '/devices') return <Devices navigate={navigate} />
   if (path === '/services') return <Services />
   if (path === '/events') return <SeriesList />
   if (path === '/runs') return <Runs navigate={navigate} />

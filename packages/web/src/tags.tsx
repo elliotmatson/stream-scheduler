@@ -58,24 +58,30 @@ export function TagEditor({
         </span>
       ))}
 
-      <input
-        className="tag-input"
-        value={draft}
-        placeholder="Add a tag"
-        aria-label="Add a tag"
-        disabled={busy}
-        onChange={(event) => setDraft(event.target.value)}
-        onKeyDown={(event) => {
-          // Enter commits, because that is what every tag field does.
-          if (event.key === 'Enter' && draft.trim() !== '') {
-            event.preventDefault()
-            void save([...tags, draft])
-          }
-        }}
-        onBlur={() => {
-          if (draft.trim() !== '') void save([...tags, draft])
-        }}
-      />
+      {/* Wrapped because the base input rule is a four-`:not()` chain that
+          sets every field to full width, and out-specifying it here would
+          mean repeating that chain. The wrapper decides the size; the
+          input fills it. */}
+      <span className="tag-input-wrap">
+        <input
+          className="tag-input"
+          value={draft}
+          placeholder="Add a tag"
+          aria-label="Add a tag"
+          disabled={busy}
+          onChange={(event) => setDraft(event.target.value)}
+          onKeyDown={(event) => {
+            // Enter commits, because that is what every tag field does.
+            if (event.key === 'Enter' && draft.trim() !== '') {
+              event.preventDefault()
+              void save([...tags, draft])
+            }
+          }}
+          onBlur={() => {
+            if (draft.trim() !== '') void save([...tags, draft])
+          }}
+        />
+      </span>
 
       {problem ? <span className="bad">{problem}</span> : null}
     </div>

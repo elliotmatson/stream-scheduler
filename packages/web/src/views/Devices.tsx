@@ -21,13 +21,15 @@ import {
   ErrorBanner,
   Fact,
   Field,
+  IconButton,
   PageHead,
   StatusPill,
 } from '../components.tsx'
 import { bitrateHint, CUSTOM_VALUE, freeformHint, LEAVE_AS_IS, nowOn } from '../copy.ts'
 import { duration, relative } from '../format.ts'
 import { DeviceFiles } from './DeviceFiles.tsx'
-import { FilterBar, matches, TagEditor } from '../tags.tsx'
+import { FilterBar, matches, TagEditor, TagList } from '../tags.tsx'
+import { IconClose } from '../icons.tsx'
 
 /** The three ways anybody looks for a device in a full rack. */
 const DEVICE_SORTS = [
@@ -86,30 +88,32 @@ export function Devices({
   }
 
   const all = data ?? []
-  // Narrowed for display only. The focus-scroll below still works against
-  // the whole rack, because arriving from a link should not depend on
-  // whatever filter was left set.
   const devices = all.filter((device) => matches(device, query, chosen)).sort(sortDevices(sort))
 
-  // Arrived from a link on another screen — the status board, or a run's
-  // own page. Scrolled to and marked rather than filtered down to: the
-  // rest of the rack is context somebody standing at it still wants.
+  // The open device is the route, not a piece of local state. That makes
+  // a link from the status board or a run land on the same thing a click
+  // here does, and makes the browser's own back button close the panel.
+  const open = focusId === undefined ? undefined : all.find((device) => device.id === focusId)
+  const show = (id: string | undefined): void =>
+    navigate?.(id === undefined ? '/devices' : `/devices/${id}`)
+
+  // Closing the panel with Escape, because a drawer that can only be
+  // dismissed by finding its close button is a drawer people leave open.
   useEffect(() => {
-    if (!focusId || all.length === 0) return
-    const card = document.getElementById(`device-${focusId}`)
-    card?.scrollIntoView({ behavior: 'smooth', block: 'center' })
-  }, [focusId, all.length])
+    if (!open) return
+    const onKey = (event: KeyboardEvent): void => {
+      if (event.key === 'Escape') show(undefined)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open?.id])
 
   return (
     <>
       <PageHead
         title="Devices"
         subtitle="The encoders, switchers and recorders this scheduler drives."
-        // Only when one was opened from a run or the status board. Reached
-        // from the nav there is nowhere to go back to.
-        {...(focusId && navigate
-          ? { back: { to: '/devices', label: 'Back to all devices', onNavigate: navigate } }
-          : {})}
         actions={
           <button className="primary" onClick={() => setAdding((open) => !open)}>
             {adding ? 'Cancel' : 'Add a device'}
@@ -147,174 +151,271 @@ export function Devices({
         {devices.length === 0 && !adding ? (
           <Card>
             <Empty>
-              No devices yet. Add a real encoder, switcher or deck — or the bundled mock, which runs
-              a whole scheduled event without touching hardware.
+              {all.length === 0
+                ? 'No devices yet. Add a real encoder, switcher or deck — or the bundled mock, which runs a whole scheduled event without touching hardware.'
+                : 'No devices match that.'}
             </Empty>
           </Card>
         ) : null}
 
-        {devices.map((device) =>
-          editing === device.id && plugins ? (
-            <DeviceForm
-              key={device.id}
-              plugins={plugins}
-              device={device}
-              onDone={() => {
-                setEditing(undefined)
-                reload()
-              }}
-            />
-          ) : (
-            <DeviceCard
-              key={device.id}
-              device={device}
-              focused={device.id === focusId}
-              kind={plugins?.find((plugin) => plugin.id === device.pluginId)?.displayName}
-              busy={busy === device.id}
-              onConnect={() => void act(device.id, () => api.connectDevice(device.id))}
-              onEdit={() => setEditing(device.id)}
-              onRemove={() => void act(device.id, () => api.deleteDevice(device.id))}
-              onTagged={() => {
-                reload()
-                // The filter offers the tags that exist, so a new one has
-                // to reach it as soon as it is typed.
-                reloadTags()
-              }}
-            />
-          ),
-        )}
+        {/* A list rather than a stack of cards. A rack of twenty was
+            twenty expanded panels, and finding one meant scrolling past
+            nineteen sets of controls belonging to something else. */}
+        {devices.length > 0 ? (
+          <Card>
+            <div className="device-list">
+              {devices.map((device) => (
+                <DeviceRow
+                  key={device.id}
+                  device={device}
+                  kind={plugins?.find((plugin) => plugin.id === device.pluginId)?.displayName}
+                  selected={device.id === focusId}
+                  onOpen={() => show(device.id)}
+                />
+              ))}
+            </div>
+          </Card>
+        ) : null}
       </div>
+
+      {open ? (
+        <DevicePanel
+          device={open}
+          kind={plugins?.find((plugin) => plugin.id === open.pluginId)?.displayName}
+          plugins={plugins}
+          editing={editing === open.id}
+          busy={busy === open.id}
+          onClose={() => show(undefined)}
+          onConnect={() => void act(open.id, () => api.connectDevice(open.id))}
+          onEdit={() => setEditing(open.id)}
+          onEdited={() => {
+            setEditing(undefined)
+            reload()
+          }}
+          onRemove={() => {
+            void act(open.id, () => api.deleteDevice(open.id)).then(() => show(undefined))
+          }}
+          onTagged={() => {
+            reload()
+            // The filter offers the tags that exist, so a new one has to
+            // reach it as soon as it is typed.
+            reloadTags()
+          }}
+        />
+      ) : null}
     </>
   )
 }
 
-function DeviceCard({
+/**
+ * One device in the list: what it is, and whether it is all right.
+ *
+ * Everything else is behind opening it. A rack of twenty used to be
+ * twenty expanded panels, and finding the deck that stopped answering
+ * meant scrolling past nineteen sets of controls belonging to something
+ * else.
+ */
+function DeviceRow({
   device,
   kind,
-  focused,
+  selected,
+  onOpen,
+}: {
+  device: Device
+  kind: string | undefined
+  selected: boolean
+  onOpen: () => void
+}): ReactNode {
+  return (
+    <button
+      className={`device-row-item${selected ? ' is-selected' : ''}`}
+      title={`Open ${device.label}`}
+      onClick={onOpen}
+    >
+      <StatusPill status={device.health} />
+      <span className="device-row-name">
+        <strong>{device.label}</strong>
+        <span className="muted">
+          {kind ?? device.pluginId}
+          {device.probedModel ? ` · ${device.probedModel}` : ''}
+        </span>
+      </span>
+
+      <TagList tags={device.tags ?? []} />
+
+      {/* Only the things somebody would scan a list for: what is wrong,
+          and what is in use. Everything else is inside. */}
+      {device.inUseBy.length > 0 ? (
+        <span className="pill live" title={device.inUseBy.map((run) => run.label).join(', ')}>
+          in use
+        </span>
+      ) : null}
+      {!device.enabled ? (
+        <span className="pill warn" title="Skipped when an event runs.">
+          off
+        </span>
+      ) : null}
+      {device.lastError ? (
+        <span className="bad device-row-error" title={device.lastError}>
+          {device.lastError}
+        </span>
+      ) : null}
+    </button>
+  )
+}
+
+/**
+ * One device in full, in a drawer over the list.
+ *
+ * A drawer rather than an expanding row because the contents are a whole
+ * screen's worth — config, every node's controls, the files on its media
+ * — and pushing the rest of the rack down the page to show them loses the
+ * thing somebody was comparing against.
+ */
+function DevicePanel({
+  device,
+  kind,
+  plugins,
+  editing,
   busy,
+  onClose,
   onConnect,
   onEdit,
+  onEdited,
   onRemove,
   onTagged,
 }: {
   device: Device
   /** The plugin's own name for this kind of box, e.g. "Blackmagic HyperDeck". */
   kind: string | undefined
-  /** Linked to from elsewhere, so it is worth pointing at. */
-  focused?: boolean
+  plugins: Plugin[] | undefined
+  editing: boolean
   busy: boolean
+  onClose: () => void
   onTagged: () => void
   onConnect: () => void
   onEdit: () => void
+  onEdited: () => void
   onRemove: () => void
 }): ReactNode {
   return (
-    <section id={`device-${device.id}`} className={`card${focused ? ' focused' : ''}`}>
-      <div className="page-head" style={{ marginBottom: 10 }}>
-        <div>
-          <h2 style={{ marginBottom: 2 }}>{device.label}</h2>
-          <span
-            className="muted"
-            title="What it is, and — once connected — the model it says it is."
-          >
-            {kind ?? device.pluginId}
-            {/* The probed model, not what someone picked in a dropdown. */}
-            {device.probedModel ? ` · ${device.probedModel}` : ''}
-          </span>
+    <>
+      {/* Catches the click that means "I am done with this", which on a
+          drawer is anywhere else on the page. */}
+      <button className="drawer-scrim" aria-label="Close" onClick={onClose} />
+      <aside className="drawer" role="dialog" aria-label={device.label}>
+        <div className="page-head drawer-head">
+          <div>
+            <h2 style={{ marginBottom: 2 }}>{device.label}</h2>
+            <span
+              className="muted"
+              title="What it is, and — once connected — the model it says it is."
+            >
+              {kind ?? device.pluginId}
+              {/* The probed model, not what someone picked in a dropdown. */}
+              {device.probedModel ? ` · ${device.probedModel}` : ''}
+            </span>
+          </div>
+          <div className="row">
+            <StatusPill status={device.health} />
+            <button
+              disabled={busy}
+              title="Opens the connection again and re-reads what this device can do."
+              onClick={onConnect}
+            >
+              {busy ? 'Connecting…' : 'Connect'}
+            </button>
+            <button onClick={onEdit}>Edit</button>
+            <ConfirmButton label="Remove" disabled={busy} onConfirm={onRemove} />
+            <IconButton label="Close" icon={<IconClose />} onClick={onClose} />
+          </div>
         </div>
-        <div className="row">
-          <StatusPill status={device.health} />
-          <button
-            disabled={busy}
-            title="Opens the connection again and re-reads what this device can do."
-            onClick={onConnect}
-          >
-            {busy ? 'Connecting…' : 'Connect'}
-          </button>
-          <button onClick={onEdit}>Edit</button>
-          <ConfirmButton label="Remove" disabled={busy} onConfirm={onRemove} />
+
+        {/* Editing happens in the drawer rather than replacing the row it
+          came from, so the thing being edited stays on screen. */}
+        {editing && plugins ? (
+          <DeviceForm plugins={plugins} device={device} onDone={onEdited} />
+        ) : null}
+
+        <TagEditor kind="device" id={device.id} tags={device.tags ?? []} onChanged={onTagged} />
+
+        {device.lastError ? <div className="banner error">{device.lastError}</div> : null}
+
+        <div className="row" style={{ gap: 18, marginTop: 8 }}>
+          <Fact
+            label="Last seen"
+            value={device.lastSeenAt ? relative(device.lastSeenAt) : 'never'}
+            tip="When this device last answered."
+          />
+          <Fact
+            label="Firmware"
+            value={device.capabilities?.firmware ?? '—'}
+            tip="The version the device reported when it connected."
+          />
+          <Fact
+            label="Can do"
+            value={device.capabilities?.features.join(', ') || '—'}
+            tip="What this model told us it supports. An event can only ask for these."
+          />
         </div>
-      </div>
 
-      <TagEditor kind="device" id={device.id} tags={device.tags ?? []} onChanged={onTagged} />
-
-      {device.lastError ? <div className="banner error">{device.lastError}</div> : null}
-
-      <div className="row" style={{ gap: 18, marginTop: 8 }}>
-        <Fact
-          label="Last seen"
-          value={device.lastSeenAt ? relative(device.lastSeenAt) : 'never'}
-          tip="When this device last answered."
-        />
-        <Fact
-          label="Firmware"
-          value={device.capabilities?.firmware ?? '—'}
-          tip="The version the device reported when it connected."
-        />
-        <Fact
-          label="Can do"
-          value={device.capabilities?.features.join(', ') || '—'}
-          tip="What this model told us it supports. An event can only ask for these."
-        />
-      </div>
-
-      {/* Where to go for the things this app does not do: the media on a
+        {/* Where to go for the things this app does not do: the media on a
           deck or a switcher's drive. The plugin builds the address because
           only it knows the protocol and port. */}
-      {(device.capabilities?.links ?? []).length > 0 ? (
-        <div className="stack" style={{ marginTop: 10, gap: 6 }}>
-          {device.capabilities!.links!.map((link) => (
-            <div key={link.url} className="row" style={{ gap: 10, alignItems: 'baseline' }}>
-              <span style={{ minWidth: 130 }}>{link.label}</span>
-              {/* A real link, so it opens wherever the browser or the OS
+        {(device.capabilities?.links ?? []).length > 0 ? (
+          <div className="stack" style={{ marginTop: 10, gap: 6 }}>
+            {device.capabilities!.links!.map((link) => (
+              <div key={link.url} className="row" style={{ gap: 10, alignItems: 'baseline' }}>
+                <span style={{ minWidth: 130 }}>{link.label}</span>
+                {/* A real link, so it opens wherever the browser or the OS
                   still handles the scheme. Most browsers dropped ftp://,
                   which the hint says rather than leaving a dead click, and
                   the address stays selectable for pasting elsewhere. */}
-              <a className="address" href={link.url} target="_blank" rel="noreferrer">
-                {link.url}
-              </a>
-              <CopyButton value={link.url} />
-              {link.note ? (
-                <span className="muted" style={{ fontSize: 12 }}>
-                  {link.note}
-                </span>
-              ) : null}
-            </div>
-          ))}
-          {/* Said once under the list rather than beside every line. */}
-          <p className="muted" style={{ margin: 0, fontSize: 12 }}>
-            Most browsers no longer open ftp:// — if nothing happens, copy the address and paste it
-            into Finder (Go &gt; Connect to Server) or Windows Explorer.
-          </p>
-        </div>
-      ) : null}
+                <a className="address" href={link.url} target="_blank" rel="noreferrer">
+                  {link.url}
+                </a>
+                <CopyButton value={link.url} />
+                {link.note ? (
+                  <span className="muted" style={{ fontSize: 12 }}>
+                    {link.note}
+                  </span>
+                ) : null}
+              </div>
+            ))}
+            {/* Said once under the list rather than beside every line. */}
+            <p className="muted" style={{ margin: 0, fontSize: 12 }}>
+              Most browsers no longer open ftp:// — if nothing happens, copy the address and paste
+              it into Finder (Go &gt; Connect to Server) or Windows Explorer.
+            </p>
+          </div>
+        ) : null}
 
-      {device.nodes.length > 0 ? (
-        <div className="stack" style={{ marginTop: 12, gap: 6 }}>
-          {device.nodes.map((node) => (
-            <NodeControls key={node.id} device={device} node={node} />
-          ))}
-          {/* Only where the device can actually be read. A recorder that
+        {device.nodes.length > 0 ? (
+          <div className="stack" style={{ marginTop: 12, gap: 6 }}>
+            {device.nodes.map((node) => (
+              <NodeControls key={node.id} device={device} node={node} />
+            ))}
+            {/* Only where the device can actually be read. A recorder that
               cannot list its media has nothing to show, and an empty file
               browser reads as a broken one. */}
-          {device.nodes
-            .filter((node) => node.supports.includes('listMedia'))
-            .map((node) => (
-              <DeviceFiles
-                key={`${node.id}-files`}
-                deviceId={device.id}
-                nodeId={node.id}
-                timezone={browserZone}
-              />
-            ))}
-        </div>
-      ) : (
-        <p className="muted" style={{ marginBottom: 0 }}>
-          Connect, and this fills in with what the device can actually do.
-        </p>
-      )}
-    </section>
+            {device.nodes
+              .filter((node) => node.supports.includes('listMedia'))
+              .map((node) => (
+                <DeviceFiles
+                  key={`${node.id}-files`}
+                  deviceId={device.id}
+                  nodeId={node.id}
+                  timezone={browserZone}
+                />
+              ))}
+          </div>
+        ) : (
+          <p className="muted" style={{ marginBottom: 0 }}>
+            Connect, and this fills in with what the device can actually do.
+          </p>
+        )}
+      </aside>
+    </>
   )
 }
 
