@@ -26,10 +26,11 @@ import { Notifier } from './notify/notifier.js'
 import { PreflightChecker, DEFAULT_PREFLIGHT_LEAD_MS } from './notify/preflight.js'
 import { RecordingLedger } from './runs/artifacts.js'
 import { Tags } from './tags/index.js'
-import { eventMidRunOn } from './runs/retention.js'
+import { eventMidRunOn, freeMsOf } from './runs/retention.js'
 import { Sweeper } from './runs/sweep.js'
 import { runFailedNotification } from './notify/run-events.js'
 import { applyPendingRestore, type RestoreApplied } from './backup/index.js'
+import { recordingsSweptNotification } from './notify/retention-events.js'
 
 /**
  * How long a tick may run before the next one stops waiting for it.
@@ -132,6 +133,7 @@ export class Application {
   private tickToken: symbol | undefined
   private lastMaterializedAt = 0
   private lastPreflightAt = 0
+  private lastSweepAt = 0
   private readonly tickIntervalMs: number
   private readonly horizonMs: number
 
@@ -188,6 +190,13 @@ export class Application {
       },
       stateOf: (deviceId) => this.connections.lastStates(deviceId).map((entry) => entry.state),
       runOn: (deviceId) => eventMidRunOn(init.db, deviceId),
+      freeMs: (deviceId, nodeId) =>
+        freeMsOf(
+          this.connections
+            .lastStates(deviceId)
+            .filter((entry) => entry.nodeId === nodeId)
+            .map((entry) => entry.state),
+        ),
       canDelete: (deviceId, nodeId) =>
         this.connections
           .get(deviceId)
@@ -390,6 +399,11 @@ export class Application {
   async start(): Promise<void> {
     await this.engine.recover()
     this.materialize()
+    // The sweep waits an hour rather than running on the first tick. It
+    // is the one job here that destroys something, and a restart — a
+    // crash loop most of all — must not be a way to trigger it. Nothing
+    // about a keep-for date is urgent enough to want the other behaviour.
+    this.lastSweepAt = this.clock.now()
     await this.tick()
     this.timer = setInterval(() => {
       void this.tick()
@@ -449,6 +463,14 @@ export class Application {
         this.lastPreflightAt = now
         await this.preflight.run()
       }
+
+      // And so is the sweep, on the same reasoning and after the checks:
+      // reading a card is slow, and nothing about a keep-for date needs
+      // acting on within the hour.
+      if (now - this.lastSweepAt > 60 * 60_000) {
+        this.lastSweepAt = now
+        await this.sweep()
+      }
       // After the engine, so a run that has just gone on air is sampled
       // rather than waiting a whole interval to appear on its own timeline.
       await this.telemetry.tick()
@@ -468,6 +490,42 @@ export class Application {
           })
         }
       }
+    }
+  }
+
+  /**
+   * Enforces the keep-for policies, once an hour.
+   *
+   * Errors are caught here rather than left to the tick's own handler,
+   * because tidying up old files is the least important thing this loop
+   * does and must never be what stops a run from starting.
+   *
+   * Loud in the log whatever the alert does, for the same reason the
+   * manual sweep is: this is the one thing in the app that destroys
+   * somebody's footage, and it now does it with nobody watching.
+   */
+  private async sweep(): Promise<void> {
+    try {
+      const swept = await this.sweeper.sweepDue()
+
+      for (const refusal of this.sweeper.takeRefusals()) {
+        // Not an error: a deck mid-record or an event under way means "not
+        // now", which on an hourly job is simply the next hour.
+        this.logger.info('a scheduled sweep skipped an output', refusal)
+      }
+
+      if (swept.length === 0) return
+
+      this.logger.warn('a scheduled sweep removed recordings', {
+        outputs: swept.map((entry) => entry.outputId),
+        removed: swept.flatMap((entry) => entry.removed.map((file) => file.filename)),
+        failed: swept.flatMap((entry) => entry.failed.map((file) => file.filename)),
+      })
+      this.notifier.enqueue(recordingsSweptNotification(swept, this.links.origin, this.clock.now()))
+    } catch (error) {
+      this.logger.error('the scheduled sweep failed', {
+        error: error instanceof Error ? error.message : String(error),
+      })
     }
   }
 
