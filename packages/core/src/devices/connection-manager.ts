@@ -82,6 +82,31 @@ export type ConnectionEvent =
   | { type: 'state'; deviceId: string; nodeId: string; state: NodeState }
   | { type: 'health'; deviceId: string; report: HealthReport }
 
+/**
+ * Longest the initial state read may take per node.
+ *
+ * Short on purpose. This is a nicety — the screens look better for it —
+ * and a nicety must never be what keeps a connection, or the loop that
+ * opened it, waiting.
+ */
+const PRIME_TIMEOUT_MS = 8_000
+
+/** Rejects if the promise has not settled in time. The original is left to
+ *  settle on its own; nothing here can cancel it. */
+async function withDeadline<T>(promise: Promise<T>, ms: number, what: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error(`${what} within ${ms / 1000} seconds.`)), ms)
+      }),
+    ])
+  } finally {
+    if (timer) clearTimeout(timer)
+  }
+}
+
 const BASE_BACKOFF_MS = 2_000
 const MAX_BACKOFF_MS = 5 * 60_000
 
@@ -191,7 +216,14 @@ export class ConnectionManager {
   private async primeState(connection: Connection): Promise<void> {
     for (const node of connection.nodes) {
       try {
-        const state = await connection.device.invoke(node.id, 'readState')
+        // Bounded, because a plugin that hangs here hangs the connect,
+        // which hangs the tick that called it. The adapters have their own
+        // deadlines; this does not take their word for it.
+        const state = await withDeadline(
+          connection.device.invoke(node.id, 'readState'),
+          PRIME_TIMEOUT_MS,
+          `${connection.label} did not report its state`,
+        )
         if (state) this.remember(connection.deviceId, node.id, state)
       } catch (error) {
         this.logger.debug('could not read initial state', {

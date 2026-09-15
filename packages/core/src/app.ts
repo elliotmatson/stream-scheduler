@@ -27,6 +27,15 @@ import { PreflightChecker, DEFAULT_PREFLIGHT_LEAD_MS } from './notify/preflight.
 import { RecordingLedger } from './runs/artifacts.js'
 import { runFailedNotification } from './notify/run-events.js'
 
+/**
+ * How long a tick may run before the next one stops waiting for it.
+ *
+ * Comfortably longer than a healthy pass — devices, engine, telemetry and
+ * the outbox — and far shorter than a service, so a wedged tick costs
+ * seconds rather than a morning.
+ */
+export const TICK_DEADLINE_MS = 60_000
+
 export interface AppOptions {
   configDir?: string
   clock?: Clock
@@ -101,6 +110,10 @@ export class Application {
   private timer: NodeJS.Timeout | undefined
   private reachableFromNetwork = false
   private ticking = false
+  /** When the in-flight tick began, for the overrun deadline. */
+  private tickStartedAt = 0
+  /** Identifies the in-flight tick, so a late one cannot clear the guard. */
+  private tickToken: symbol | undefined
   private lastMaterializedAt = 0
   private lastPreflightAt = 0
   private readonly tickIntervalMs: number
@@ -335,10 +348,35 @@ export class Application {
   /**
    * One pass of the loop. Guarded against overlap: a slow device must not
    * cause two ticks to interleave and drive the same run twice.
+   *
+   * The guard is time-bounded, and that bound is load-bearing. A plugin
+   * that awaits something which never settles — a deck that accepts a
+   * socket and then stops answering while it remounts a card is the real
+   * case — would otherwise leave `ticking` true forever, and every
+   * subsequent tick returns at the guard. The scheduler stops: no
+   * reconnects, no telemetry, no runs started, and no sign of it anywhere
+   * except that the screens go quiet. One device must not be able to do
+   * that, so a tick that overruns is abandoned and the next one goes.
    */
   async tick(): Promise<void> {
-    if (this.ticking) return
+    if (this.ticking) {
+      if (this.clock.now() - this.tickStartedAt < TICK_DEADLINE_MS) return
+      // The previous tick is still pending and past its deadline. It is
+      // not cancellable — nothing in JavaScript is — so it is left to
+      // settle or not, and the loop carries on without it.
+      this.logger.error('a scheduler tick overran and was abandoned', {
+        startedAt: this.tickStartedAt,
+        deadlineMs: TICK_DEADLINE_MS,
+      })
+    }
+
+    // Whoever holds the current token owns the guard. An abandoned tick
+    // that settles later finds the token has moved on and leaves it alone,
+    // rather than clearing it out from under its successor.
+    const token = Symbol('tick')
+    this.tickToken = token
     this.ticking = true
+    this.tickStartedAt = this.clock.now()
     try {
       const now = this.clock.now()
       if (now - this.lastMaterializedAt > 60 * 60_000) {
@@ -367,7 +405,7 @@ export class Application {
         error: error instanceof Error ? error.message : String(error),
       })
     } finally {
-      this.ticking = false
+      if (this.tickToken === token) this.ticking = false
       for (const listener of this.tickListeners) {
         try {
           listener()
