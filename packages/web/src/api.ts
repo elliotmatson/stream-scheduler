@@ -545,6 +545,8 @@ export const api = {
   dashboard: () => request<Dashboard>('/api/dashboard'),
   runs: () => request<Run[]>('/api/runs'),
   run: (id: string) => request<Run>(`/api/runs/${id}`),
+  /** Forgets a finished run, its steps and its readings. Recordings stay. */
+  deleteRun: (id: string) => request<{ deleted: true }>(`/api/runs/${id}`, { method: 'DELETE' }),
   /** What each recording output's policy says could go. */
   /** Every tag in use on a kind of thing, with how many carry it. */
   tags: (kind: TaggableKind) =>
