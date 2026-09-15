@@ -193,7 +193,18 @@ function context(): DeviceContext {
  * keeps the file is the failure worth having a test for.
  */
 function fakeFtp(files: string[], options: { ignoresDeletes?: boolean } = {}) {
-  const card = new Set(files)
+  // Size and date are the two columns the control protocol cannot answer,
+  // so the fake carries both: a listing that only had names would not
+  // exercise the reason this path exists.
+  const card = new Map(
+    files
+      .map((name, index) => ({
+        name,
+        size: 360_000_000 + index,
+        modifiedAt: Date.parse('2026-09-06T11:00:00Z') + index * 86_400_000,
+      }))
+      .map((file) => [file.name, file]),
+  )
   const removed: string[] = []
   let closed = 0
 
@@ -206,7 +217,7 @@ function fakeFtp(files: string[], options: { ignoresDeletes?: boolean } = {}) {
         removed.push(path)
         if (!options.ignoresDeletes) card.delete(path.split('/').pop() ?? path)
       },
-      list: async () => [...card],
+      list: async () => [...card.values()],
       close: async () => {
         closed += 1
       },
@@ -214,13 +225,16 @@ function fakeFtp(files: string[], options: { ignoresDeletes?: boolean } = {}) {
   }
 }
 
+/** What `disk list` reports in the protocol fake, by name. */
+const CLIPS_ON_CARD = ['2026-09-06 Sunday Service.mov', '2026-08-30 Sunday Service.mov']
+
 async function connect(
   config: Record<string, unknown> = {},
-  ftp?: ReturnType<typeof fakeFtp>,
+  ftp: ReturnType<typeof fakeFtp> = fakeFtp(CLIPS_ON_CARD),
 ): Promise<DeviceInstance> {
   const plugin = hyperdeckPlugin({
     now: () => 1_700_000_000_000,
-    ...(ftp === undefined ? {} : { connectFtp: ftp.connect }),
+    connectFtp: ftp.connect,
   })
   const created = await plugin.createDevice({
     ...context(),
@@ -557,11 +571,20 @@ describe('taking something off the card', () => {
 
     await hyperdeck.invoke('record', 'deleteMedia', { name: 'old.mov', slot: 1 })
 
-    expect(ftp.removed).toEqual(['/1/old.mov'])
-    expect([...ftp.card]).toEqual(['keep.mov'])
+    // Slot 1 is the card root, the way the deck's own file page lays it out.
+    expect(ftp.removed).toEqual(['/old.mov'])
+    expect([...ftp.card.keys()]).toEqual(['keep.mov'])
     // A sweep is several of these; a session left open each time is a deck
     // that stops answering by the fourth file.
     expect(ftp.closed()).toBe(1)
+  })
+
+  it('puts a second slot in its own directory', async () => {
+    const ftp = fakeFtp(['old.mov'])
+    const hyperdeck = await connect({}, ftp)
+
+    await hyperdeck.invoke('record', 'deleteMedia', { name: 'old.mov', slot: 2 })
+    expect(ftp.removed).toEqual(['/2/old.mov'])
   })
 
   it('fails loudly when the deck keeps the file anyway', async () => {

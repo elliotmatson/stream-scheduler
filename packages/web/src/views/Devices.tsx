@@ -26,6 +26,14 @@ import {
 } from '../components.tsx'
 import { bitrateHint, CUSTOM_VALUE, freeformHint, LEAVE_AS_IS, nowOn } from '../copy.ts'
 import { duration, relative } from '../format.ts'
+import { DeviceFiles } from './DeviceFiles.tsx'
+
+/**
+ * Files are stamped by the device's own clock, so they are shown in the
+ * browser's zone rather than an event's: a card is a thing in the room,
+ * not a thing on a schedule.
+ */
+const browserZone = Intl.DateTimeFormat().resolvedOptions().timeZone
 
 export function Devices({
   focusId,
@@ -234,6 +242,19 @@ function DeviceCard({
           {device.nodes.map((node) => (
             <NodeControls key={node.id} device={device} node={node} />
           ))}
+          {/* Only where the device can actually be read. A recorder that
+              cannot list its media has nothing to show, and an empty file
+              browser reads as a broken one. */}
+          {device.nodes
+            .filter((node) => node.supports.includes('listMedia'))
+            .map((node) => (
+              <DeviceFiles
+                key={`${node.id}-files`}
+                deviceId={device.id}
+                nodeId={node.id}
+                timezone={browserZone}
+              />
+            ))}
         </div>
       ) : (
         <p className="muted" style={{ marginBottom: 0 }}>

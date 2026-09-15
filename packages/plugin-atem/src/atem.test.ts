@@ -208,11 +208,54 @@ function context(config: Record<string, unknown> = {}): DeviceContext {
   }
 }
 
+/**
+ * The switcher's drive, as an FTP client sees it.
+ *
+ * The control protocol says nothing about what is on the media — it has
+ * no listing and no delete — so this is the only place a file's size or
+ * date comes from, and the only way either action can be tested.
+ */
+function fakeFtp(files: string[], options: { ignoresDeletes?: boolean } = {}) {
+  const drive = new Map(
+    files.map((name, index) => [
+      name,
+      {
+        name,
+        size: 410_000_000 + index,
+        modifiedAt: Date.parse('2026-09-06T18:48:52Z') + index * 86_400_000,
+      },
+    ]),
+  )
+  const removed: string[] = []
+  let closed = 0
+
+  return {
+    drive,
+    removed,
+    closed: () => closed,
+    connect: async () => ({
+      list: async () => [...drive.values()],
+      remove: async (path: string) => {
+        removed.push(path)
+        if (!options.ignoresDeletes) drive.delete(path.split('/').pop() ?? path)
+      },
+      close: async () => {
+        closed += 1
+      },
+    }),
+  }
+}
+
 async function connect(
   client: FakeAtem,
   config: Record<string, unknown> = {},
+  ftp: ReturnType<typeof fakeFtp> = fakeFtp([]),
 ): Promise<DeviceInstance> {
-  const plugin = atemPlugin({ now: () => 1_700_000_000_000, createClient: () => client })
+  const plugin = atemPlugin({
+    now: () => 1_700_000_000_000,
+    createClient: () => client,
+    connectFtp: ftp.connect,
+  })
   // Wrapped exactly as the host wraps plugins in CI.
   return withSerializingTransport(await plugin.createDevice(context(config)))
 }
@@ -608,5 +651,58 @@ describe('telemetry', () => {
 
     client.emit('stateChanged', client.state, ['audio.channels.1.gain'])
     expect(emitted).toHaveLength(0)
+  })
+})
+
+describe('what is on the switcher\u2019s drive', () => {
+  const recorder = () =>
+    new FakeAtem({ recording: recordingBlock(), streaming: streamingBlock() } as Partial<AtemState>)
+
+  it('lists files with the size and date only FTP knows', async () => {
+    const ftp = fakeFtp(['MT-9-00.mp4', 'testFile.mp4'])
+    const atem = await connect(recorder(), {}, ftp)
+
+    const listed = await atem.invoke('record', 'listMedia', {})
+    const media = (listed?.raw?.media ?? []) as {
+      name: string
+      bytes?: number
+      recordedAt?: number
+    }[]
+
+    expect(media.map((item) => item.name)).toEqual(['MT-9-00.mp4', 'testFile.mp4'])
+    // Neither of these exists in the control protocol at all, which is the
+    // whole reason the listing goes over FTP.
+    expect(media[0]?.bytes).toBeGreaterThan(0)
+    expect(media[0]?.recordedAt).toBeGreaterThan(0)
+    expect(ftp.closed()).toBe(1)
+  })
+
+  it('removes a named file and hangs up after', async () => {
+    const ftp = fakeFtp(['old.mp4', 'keep.mp4'])
+    const atem = await connect(recorder(), {}, ftp)
+
+    await atem.invoke('record', 'deleteMedia', { name: 'old.mp4' })
+
+    expect(ftp.removed).toEqual(['/old.mp4'])
+    expect([...ftp.drive.keys()]).toEqual(['keep.mp4'])
+    expect(ftp.closed()).toBe(1)
+  })
+
+  it('fails loudly when the switcher keeps the file anyway', async () => {
+    const ftp = fakeFtp(['stuck.mp4'], { ignoresDeletes: true })
+    const atem = await connect(recorder(), {}, ftp)
+
+    await expect(atem.invoke('record', 'deleteMedia', { name: 'stuck.mp4' })).rejects.toThrow(
+      /still has "stuck.mp4"/,
+    )
+    expect(ftp.closed()).toBe(1)
+  })
+
+  it('says it can do both, so the host offers file management here', async () => {
+    const atem = await connect(recorder())
+    const nodes = await atem.listNodes()
+    const record = nodes.find((node) => node.id === 'record')
+    expect(record?.supports).toContain('listMedia')
+    expect(record?.supports).toContain('deleteMedia')
   })
 })

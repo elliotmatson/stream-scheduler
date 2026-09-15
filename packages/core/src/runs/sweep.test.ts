@@ -146,7 +146,7 @@ describe('sweeping a card', () => {
 
     const refused = await post('/api/retention/sweep', { outputId })
     expect(refused.statusCode).toBe(409)
-    expect(json(refused).error.message).toMatch(/recording/i)
+    expect(json(refused).error).toMatch(/recording/i)
   })
 
   it('will not sweep a deck an event is mid-run on', async () => {
@@ -159,7 +159,7 @@ describe('sweeping a card', () => {
 
     const refused = await post('/api/retention/sweep', { outputId })
     expect(refused.statusCode).toBe(409)
-    expect(json(refused).error.message).toMatch(/mid-run/i)
+    expect(json(refused).error).toMatch(/mid-run/i)
   })
 
   it('refuses a token that has already been used', async () => {
@@ -174,7 +174,7 @@ describe('sweeping a card', () => {
     // against a card somebody has since put new footage on.
     const again = await post('/api/retention/sweep', { outputId, confirm: plan.confirm })
     expect(again.statusCode).toBe(409)
-    expect(json(again).error.message).toMatch(/expired|already/i)
+    expect(json(again).error).toMatch(/expired|already/i)
   })
 
   it('refuses a token that has gone stale', async () => {
@@ -184,7 +184,7 @@ describe('sweeping a card', () => {
     clock.advance(6 * MINUTE)
     const stale = await post('/api/retention/sweep', { outputId, confirm: plan.confirm })
     expect(stale.statusCode).toBe(409)
-    expect(json(stale).error.message).toMatch(/five minutes/i)
+    expect(json(stale).error).toMatch(/five minutes/i)
   })
 
   it('removes nothing when the policy protects everything', async () => {
@@ -221,6 +221,6 @@ describe('sweeping a card', () => {
   it('will not sweep an output that does not exist', async () => {
     const refused = await post('/api/retention/sweep', { outputId: 'nope' })
     expect(refused.statusCode).toBe(409)
-    expect(json(refused).error.message).toMatch(/No recording output/i)
+    expect(json(refused).error).toMatch(/No recording output/i)
   })
 })

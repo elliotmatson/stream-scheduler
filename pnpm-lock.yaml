@@ -119,6 +119,16 @@ importers:
         specifier: ^5.7.2
         version: 5.9.3
 
+  packages/device-ftp:
+    dependencies:
+      basic-ftp:
+        specifier: ^5.0.5
+        version: 5.3.1
+    devDependencies:
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
+
   packages/host:
     dependencies:
       '@scheduler/core':
@@ -149,6 +159,9 @@ importers:
 
   packages/plugin-atem:
     dependencies:
+      '@scheduler/device-ftp':
+        specifier: workspace:^
+        version: link:../device-ftp
       '@scheduler/plugin-sdk':
         specifier: workspace:*
         version: link:../plugin-sdk
@@ -162,6 +175,9 @@ importers:
 
   packages/plugin-hyperdeck:
     dependencies:
+      '@scheduler/device-ftp':
+        specifier: workspace:^
+        version: link:../device-ftp
       '@scheduler/plugin-sdk':
         specifier: workspace:*
         version: link:../plugin-sdk
@@ -1165,6 +1181,10 @@ packages:
     resolution: {integrity: sha512-le521dGVfxM7yRX0EikCoSz+rOK+hHzdDt/E7mG1jOJB/6WAAUuwVroLwaB7ApaUsz5Q0kFlDXLSA9MheUIfRQ==}
     engines: {node: '>=6.0.0'}
     hasBin: true
+
+  basic-ftp@5.3.1:
+    resolution: {integrity: sha512-bopVNp6ugyA150DDuZfPFdt1KZ5a94ZDiwX4hMgZDzF+GttD80lEy8kj98kbyhLXnPvhtIo93mdnLIjpCAeeOw==}
+    engines: {node: '>=10.0.0'}
 
   basic-ftp@6.2.1:
     resolution: {integrity: sha512-bK67isD+lKq46AU8vNtjvMaT2ZqAOAmNCbxUHlFBRD4k15NWxyEjmaKtZPlgce58So4BNTjITGQOVTjL9y0ECA==}
@@ -4248,6 +4268,8 @@ snapshots:
   base64-js@1.5.1: {}
 
   baseline-browser-mapping@2.11.23: {}
+
+  basic-ftp@5.3.1: {}
 
   basic-ftp@6.2.1: {}
 

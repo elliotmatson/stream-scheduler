@@ -1,5 +1,5 @@
 {
-  "name": "@scheduler/plugin-atem",
+  "name": "@scheduler/device-ftp",
   "version": "0.1.0",
   "type": "module",
   "main": "./dist/index.js",
@@ -15,9 +15,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@scheduler/device-ftp": "workspace:^",
-    "@scheduler/plugin-sdk": "workspace:*",
-    "atem-connection": "^3.9.0"
+    "basic-ftp": "^5.0.5"
   },
   "devDependencies": {
     "typescript": "^5.7.2"
