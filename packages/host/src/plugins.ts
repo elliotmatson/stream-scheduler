@@ -3,6 +3,7 @@ import { youtubeProvider } from '@scheduler/plugin-youtube'
 import { hyperdeckPlugin } from '@scheduler/plugin-hyperdeck'
 import { mockPlugin } from '@scheduler/plugin-mock'
 import { obsPlugin } from '@scheduler/plugin-obs'
+import { propresenterPlugin } from '@scheduler/plugin-propresenter'
 import { streamingEncoderPlugin } from '@scheduler/plugin-streaming-encoder'
 import type { DestinationProvider, PluginDefinition } from '@scheduler/plugin-sdk'
 
@@ -18,7 +19,14 @@ import type { DestinationProvider, PluginDefinition } from '@scheduler/plugin-sd
  * contract does not change, which is the point of freezing it now.
  */
 export function bundledPlugins(): PluginDefinition[] {
-  return [atemPlugin(), hyperdeckPlugin(), streamingEncoderPlugin(), obsPlugin(), mockPlugin()]
+  return [
+    atemPlugin(),
+    hyperdeckPlugin(),
+    streamingEncoderPlugin(),
+    obsPlugin(),
+    propresenterPlugin(),
+    mockPlugin(),
+  ]
 }
 
 /**
