@@ -257,6 +257,10 @@ const EVENT_LABELS: Record<string, { label: string; detail: string }> = {
     label: 'A device is falling behind',
     detail: 'Its cache is filling up mid-service.',
   },
+  'retention.swept': {
+    label: 'Old recordings are deleted',
+    detail: 'The hourly sweep removed files past an output’s keep-for policy.',
+  },
 }
 
 /** `3 alerts`, or `every alert` — the count is what fits on the row. */

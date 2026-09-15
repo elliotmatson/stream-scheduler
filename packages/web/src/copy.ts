@@ -64,3 +64,15 @@ const STATUS_MEANINGS: Record<string, string> = {
 export function describeStatus(status: string): string | undefined {
   return STATUS_MEANINGS[status]
 }
+
+/**
+ * How many of the newest recordings a keep-for policy holds on to when
+ * nobody says otherwise.
+ *
+ * A copy of `DEFAULT_KEEP_LAST` in `packages/core/src/runs/retention.ts`,
+ * because this side of the wire cannot import core. Used as a form
+ * placeholder and nothing else: the server decides, and the status screen
+ * reads the number the server actually applied off the report rather than
+ * assuming it matches this.
+ */
+export const DEFAULT_KEEP_LAST = 10

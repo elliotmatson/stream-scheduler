@@ -14,7 +14,14 @@ import {
   type Series,
 } from '../api.ts'
 import { ConfirmButton, Empty, ErrorBanner, Field } from '../components.tsx'
-import { bitrateHint, CUSTOM_VALUE, freeformHint, LEAVE_AS_IS, PICK_ONE } from '../copy.ts'
+import {
+  bitrateHint,
+  CUSTOM_VALUE,
+  DEFAULT_KEEP_LAST,
+  freeformHint,
+  LEAVE_AS_IS,
+  PICK_ONE,
+} from '../copy.ts'
 
 /**
  * What an event streams and records, and when inside its window.
@@ -344,23 +351,37 @@ function OutputRow(props: RowProps): ReactNode {
                   />
                 </Field>
                 <Field
+                  label="Sweep early below (hours free)"
+                  hint="When the card has less recording time left than this. Leave blank to go by age alone."
+                >
+                  <input
+                    type="number"
+                    min={1}
+                    max={1000}
+                    value={draft.minFreeHours}
+                    placeholder="never"
+                    onChange={(event) => set('minFreeHours', event.target.value)}
+                  />
+                </Field>
+                <Field
                   label="Always keep the newest"
-                  hint="However old they are, so a quiet month cannot empty the card."
+                  hint="However old they are, and however full the card is."
                 >
                   <input
                     type="number"
                     min={0}
                     max={100}
                     value={draft.keepLast}
-                    placeholder="3"
-                    disabled={!draft.keepDays}
+                    placeholder={String(DEFAULT_KEEP_LAST)}
+                    disabled={!draft.keepDays && !draft.minFreeHours}
                     onChange={(event) => set('keepLast', event.target.value)}
                   />
                 </Field>
               </div>
               <p className="muted" style={{ margin: 0, fontSize: 12 }}>
-                Nothing is deleted yet. This says what would go; see Recordings on the status
-                screen.
+                {draft.keepDays || draft.minFreeHours
+                  ? 'Enforced every hour, on its own. Never while this device is recording or an event is mid-run, and never on files this scheduler did not record.'
+                  : 'With both blank, nothing is ever deleted. Setting either one turns on an hourly sweep that enforces it.'}
               </p>
             </>
           )}
@@ -566,6 +587,8 @@ interface RowDraft {
   /** Blank means recordings are kept forever, which is the default. */
   keepDays: string
   keepLast: string
+  /** Blank means a full card is not by itself a reason to delete. */
+  minFreeHours: string
   enabled: boolean
 }
 
@@ -595,6 +618,10 @@ function toDraft(
       output?.settings.retention?.keepLast === undefined
         ? ''
         : String(output.settings.retention.keepLast),
+    minFreeHours:
+      output?.settings.retention?.minFreeHours === undefined
+        ? ''
+        : String(output.settings.retention.minFreeHours),
     enabled: output?.enabled ?? true,
     ...(kind === 'recording' ? { destinationId: null, credentialId: null } : {}),
   }
@@ -603,21 +630,23 @@ function toDraft(
 function settingsOf(draft: RowDraft): {
   quality?: string
   slot?: number
-  retention?: { keepDays?: number; keepLast?: number }
+  retention?: { keepDays?: number; keepLast?: number; minFreeHours?: number }
 } {
   const out: {
     quality?: string
     slot?: number
-    retention?: { keepDays?: number; keepLast?: number }
+    retention?: { keepDays?: number; keepLast?: number; minFreeHours?: number }
   } = {}
   if (draft.quality) out.quality = draft.quality
   if (draft.slot) out.slot = Number(draft.slot)
 
-  // Only sent when there is an age to go on. Without one there is nothing
-  // to be eligible, so "keep the newest 3 of forever" is not a policy.
-  if (draft.keepDays) {
+  // Only sent when there is a limit to go on. Without one nothing is ever
+  // eligible, so "keep the newest ten of forever" is not a policy — and
+  // storing it would arm an hourly sweep that can never do anything.
+  if (draft.keepDays || draft.minFreeHours) {
     out.retention = {
-      keepDays: Number(draft.keepDays),
+      ...(draft.keepDays === '' ? {} : { keepDays: Number(draft.keepDays) }),
+      ...(draft.minFreeHours === '' ? {} : { minFreeHours: Number(draft.minFreeHours) }),
       ...(draft.keepLast === '' ? {} : { keepLast: Number(draft.keepLast) }),
     }
   }

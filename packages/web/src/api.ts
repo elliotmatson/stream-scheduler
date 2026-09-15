@@ -364,21 +364,28 @@ export interface OutputSettings {
   slot?: number
   /** How long this output's recordings are worth keeping. Absent means
    *  forever, which is the default. */
-  retention?: { keepDays?: number; keepLast?: number }
+  retention?: { keepDays?: number; keepLast?: number; minFreeHours?: number }
 }
 
-/** What one recording output's policy says could go. Nothing is deleted. */
+/** What one recording output's policy says could go, and will. */
 export interface RetentionReport {
   outputId: string
   outputLabel: string
   seriesLabel: string
   deviceId: string
   nodeId: string
-  policy: { keepDays?: number; keepLast?: number }
+  policy: { keepDays?: number; keepLast?: number; minFreeHours?: number }
   kept: RetentionCandidate[]
   wouldDelete: RetentionCandidate[]
   /** Named by the device and not in our ledger — somebody else's files. */
   unknownToUs: string[]
+  /** `keepLast` with the server's default filled in, so this screen does
+   *  not have to carry a copy of it. */
+  effectiveKeepLast: number
+  /** The card is under its free-space floor, so age has stopped deciding. */
+  underPressure: boolean
+  /** Recording time left, where the device reported it. */
+  freeMs?: number
 }
 
 export interface SweepPlan {

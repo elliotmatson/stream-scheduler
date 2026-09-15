@@ -55,7 +55,14 @@ const json = (response: { body: string }): any => JSON.parse(response.body)
  */
 async function seedRecordings(
   count: number,
-  options: { keepDays?: number; keepLast?: number } = {},
+  options: {
+    keepDays?: number
+    keepLast?: number
+    minFreeHours?: number
+    /** Moves the event's window, for tests that drive the scheduler loop
+     *  and must not have a run start under them. */
+    startsAt?: number
+  } = {},
 ): Promise<{ outputId: string; deviceId: string; filenames: string[] }> {
   const device = json(
     await post('/api/devices', {
@@ -70,8 +77,8 @@ async function seedRecordings(
     await post('/api/series', {
       label: 'Sunday Service',
       timezone: 'America/Chicago',
-      rrule: 'FREQ=WEEKLY;BYDAY=SU',
-      dtstart: START,
+      rrule: options.startsAt === undefined ? 'FREQ=WEEKLY;BYDAY=SU' : null,
+      dtstart: options.startsAt ?? START,
       durationMs: 90 * MINUTE,
     }),
   )
@@ -86,6 +93,7 @@ async function seedRecordings(
         retention: {
           keepDays: options.keepDays ?? 30,
           ...(options.keepLast === undefined ? {} : { keepLast: options.keepLast }),
+          ...(options.minFreeHours === undefined ? {} : { minFreeHours: options.minFreeHours }),
         },
       },
     }),
@@ -222,5 +230,159 @@ describe('sweeping a card', () => {
     const refused = await post('/api/retention/sweep', { outputId: 'nope' })
     expect(refused.statusCode).toBe(409)
     expect(json(refused).error).toMatch(/No recording output/i)
+  })
+})
+
+/**
+ * The hourly sweep, which is the one that runs with nobody watching.
+ *
+ * Every rail the button has, because it goes through the same two steps —
+ * so what is tested here is the part that is new: which outputs it picks
+ * up, what it does when a card is busy, and that it says what it did.
+ */
+describe('the sweep that runs on its own', () => {
+  it('enforces the policy without anybody pressing anything', async () => {
+    const { outputId, deviceId } = await seedRecordings(6, { keepDays: 30, keepLast: 0 })
+
+    const swept = await app.sweeper.sweepDue()
+
+    expect(swept).toHaveLength(1)
+    expect(swept[0]?.outputId).toBe(outputId)
+    expect(swept[0]?.removed.length).toBeGreaterThan(0)
+    expect(swept[0]?.failed).toEqual([])
+
+    const gone = swept[0]!.removed.map((file) => file.filename)
+    const listed = await app.connections.invoke(deviceId, 'record', 'listMedia')
+    const onCard = ((listed?.raw?.media ?? []) as { name: string }[]).map((item) => item.name)
+    for (const filename of gone) expect(onCard).not.toContain(`${filename}.mov`)
+  })
+
+  it('leaves an output with no policy alone', async () => {
+    // The consent rule: nobody set a limit, so nothing is enforced. An
+    // output that could be swept by accident is the failure this whole
+    // feature has to avoid.
+    const device = json(
+      await post('/api/devices', {
+        pluginId: 'mock',
+        label: 'Stage deck',
+        config: { kind: 'recorder' },
+      }),
+    )
+    await post(`/api/devices/${device.id}/connect`, {})
+    const series = json(
+      await post('/api/series', {
+        label: 'Sunday Service',
+        timezone: 'America/Chicago',
+        rrule: null,
+        dtstart: START,
+        durationMs: 90 * MINUTE,
+      }),
+    )
+    const output = json(
+      await post(`/api/series/${series.id}/outputs`, {
+        kind: 'recording',
+        label: 'Archive copy',
+        durationMs: 60 * MINUTE,
+        deviceId: device.id,
+        nodeId: 'record',
+      }),
+    )
+    for (let i = 5; i >= 1; i--) {
+      const at = START - i * 400 * DAY
+      app.ledger.started({
+        runId: `run-${i}`,
+        outputId: output.id,
+        deviceId: device.id,
+        nodeId: 'record',
+        slot: 1,
+        filename: `ancient-${i}`,
+        at,
+      })
+      app.ledger.finished(`run-${i}`, output.id, at + 60 * MINUTE)
+    }
+
+    expect(await app.sweeper.sweepDue()).toEqual([])
+    expect(app.ledger.forOutput(output.id)).toHaveLength(5)
+  })
+
+  it('skips a deck that is recording rather than failing the whole pass', async () => {
+    const { deviceId } = await seedRecordings(6, { keepDays: 30, keepLast: 0 })
+    await post(`/api/devices/${deviceId}/nodes/record/startRecording`, { filename: 'live' })
+
+    expect(await app.sweeper.sweepDue()).toEqual([])
+
+    // Said out loud rather than swallowed: "not now" on an hourly job is
+    // simply the next hour, but it should be visible in the log.
+    const refusals = app.sweeper.takeRefusals()
+    expect(refusals).toHaveLength(1)
+    expect(refusals[0]?.reason).toMatch(/recording/i)
+    // And taking them empties the list, so the next hour starts clean.
+    expect(app.sweeper.takeRefusals()).toEqual([])
+
+    // Once it stops, the same pass does the work.
+    await post(`/api/devices/${deviceId}/nodes/record/stopRecording`, {})
+    expect(await app.sweeper.sweepDue()).toHaveLength(1)
+  })
+
+  it('reports nothing on an hour when there was nothing to do', async () => {
+    await seedRecordings(3, { keepDays: 3650, keepLast: 0 })
+    expect(await app.sweeper.sweepDue()).toEqual([])
+  })
+})
+
+describe('the hourly job, end to end', () => {
+  it('sweeps on the tick and says what it removed', async () => {
+    // The event itself is days away: this test drives the real loop, and
+    // a run starting under it would (rightly) refuse the sweep.
+    const { outputId } = await seedRecordings(6, {
+      keepDays: 30,
+      keepLast: 0,
+      startsAt: START + 3 * DAY,
+    })
+    const left = (): number => app.ledger.forOutput(outputId).length
+
+    // Somebody who asked to be told about this.
+    await post('/api/notifications/channels', {
+      kind: 'webhook',
+      label: 'Booth',
+      config: { url: 'https://example.invalid/hook' },
+      events: ['retention.swept'],
+    })
+
+    // Starting must not sweep. It is the one job here that destroys
+    // something, and a restart — a crash loop most of all — must not be a
+    // way to trigger it.
+    await app.start()
+    expect(left()).toBe(6)
+
+    clock.advance(61 * MINUTE)
+    await app.tick()
+
+    // Older than thirty days: five and six weeks back.
+    expect(left()).toBe(4)
+
+    const queued = app.db
+      .prepare("SELECT payload FROM notification_outbox WHERE event = 'retention.swept'")
+      .all() as { payload: string }[]
+    expect(queued).toHaveLength(1)
+    const notification = JSON.parse(queued[0]!.payload)
+    expect(notification.severity).toBe('info')
+    // The names are in the message on purpose: "two recordings were
+    // removed" is an announcement, and a list is something somebody can
+    // check against what they expected.
+    const removed = notification.facts.find((fact: { label: string }) => fact.label === 'Removed')
+    expect(removed.value).toContain('service-6')
+    expect(removed.value).toContain('service-5')
+
+    // And the hour after, with nothing newly past the date, it says
+    // nothing rather than repeating itself.
+    clock.advance(61 * MINUTE)
+    await app.tick()
+    expect(left()).toBe(4)
+    expect(
+      app.db
+        .prepare("SELECT count(*) AS n FROM notification_outbox WHERE event = 'retention.swept'")
+        .get(),
+    ).toEqual({ n: 1 })
   })
 })

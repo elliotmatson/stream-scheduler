@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import type { Clock, MediaItem, NodeState } from '@scheduler/plugin-sdk'
 import type { Db } from '../db/index.js'
 import type { RecordingLedger } from './artifacts.js'
-import { assess, recordingOutputs, type RetentionCandidate } from './retention.js'
+import { assess, isConfigured, recordingOutputs, type RetentionCandidate } from './retention.js'
 
 /**
  * Actually removing recordings, in two steps.
@@ -76,10 +76,24 @@ export interface SweeperDeps {
   runOn: (deviceId: string) => string | undefined
   /** Whether the node says it can delete at all. */
   canDelete: (deviceId: string, nodeId: string) => boolean
+  /** Recording time left on the node's media, for the free-space floor. */
+  freeMs?: (deviceId: string, nodeId: string) => number | undefined
+}
+
+/** What one output's scheduled sweep did, for the log and the alert. */
+export interface SweptOutput {
+  outputId: string
+  outputLabel: string
+  seriesLabel: string
+  deviceId: string
+  removed: { artifactId: string; filename: string }[]
+  failed: { artifactId: string; filename: string; reason: string }[]
 }
 
 export class Sweeper {
   private readonly plans = new Map<string, SweepPlan>()
+  /** Why the last scheduled pass skipped what it skipped. */
+  private readonly refusals: { outputId: string; outputLabel: string; reason: string }[] = []
 
   constructor(private readonly deps: SweeperDeps) {}
 
@@ -98,10 +112,12 @@ export class Sweeper {
     this.refuseIfBusy(output.deviceId, output.nodeId)
 
     const media = await this.deps.listMedia(output.deviceId, output.nodeId)
+    const free = this.deps.freeMs?.(output.deviceId, output.nodeId)
     const report = assess({
       ...output,
       artifacts: this.deps.ledger.forOutput(outputId),
       ...(media === undefined ? {} : { media }),
+      ...(free === undefined ? {} : { freeMs: free }),
       now: this.deps.clock.now(),
     })
 
@@ -175,6 +191,63 @@ export class Sweeper {
       }
     }
     return outcome
+  }
+
+  /**
+   * The scheduled pass: every output whose policy asks to be enforced.
+   *
+   * Runs on the hour, and does the same prepare-then-confirm as the button
+   * — same rails, same code, checked twice against the device rather than
+   * once against a policy. What it does not do is re-derive the list at
+   * the moment it deletes, which matters more here than it does for a
+   * person: this runs unattended, and a sweep that decides and acts in the
+   * same breath has nothing anybody could have looked at.
+   *
+   * Refusals are not failures. A deck mid-record, an event under way, a
+   * device that is off — all of them mean "not now", which on an hourly
+   * job is simply the next hour. They are logged and skipped; only a
+   * delete that was attempted and did not take is reported as a failure.
+   *
+   * Returns only the outputs where something actually happened, so a
+   * caller can tell a quiet hour from a busy one without filtering.
+   */
+  async sweepDue(): Promise<SweptOutput[]> {
+    const swept: SweptOutput[] = []
+
+    for (const output of recordingOutputs(this.deps.db)) {
+      // No limit set means no consent to delete. This is the line that
+      // keeps an output nobody configured out of an automatic job.
+      if (!isConfigured(output.policy)) continue
+
+      try {
+        const plan = await this.prepare(output.outputId)
+        if (plan.files.length === 0) continue
+        const outcome = await this.confirm(plan.token)
+        if (outcome.removed.length === 0 && outcome.failed.length === 0) continue
+        swept.push({
+          outputId: output.outputId,
+          outputLabel: output.outputLabel,
+          seriesLabel: output.seriesLabel,
+          deviceId: output.deviceId,
+          ...outcome,
+        })
+      } catch (error) {
+        // Including SweepRefused: see above. One output being unavailable
+        // must not stop the others being tidied.
+        this.refusals.push({
+          outputId: output.outputId,
+          outputLabel: output.outputLabel,
+          reason: error instanceof Error ? error.message : String(error),
+        })
+      }
+    }
+
+    return swept
+  }
+
+  /** Why outputs were skipped on the last scheduled pass, for the log. */
+  takeRefusals(): { outputId: string; outputLabel: string; reason: string }[] {
+    return this.refusals.splice(0, this.refusals.length)
   }
 
   /**
