@@ -37,7 +37,12 @@ export interface Series {
    * so the same way for both.
    */
   nextAt?: number | null
+  /** Labels somebody put on it, alphabetical. */
+  tags?: string[]
 }
+
+/** What a tag is attached to. */
+export type TaggableKind = 'device' | 'series'
 
 export interface Device {
   id: string
@@ -60,6 +65,8 @@ export interface Device {
   nodes: DeviceNode[]
   /** Events mid-run on this device right now. Empty almost always. */
   inUseBy: { runId: string; label: string }[]
+  /** Labels somebody put on it, alphabetical. */
+  tags?: string[]
 }
 
 export interface DeviceNode {
@@ -541,6 +548,15 @@ export const api = {
   /** Forgets a finished run, its steps and its readings. Recordings stay. */
   deleteRun: (id: string) => request<{ deleted: true }>(`/api/runs/${id}`, { method: 'DELETE' }),
   /** What each recording output's policy says could go. */
+  /** Every tag in use on a kind of thing, with how many carry it. */
+  tags: (kind: TaggableKind) =>
+    request<{ tags: { tag: string; count: number }[] }>(`/api/tags/${kind}`),
+  /** Replaces the whole list on one thing, and answers with what was stored. */
+  setTags: (kind: TaggableKind, id: string, tags: string[]) =>
+    request<{ tags: string[] }>(`/api/tags/${kind}/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify({ tags }),
+    }),
   retention: () => request<{ outputs: RetentionReport[] }>('/api/retention'),
   /** What is actually on one recorder's media, straight from the device. */
   media: (deviceId: string, nodeId: string, slot?: number) =>

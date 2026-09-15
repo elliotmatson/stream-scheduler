@@ -410,6 +410,99 @@ tr.is-picked td {
   background: var(--accent-soft);
 }
 
+/* tags and filtering ------------------------------------------------------ */
+
+.tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text);
+  font-size: 12px;
+  line-height: 18px;
+  white-space: nowrap;
+}
+
+.tag-list {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.tag-editor {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+/* Sized to the tag it sits in rather than to a button: a cross that grows
+   the pill it is inside makes a row of tags jump as they are hovered. */
+.tag-remove {
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  padding: 0 0 0 2px;
+  min-height: 0;
+  line-height: 1;
+  font-size: 14px;
+  color: var(--muted);
+}
+
+.tag-remove:hover:not(:disabled) {
+  background: transparent;
+  color: var(--bad);
+}
+
+/* Wide enough to type a word into, narrow enough not to look like a form
+   field that has wandered into a row of pills. */
+.tag-input {
+  width: 120px;
+  min-height: 24px;
+  padding: 1px 8px;
+  font-size: 12px;
+}
+
+.filter-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.filter-search {
+  min-width: 180px;
+  flex: 1 1 180px;
+  max-width: 320px;
+}
+
+.filter-tags {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+button.tag-toggle {
+  cursor: pointer;
+  box-shadow: none;
+}
+
+button.tag-toggle[aria-pressed='true'] {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-contrast);
+}
+
+button.tag-toggle[aria-pressed='true'] .muted {
+  color: var(--accent-contrast);
+  opacity: 0.75;
+}
+
 /* A figure that is not yet a problem but is the reason to look. */
 .warn-text {
   color: var(--warn);
