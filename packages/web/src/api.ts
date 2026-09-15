@@ -325,6 +325,30 @@ export interface Destination {
   config: Record<string, unknown>
 }
 
+/** What a backup would hold, and what restoring one would need. */
+export interface BackupStatus {
+  keyId: string
+  keySource: string
+  keySourceLabel: string
+  secretsReadable: { state: 'ok' | 'none' | 'unreadable'; message: string }
+  includes: string[]
+  excludes: string[]
+  /** Waiting for the next start. */
+  stagedRestore?: { stagedAt: number; takenAt: number; counts: Record<string, number> }
+  /** This start began by putting one in place. */
+  lastRestore?: { takenAt: number; counts: Record<string, number>; previousDatabase: string }
+}
+
+/** What is in a file somebody is about to restore. */
+export interface BackupInspection {
+  confirm: string
+  takenAt: number
+  counts: Record<string, number>
+  schemaVersion: number
+  carriesEnvSalt: boolean
+  key: { state: 'no-secrets' | 'match' | 'mismatch'; message: string }
+}
+
 export interface Credential {
   id: string
   label: string
@@ -785,6 +809,31 @@ export const api = {
     request<{ id: string }>('/api/credentials', { method: 'POST', body: JSON.stringify(input) }),
   deleteCredential: (id: string) =>
     request<unknown>(`/api/credentials/${id}`, { method: 'DELETE' }),
+
+  // -- backup and restore -------------------------------------------------
+
+  backupStatus: () => request<BackupStatus>('/api/backup/status'),
+  /**
+   * Describes an uploaded backup without changing anything, and hands back
+   * the token the restore below needs. Nothing can be restored that was
+   * not first described to whoever is restoring it.
+   */
+  inspectBackup: (file: File) =>
+    request<BackupInspection>('/api/restore/inspect', {
+      method: 'POST',
+      headers: { 'content-type': 'application/octet-stream' },
+      body: file,
+    }),
+  restoreBackup: (file: File, confirm: string) =>
+    request<{ staged: true; takenAt: number; counts: Record<string, number>; message: string }>(
+      '/api/restore',
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/octet-stream', 'x-confirm': confirm },
+        body: file,
+      },
+    ),
+  cancelRestore: () => request<{ staged: false }>('/api/restore', { method: 'DELETE' }),
 
   outputs: (seriesId: string) => request<OutputsResponse>(`/api/series/${seriesId}/outputs`),
   createOutput: (seriesId: string, input: OutputInput) =>
