@@ -33,9 +33,17 @@ export interface RemoteFile {
   modifiedAt?: number
 }
 
+/** A file or a directory, as the server named it. */
+export interface RemoteEntry extends RemoteFile {
+  isDirectory: boolean
+}
+
 /** One conversation with a device's file server. */
 export interface FtpSession {
+  /** Files in a directory. Sub-directories are not media. */
   list(directory: string): Promise<RemoteFile[]>
+  /** Everything in a directory, directories included. */
+  entries(directory: string): Promise<RemoteEntry[]>
   /** Removes one file. Throws if the server refuses. */
   remove(path: string): Promise<void>
   close(): Promise<void>
@@ -60,17 +68,19 @@ export const connectFtp: FtpConnect = async ({ host, port }) => {
     secure: false,
   })
 
+  const entries = async (directory: string): Promise<RemoteEntry[]> =>
+    (await client.list(directory)).map((entry) => ({
+      name: entry.name,
+      size: entry.size,
+      isDirectory: entry.isDirectory,
+      ...(entry.modifiedAt === undefined ? {} : { modifiedAt: entry.modifiedAt.getTime() }),
+    }))
+
   return {
-    list: async (directory) =>
-      (await client.list(directory))
-        // Directories are not media. A deck puts its clips at the top of
-        // each card, and a folder somebody made is theirs to manage.
-        .filter((entry) => entry.isFile)
-        .map((entry) => ({
-          name: entry.name,
-          size: entry.size,
-          ...(entry.modifiedAt === undefined ? {} : { modifiedAt: entry.modifiedAt.getTime() }),
-        })),
+    entries,
+    // Directories are not media: a folder somebody made is theirs to
+    // manage, and the per-card folders are resolved before this is called.
+    list: async (directory) => (await entries(directory)).filter((entry) => !entry.isDirectory),
     remove: async (path) => {
       await client.remove(path)
     },
@@ -84,4 +94,49 @@ export const connectFtp: FtpConnect = async ({ host, port }) => {
 export function ftpPath(directory: string, name: string): string {
   const base = directory.endsWith('/') ? directory.slice(0, -1) : directory
   return `${base}/${name}`
+}
+
+/**
+ * Where a device actually keeps its clips.
+ *
+ * Blackmagic boxes do not put recordings at the FTP root. The root holds
+ * one directory per mounted volume — named after the card, so a HyperDeck
+ * with an SD in slot 2 serves it as `/Untitled` or whatever the card is
+ * called — and the clips are inside. Listing the root therefore comes back
+ * with directories and no files at all, which, once the directories were
+ * filtered out as "not media", looked exactly like a device whose FTP
+ * server does not work: an empty list, no error, every time, on every
+ * device.
+ *
+ * So: use `root` if it has files in it, and otherwise go one level down.
+ * `prefer` is how the caller says which volume it meant — the deck's own
+ * name for the slot, and the slot number after it, since a device that
+ * does number its folders should not land on whichever card happens to
+ * sort first. Falling back to the only directory there is stays right for
+ * a switcher with one disk, which is the common case.
+ *
+ * One directory, not a merge of several: a delete has to resolve to the
+ * same place this listing came from, and two cards can hold files with
+ * the same name.
+ */
+export async function mediaDirectory(
+  session: FtpSession,
+  root: string,
+  prefer: (string | undefined)[] = [],
+): Promise<string> {
+  const entries = await session.entries(root)
+  // Clips at the root means this is already a card, not a list of cards.
+  if (entries.some((entry) => !entry.isDirectory)) return root
+
+  const directories = entries.filter((entry) => entry.isDirectory)
+  if (directories.length === 0) return root
+
+  for (const wanted of prefer) {
+    if (wanted === undefined || wanted === '') continue
+    const match = directories.find(
+      (entry) => entry.name.localeCompare(wanted, undefined, { sensitivity: 'base' }) === 0,
+    )
+    if (match) return ftpPath(root, match.name)
+  }
+  return ftpPath(root, directories[0]!.name)
 }

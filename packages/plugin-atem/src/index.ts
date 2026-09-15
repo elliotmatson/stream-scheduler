@@ -12,7 +12,13 @@ import type {
 } from '@scheduler/plugin-sdk'
 import { Enums } from 'atem-connection'
 import type { AtemState } from 'atem-connection'
-import { connectFtp as realConnectFtp, ftpPath, type FtpConnect } from '@scheduler/device-ftp'
+import {
+  connectFtp as realConnectFtp,
+  ftpPath,
+  mediaDirectory,
+  type FtpConnect,
+  type FtpSession,
+} from '@scheduler/device-ftp'
 import { AtemConnectionStatus, createAtemClient, type AtemClient } from './client.js'
 
 /**
@@ -285,7 +291,15 @@ class AtemDevice {
         listMedia: async () => {
           const session = await this.connectFtp({ host: this.host })
           try {
-            return (await session.list(ATEM_MEDIA_DIR)).map((file) => ({
+            const directory = await this.mediaDirectoryFor(session)
+            const files = await session.list(directory)
+            // Where it looked, not just what it found: an empty disk and a
+            // listing of the wrong directory read identically on a screen.
+            this.ctx.log('debug', 'listed the drive over FTP', {
+              directory,
+              files: files.length,
+            })
+            return files.map((file) => ({
               name: file.name,
               bytes: file.size,
               ...(file.modifiedAt === undefined ? {} : { recordedAt: file.modifiedAt }),
@@ -304,8 +318,9 @@ class AtemDevice {
         deleteMedia: async ({ name }) => {
           const session = await this.connectFtp({ host: this.host })
           try {
-            await session.remove(ftpPath(ATEM_MEDIA_DIR, name))
-            const left = await session.list(ATEM_MEDIA_DIR)
+            const directory = await this.mediaDirectoryFor(session)
+            await session.remove(ftpPath(directory, name))
+            const left = await session.list(directory)
             if (left.some((file) => file.name === name)) {
               throw new DeviceError(
                 'delete-failed',
@@ -346,6 +361,25 @@ class AtemDevice {
     }
 
     return undefined
+  }
+
+  /**
+   * Where the switcher's recordings are on its file server.
+   *
+   * A switcher serves the disk plugged into it as a directory at the FTP
+   * root, named after the volume, so the files are one level down from
+   * `/` and a listing of the root comes back with nothing in it at all.
+   * The disk the switcher is writing to is the one meant; the resolver
+   * falls back to the only directory there is, which for a box with one
+   * disk is the same answer.
+   */
+  private async mediaDirectoryFor(session: FtpSession): Promise<string> {
+    const recording = this.client.state?.recording
+    const disks = Object.values(recording?.disks ?? {})
+    const working = disks.find(
+      (disk) => disk !== undefined && disk.diskId === recording?.properties.workingSet1DiskId,
+    )
+    return mediaDirectory(session, ATEM_MEDIA_DIR, [working?.volumeName])
   }
 
   readState(nodeId: string): NodeState {
