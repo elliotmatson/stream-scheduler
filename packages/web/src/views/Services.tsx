@@ -498,6 +498,35 @@ function StreamKeys({
   const [label, setLabel] = useState('')
   const [ingestUrl, setIngestUrl] = useState('')
   const [key, setKey] = useState('')
+  const [platformId, setPlatformId] = useState('')
+  // Whether the name is still the one this form filled in. Once somebody
+  // has typed their own, changing the service must not overwrite it.
+  const [namedItself, setNamedItself] = useState(true)
+  const { data: platforms } = useResource(() => api.platforms(), [])
+  const platform = platforms?.find((entry) => entry.id === platformId)
+
+  /**
+   * Picking a service fills in what is known about it and gets out of the
+   * way. The URL stays editable afterwards: every one of these hostnames
+   * has changed at some point, and a box somebody cannot correct is how a
+   * stale list becomes an outage.
+   */
+  const choosePlatform = (id: string): void => {
+    setPlatformId(id)
+    const chosen = platforms?.find((entry) => entry.id === id)
+    setIngestUrl(chosen?.ingestUrl ?? '')
+    if (namedItself) setLabel(chosen && chosen.id !== 'custom' ? chosen.name : '')
+  }
+
+  // Three answers, not two: "no pattern published for this service" is not
+  // the same as "that looks wrong", and treating them alike would put a
+  // warning under every key for every service without a known format.
+  const keyLooks =
+    !key || !platform?.keyPattern
+      ? 'unknown'
+      : safeTest(platform.keyPattern, key.trim())
+        ? 'ok'
+        : 'unexpected'
 
   return (
     <Card>
@@ -517,7 +546,11 @@ function StreamKeys({
           {credentials.map((credential) => (
             <li key={credential.id} className="row" style={{ justifyContent: 'space-between' }}>
               <span>
-                {credential.label} <span className="muted">{credential.ingestUrl}</span>{' '}
+                {credential.label}{' '}
+                {credential.platformName ? (
+                  <span className="pill">{credential.platformName}</span>
+                ) : null}{' '}
+                <span className="muted">{credential.ingestUrl}</span>{' '}
                 {/* Write-only: stored encrypted, with no endpoint that reads it back. */}
                 <span className="muted">{credential.key}</span>
               </span>
@@ -532,12 +565,73 @@ function StreamKeys({
 
       {open ? (
         <div className="stack" style={{ maxWidth: 560, marginTop: 12 }}>
-          <Field label="Name" hint="What you will call it here, e.g. “Facebook, main page”.">
-            <input value={label} onChange={(event) => setLabel(event.target.value)} />
+          <Field label="Service" hint="Fills in what is known about it. Everything stays editable.">
+            <select value={platformId} onChange={(event) => choosePlatform(event.target.value)}>
+              <option value="">Pick a service…</option>
+              {(platforms ?? []).map((entry) => (
+                <option key={entry.id} value={entry.id}>
+                  {entry.name}
+                </option>
+              ))}
+            </select>
           </Field>
+
+          {platform ? (
+            <div className="banner">
+              <div>{platform.whereToFind}</div>
+              {platform.note ? (
+                <div className="muted" style={{ marginTop: 4 }}>
+                  {platform.note}
+                </div>
+              ) : null}
+              {platform.findKeyUrl ? (
+                <a
+                  href={platform.findKeyUrl}
+                  target="_blank"
+                  rel="noreferrer noopener"
+                  style={{ display: 'inline-block', marginTop: 6 }}
+                >
+                  Open {platform.name}
+                </a>
+              ) : null}
+            </div>
+          ) : null}
+
+          <Field label="Name" hint="What you will call it here, e.g. “Facebook, main page”.">
+            <input
+              value={label}
+              onChange={(event) => {
+                setNamedItself(false)
+                setLabel(event.target.value)
+              }}
+            />
+          </Field>
+
+          {/* Only where the service publishes more than one. Otherwise the
+              URL box below is the whole story and a picker with one entry
+              is a question nobody needed asking. */}
+          {platform?.servers && platform.servers.length > 1 ? (
+            <Field
+              label="Ingest server"
+              hint="The nearest one, unless you have measured otherwise."
+            >
+              <select value={ingestUrl} onChange={(event) => setIngestUrl(event.target.value)}>
+                {platform.servers.map((server) => (
+                  <option key={server.url} value={server.url}>
+                    {server.label}
+                  </option>
+                ))}
+              </select>
+            </Field>
+          ) : null}
+
           <Field
             label="Ingest URL"
-            hint="Where the encoder sends to, e.g. rtmps://a.rtmp.youtube.com/live2"
+            hint={
+              platform && !platform.ingestUrl && platform.id !== 'custom'
+                ? `${platform.name} issues this per account or per broadcast, so paste the one it gave you.`
+                : 'Where the encoder sends to, e.g. rtmps://a.rtmp.youtube.com/live2'
+            }
           >
             <input value={ingestUrl} onChange={(event) => setIngestUrl(event.target.value)} />
           </Field>
@@ -552,18 +646,32 @@ function StreamKeys({
               onChange={(event) => setKey(event.target.value)}
             />
           </Field>
+          {keyLooks === 'unexpected' ? (
+            <p className="warn-text" style={{ margin: 0, fontSize: 12 }}>
+              That does not look like a {platform?.name} key — check you have copied the key and not
+              the URL. Saving it anyway is fine; these formats do change.
+            </p>
+          ) : null}
           <div className="row">
             <button
               className="primary"
               disabled={!label || !ingestUrl || !key}
               onClick={() =>
                 void guard(
-                  () => api.createCredential({ label, ingestUrl, key }),
+                  () =>
+                    api.createCredential({
+                      label,
+                      ingestUrl,
+                      key,
+                      ...(platformId ? { platform: platformId } : {}),
+                    }),
                   () => {
                     setOpen(false)
                     setLabel('')
                     setIngestUrl('')
                     setKey('')
+                    setPlatformId('')
+                    setNamedItself(true)
                     reload()
                   },
                 )
@@ -576,4 +684,18 @@ function StreamKeys({
       ) : null}
     </Card>
   )
+}
+
+/**
+ * Whether a key matches a service's published format.
+ *
+ * Wrapped because the pattern comes over the wire from the catalogue: a
+ * bad one there must warn nobody rather than take the form down.
+ */
+function safeTest(pattern: string, value: string): boolean {
+  try {
+    return new RegExp(pattern).test(value)
+  } catch {
+    return true
+  }
 }

@@ -298,7 +298,26 @@ export interface Credential {
   source: string
   ingestUrl: string | null
   externalId: string | null
+  /** Which service this key is for, as an id from the catalogue. */
+  platform: string | null
+  /** The same, spelled out. Resolved by the server so a key saved against
+   *  a service this version no longer lists still reads as something. */
+  platformName: string | null
   key: string
+}
+
+/** One service somebody can point an encoder at. */
+export interface StreamingPlatform {
+  id: string
+  name: string
+  /** Absent when the service issues a URL per account or per broadcast. */
+  ingestUrl?: string
+  servers?: { label: string; url: string }[]
+  whereToFind: string
+  findKeyUrl?: string
+  /** What a key usually looks like. Used to warn, never to refuse. */
+  keyPattern?: string
+  note?: string
 }
 
 /**
@@ -708,7 +727,8 @@ export const api = {
     request<unknown>(`/api/destinations/${id}`, { method: 'DELETE' }),
 
   credentials: () => request<Credential[]>('/api/credentials'),
-  createCredential: (input: { label: string; ingestUrl: string; key: string }) =>
+  platforms: () => request<StreamingPlatform[]>('/api/platforms'),
+  createCredential: (input: { label: string; ingestUrl: string; key: string; platform?: string }) =>
     request<{ id: string }>('/api/credentials', { method: 'POST', body: JSON.stringify(input) }),
   deleteCredential: (id: string) =>
     request<unknown>(`/api/credentials/${id}`, { method: 'DELETE' }),

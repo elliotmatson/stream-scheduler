@@ -40,6 +40,7 @@ import {
   type OutputKind,
 } from '../events/outputs.js'
 import { describeConflict, overlapsForSeries } from '../events/overlap.js'
+import { platformById, STREAMING_PLATFORMS } from '../destinations/platforms.js'
 import { assertUnreferenced, ConflictError, NotFoundError } from './errors.js'
 import { buildDashboard, outputsOf } from './dashboard.js'
 import { registerAuthGate, registerAuthRoutes } from './auth-routes.js'
@@ -571,11 +572,20 @@ function registerRoutes(fastify: FastifyInstance, app: Application): void {
 
   // -- credentials --------------------------------------------------------
 
+  /**
+   * The services somebody can point an encoder at, and what each needs.
+   *
+   * Served rather than hard-coded in the web bundle so the catalogue is
+   * one thing: the same list the API validates against is the list the
+   * form offers.
+   */
+  fastify.get('/api/platforms', async () => STREAMING_PLATFORMS)
+
   fastify.get('/api/credentials', async () =>
     (
       db
         .prepare(
-          'SELECT id, label, source, ingest_url, external_id FROM stream_credential ORDER BY label',
+          'SELECT id, label, source, ingest_url, external_id, platform FROM stream_credential ORDER BY label',
         )
         .all() as {
         id: string
@@ -583,6 +593,7 @@ function registerRoutes(fastify: FastifyInstance, app: Application): void {
         source: string
         ingest_url: string | null
         external_id: string | null
+        platform: string | null
       }[]
     ).map((row) => ({
       id: row.id,
@@ -590,6 +601,11 @@ function registerRoutes(fastify: FastifyInstance, app: Application): void {
       source: row.source,
       ingestUrl: row.ingest_url,
       externalId: row.external_id,
+      platform: row.platform,
+      // Resolved here rather than in the browser: a key saved against a
+      // service this version no longer lists still has to show as
+      // something rather than disappear.
+      platformName: row.platform ? (platformById(row.platform)?.name ?? row.platform) : null,
       // The key itself is write-only: the UI shows a placeholder and a
       // "replace" action, and there is no endpoint that returns it.
       key: '••••••••',
@@ -598,12 +614,28 @@ function registerRoutes(fastify: FastifyInstance, app: Application): void {
 
   fastify.post('/api/credentials', async (request, reply) => {
     const body = z
-      .object({ label: z.string().min(1), ingestUrl: z.string().min(1), key: z.string().min(1) })
+      .object({
+        label: z.string().min(1),
+        ingestUrl: z.string().min(1),
+        key: z.string().min(1),
+        // Which service this is, for the list and for the warnings. Not
+        // checked against the catalogue: a key for something added after
+        // this version shipped must still be storable.
+        platform: z.string().min(1).max(60).optional(),
+      })
       .parse(request.body)
     const id = randomUUID()
     db.prepare(
-      'INSERT INTO stream_credential (id, label, source, ingest_url, secret_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)',
-    ).run(id, body.label, 'manual', body.ingestUrl, app.vault.store(body.key), app.clock.now())
+      'INSERT INTO stream_credential (id, label, source, ingest_url, secret_ref, platform, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
+    ).run(
+      id,
+      body.label,
+      'manual',
+      body.ingestUrl,
+      app.vault.store(body.key),
+      body.platform ?? null,
+      app.clock.now(),
+    )
     return reply.code(201).send({ id })
   })
 

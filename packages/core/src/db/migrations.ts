@@ -489,6 +489,26 @@ CREATE INDEX tag_by_resource ON tag (resource_kind, resource_id);
 CREATE INDEX tag_by_name ON tag (tag COLLATE NOCASE, resource_kind);
 `,
   },
+  {
+    id: 12,
+    name: 'credential-platform',
+    sql: `
+-- Which service a saved key belongs to.
+--
+-- Nothing depends on it: the ingest URL and the key are still the whole of
+-- what gets sent, and a key with no platform works exactly as it did. It
+-- is here so a list of six keys reads as six services rather than six
+-- hostnames, and so the screen can say the thing about that service that
+-- catches people out — a Facebook key that expires after one broadcast is
+-- the example that costs somebody a Sunday.
+--
+-- Free text, matched against a catalogue in code rather than a table of
+-- its own. Services come and go faster than migrations should, and a
+-- stored id this app no longer recognises has to keep working rather than
+-- fail a foreign key on somebody's only stream.
+ALTER TABLE stream_credential ADD COLUMN platform TEXT;
+`,
+  },
 ]
 
 interface GraphNode {
