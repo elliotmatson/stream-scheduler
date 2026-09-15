@@ -420,6 +420,40 @@ CREATE TABLE telemetry_sample (
 CREATE INDEX telemetry_age ON telemetry_sample (at);
 `,
   },
+  {
+    id: 10,
+    name: 'recording-artifacts',
+    sql: `
+-- What this scheduler recorded, and where it put it.
+--
+-- Retention needs to know what may be deleted, and a listing off the card
+-- cannot answer that: a deck names its clips and will not say when they
+-- were made, and half the files on a Sunday card were put there by a person
+-- rather than by this app. A row written when a recording starts answers
+-- both — this is ours, and it was made then.
+--
+-- Nothing deletes from this yet. Phase one is being able to say what would
+-- go.
+CREATE TABLE recording_artifact (
+  id          TEXT PRIMARY KEY,
+  run_id      TEXT NOT NULL,
+  output_id   TEXT NOT NULL,
+  device_id   TEXT NOT NULL,
+  node_id     TEXT NOT NULL,
+  slot        INTEGER,
+  filename    TEXT NOT NULL,
+  started_at  INTEGER NOT NULL,
+  ended_at    INTEGER,
+  -- Set once something actually removes it. Until then this table is a
+  -- record of what exists.
+  deleted_at  INTEGER,
+  last_error  TEXT
+);
+
+CREATE INDEX recording_artifact_output ON recording_artifact (output_id, started_at);
+CREATE INDEX recording_artifact_device ON recording_artifact (device_id, node_id);
+`,
+  },
 ]
 
 interface GraphNode {

@@ -12,6 +12,7 @@ import {
 import type { SecretVault } from '../secrets/vault.js'
 import { renderTemplateOrThrow, sanitizeFilename } from '../template/index.js'
 import type { TemplateContext } from '../template/render.js'
+import { RecordingLedger } from './artifacts.js'
 import type { RunPlan, RunPlanner, StepDefinition } from './steps.js'
 import { timelineFor, type EventTimeline, type OutputWindow } from './timeline.js'
 
@@ -61,7 +62,19 @@ function qualityMatches(state: NodeState, asked: string): boolean {
 }
 
 export class EventPlanner implements RunPlanner {
-  constructor(private readonly deps: EventPlannerDeps) {}
+  /**
+   * Written as recordings start and closed as they stop.
+   *
+   * Built here rather than injected: it holds no state of its own, only
+   * SQL over the same database, so a second instance elsewhere is the same
+   * ledger. Threading it through every construction site would buy
+   * nothing and cost six signatures.
+   */
+  private readonly ledger: RecordingLedger
+
+  constructor(private readonly deps: EventPlannerDeps) {
+    this.ledger = new RecordingLedger({ db: deps.db })
+  }
 
   plan(occurrenceId: string, options: { forcedAt?: number } = {}): RunPlan {
     const timeline = timelineFor(this.deps.db, occurrenceId, options)
@@ -311,7 +324,7 @@ export class EventPlanner implements RunPlanner {
         phase: 'start',
         outputId: output.id,
         label: `${output.label}: start recording`,
-        execute: async () => {
+        execute: async (ctx) => {
           const filename = sanitizeFilename(renderTemplateOrThrow(template, context))
           await this.deps.connections.applyAndVerify(
             device.deviceId,
@@ -338,6 +351,19 @@ export class EventPlanner implements RunPlanner {
               settleMs: 10_000,
             },
           )
+          // Recorded once the device has confirmed, so the ledger never
+          // claims a file the deck refused to make — but before the step
+          // returns, so a run that dies mid-service still leaves a record
+          // of what it put on the card.
+          this.ledger.started({
+            runId: ctx.runId,
+            outputId: output.id,
+            deviceId: device.deviceId,
+            nodeId: device.nodeId,
+            ...(output.settings.slot === undefined ? {} : { slot: output.settings.slot }),
+            filename,
+            at: this.deps.clock.now(),
+          })
           return { response: { filename } }
         },
       },
@@ -346,7 +372,7 @@ export class EventPlanner implements RunPlanner {
         phase: 'stop',
         outputId: output.id,
         label: `${output.label}: stop recording`,
-        execute: async () => {
+        execute: async (ctx) => {
           await this.deps.connections.applyAndVerify(
             device.deviceId,
             device.nodeId,
@@ -358,6 +384,10 @@ export class EventPlanner implements RunPlanner {
               satisfiedBy: (state) => state.recording?.active === false,
             },
           )
+          // Closed only once the deck has actually stopped: a file still
+          // being written is not a candidate for anything, and an open row
+          // is how retention knows to leave it alone.
+          this.ledger.finished(ctx.runId, output.id, this.deps.clock.now())
         },
       },
     ]

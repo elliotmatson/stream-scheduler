@@ -24,6 +24,7 @@ import { RunEngine } from './runs/engine.js'
 import { RunStore } from './runs/store.js'
 import { Notifier } from './notify/notifier.js'
 import { PreflightChecker, DEFAULT_PREFLIGHT_LEAD_MS } from './notify/preflight.js'
+import { RecordingLedger } from './runs/artifacts.js'
 import { runFailedNotification } from './notify/run-events.js'
 
 export interface AppOptions {
@@ -80,6 +81,8 @@ export class Application {
   readonly preflight: PreflightChecker
   readonly telemetry: TelemetryRecorder
   readonly thresholds: Thresholds
+  /** What this scheduler has recorded, and where it put it. */
+  readonly ledger: RecordingLedger
   readonly auth: Auth
   readonly logger: Logger
   readonly clock: Clock
@@ -137,6 +140,9 @@ export class Application {
     this.preflight = init.preflight
     this.telemetry = init.telemetry
     this.thresholds = init.thresholds
+    // Stateless SQL over the same database as the planner's own, so the
+    // two are the same ledger rather than two views of one.
+    this.ledger = new RecordingLedger({ db: init.db })
     this.auth = init.auth
     this.logger = init.logger
     this.clock = init.clock

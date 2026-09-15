@@ -314,6 +314,35 @@ export interface EventOutput {
 export interface OutputSettings {
   quality?: string
   slot?: number
+  /** How long this output's recordings are worth keeping. Absent means
+   *  forever, which is the default. */
+  retention?: { keepDays?: number; keepLast?: number }
+}
+
+/** What one recording output's policy says could go. Nothing is deleted. */
+export interface RetentionReport {
+  outputId: string
+  outputLabel: string
+  seriesLabel: string
+  deviceId: string
+  nodeId: string
+  policy: { keepDays?: number; keepLast?: number }
+  kept: RetentionCandidate[]
+  wouldDelete: RetentionCandidate[]
+  /** Named by the device and not in our ledger — somebody else's files. */
+  unknownToUs: string[]
+}
+
+export interface RetentionCandidate {
+  artifact: {
+    id: string
+    filename: string
+    startedAt: number
+    endedAt: number | null
+    slot: number | null
+  }
+  onDevice: boolean
+  ageMs: number
 }
 
 /** Two outputs that would need the same thing at the same time. */
@@ -476,6 +505,8 @@ export const api = {
   dashboard: () => request<Dashboard>('/api/dashboard'),
   runs: () => request<Run[]>('/api/runs'),
   run: (id: string) => request<Run>(`/api/runs/${id}`),
+  /** What each recording output's policy says could go. Nothing is deleted. */
+  retention: () => request<{ outputs: RetentionReport[] }>('/api/retention'),
   runTelemetry: (id: string, windowMs?: number) =>
     request<RunTelemetry>(
       `/api/runs/${id}/telemetry${windowMs === undefined ? '' : `?windowMs=${windowMs}`}`,

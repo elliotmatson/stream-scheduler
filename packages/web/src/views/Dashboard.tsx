@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import type { ReactNode } from 'react'
 import { api, useLive, useLiveRefresh, useResource, type DashboardOutput } from '../api.ts'
 import {
@@ -200,6 +201,8 @@ export function Dashboard({ navigate }: { navigate: (path: string) => void }): R
             </div>
           )}
         </Card>
+
+        <Recordings />
       </div>
     </>
   )
@@ -213,6 +216,96 @@ export function Dashboard({ navigate }: { navigate: (path: string) => void }): R
  * somebody glances at between services is whether it is on, and anything
  * that is wrong with it.
  */
+/**
+ * What each recording output's policy says could go.
+ *
+ * Deliberately a statement, not a button. Automated deletion of somebody's
+ * Sunday has to earn its place: this screen is how the decision gets
+ * looked at before anything is allowed to act on it. Asking the decks is
+ * the slow part, so it loads on its own rather than with the rest of the
+ * page, and only when somebody opens it.
+ */
+function Recordings(): ReactNode {
+  const [open, setOpen] = useState(false)
+  const { data, error } = useResource(
+    () => (open ? api.retention() : Promise.resolve({ outputs: [] })),
+    [open],
+  )
+
+  const outputs = data?.outputs ?? []
+  const configured = outputs.filter((entry) => entry.policy.keepDays !== undefined)
+  const eligible = configured.reduce((sum, entry) => sum + entry.wouldDelete.length, 0)
+
+  return (
+    <Card>
+      <PageHead
+        level={2}
+        title="Recordings"
+        subtitle="What is on the cards, and what a keep-for policy says could go."
+        actions={
+          <button onClick={() => setOpen((was) => !was)}>
+            {open ? 'Hide' : 'Ask the devices'}
+          </button>
+        }
+      />
+
+      <ErrorBanner error={error} />
+
+      {!open ? (
+        <p className="muted" style={{ margin: 0 }}>
+          Reading a card takes a moment, so this asks only when you want it to.
+        </p>
+      ) : outputs.length === 0 ? (
+        <Empty>No recording outputs are set up.</Empty>
+      ) : (
+        <div className="stack" style={{ gap: 10 }}>
+          {outputs.map((entry) => (
+            <div key={entry.outputId} className="onair-output">
+              <span className="state-dot" aria-hidden />
+              <div className="onair-name">
+                {entry.seriesLabel} · {entry.outputLabel}
+              </div>
+              <div className="onair-actions" />
+              <div className="onair-meta muted">
+                <span>
+                  {entry.kept.length} recording{entry.kept.length === 1 ? '' : 's'} of ours
+                </span>
+                {entry.policy.keepDays === undefined ? (
+                  <span>kept forever</span>
+                ) : (
+                  <span>
+                    keep {entry.policy.keepDays} days, newest {entry.policy.keepLast ?? 3} always
+                  </span>
+                )}
+                {entry.wouldDelete.length > 0 ? (
+                  <span
+                    className="warn-text"
+                    title={entry.wouldDelete.map((c) => c.artifact.filename).join(', ')}
+                  >
+                    {entry.wouldDelete.length} past the keep-by date
+                  </span>
+                ) : null}
+                {entry.unknownToUs.length > 0 ? (
+                  <span title={entry.unknownToUs.join(', ')}>
+                    {entry.unknownToUs.length} file{entry.unknownToUs.length === 1 ? '' : 's'} this
+                    scheduler did not record
+                  </span>
+                ) : null}
+              </div>
+            </div>
+          ))}
+
+          <p className="muted" style={{ margin: 0, fontSize: 12 }}>
+            {eligible === 0
+              ? 'Nothing is past its keep-by date.'
+              : `${eligible} recording${eligible === 1 ? '' : 's'} would go if deleting were switched on. Nothing is deleted: this scheduler cannot delete anything yet.`}
+          </p>
+        </div>
+      )}
+    </Card>
+  )
+}
+
 /**
  * One output inside a running event.
  *

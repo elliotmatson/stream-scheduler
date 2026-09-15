@@ -47,6 +47,20 @@ export interface OutputSettings {
   quality?: string
   /** Which slot or disk a recorder writes to. */
   slot?: number
+  /**
+   * How long this output's recordings are worth keeping.
+   *
+   * Only meaningful on a recording. Absent means nothing is ever eligible,
+   * which is the default and the safe one: a scheduler that starts
+   * deleting Sundays because somebody left a box unticked is not a
+   * scheduler anybody keeps running.
+   */
+  retention?: {
+    /** Recordings older than this are eligible. Absent means age is no reason. */
+    keepDays?: number
+    /** Never let the newest this many go, whatever their age. */
+    keepLast?: number
+  }
 }
 
 interface OutputRow {
@@ -140,6 +154,21 @@ function parseSettings(raw: string): OutputSettings {
     const out: OutputSettings = {}
     if (typeof parsed.quality === 'string' && parsed.quality) out.quality = parsed.quality
     if (typeof parsed.slot === 'number' && Number.isInteger(parsed.slot)) out.slot = parsed.slot
+    // Shape only. Whether a given number *means* anything is retention's
+    // own question — a keepDays of zero parses fine and is rejected there,
+    // where the comment explaining why can sit next to the decision.
+    const retention = parsed.retention
+    if (retention && typeof retention === 'object') {
+      const value = retention as { keepDays?: unknown; keepLast?: unknown }
+      const kept: NonNullable<OutputSettings['retention']> = {}
+      if (typeof value.keepDays === 'number' && Number.isInteger(value.keepDays)) {
+        kept.keepDays = value.keepDays
+      }
+      if (typeof value.keepLast === 'number' && Number.isInteger(value.keepLast)) {
+        kept.keepLast = value.keepLast
+      }
+      if (Object.keys(kept).length > 0) out.retention = kept
+    }
     return out
   } catch {
     return {}

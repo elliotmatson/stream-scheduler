@@ -404,6 +404,11 @@ td,
   background: var(--bad);
 }
 
+/* A figure that is not yet a problem but is the reason to look. */
+.warn-text {
+  color: var(--warn);
+}
+
 @media (max-width: 560px) {
   /* The actions drop under the meta line rather than squeezing the name. */
   .onair-output {
