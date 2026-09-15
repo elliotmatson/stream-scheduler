@@ -189,3 +189,13 @@ export function IconTick(): ReactNode {
     </Glyph>
   )
 }
+
+/** A cross: close this. */
+export function IconClose(): ReactNode {
+  return (
+    <Glyph>
+      <path d="M4 4 12 12" />
+      <path d="M12 4 4 12" />
+    </Glyph>
+  )
+}

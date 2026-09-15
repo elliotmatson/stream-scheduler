@@ -410,6 +410,115 @@ tr.is-picked td {
   background: var(--accent-soft);
 }
 
+/* the device list and its drawer ------------------------------------------ */
+
+.device-list {
+  display: flex;
+  flex-direction: column;
+}
+
+/* A row, not a card. Everything about one device is behind opening it. */
+.device-row-item {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 10px;
+  width: 100%;
+  text-align: left;
+  padding: 9px 8px;
+  border: 0;
+  border-top: 1px solid var(--border);
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  min-height: 0;
+}
+
+.device-list .device-row-item:first-child {
+  border-top: 0;
+}
+
+.device-row-item:hover:not(:disabled) {
+  background: var(--surface-2);
+}
+
+.device-row-item.is-selected {
+  background: var(--accent-soft);
+}
+
+.device-row-name {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+  margin-right: auto;
+}
+
+.device-row-name .muted {
+  font-size: 12px;
+}
+
+/* Truncated rather than wrapped: a long error must not make one row three
+   rows tall and push the rest of the rack off the screen. */
+.device-row-error {
+  max-width: 320px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+}
+
+/* Anywhere else on the page means "I am done with this". */
+.drawer-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  padding: 0;
+  min-height: 0;
+  background: rgb(0 0 0 / 35%);
+}
+
+.drawer-scrim:hover {
+  background: rgb(0 0 0 / 35%);
+}
+
+.drawer {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 41;
+  width: min(680px, 92vw);
+  overflow-y: auto;
+  padding: 18px;
+  background: var(--surface);
+  border-left: 1px solid var(--border);
+  box-shadow: -18px 0 40px rgb(0 0 0 / 18%);
+}
+
+/* Stays put while the rest of the panel scrolls: the close control and the
+   device's name are what somebody reaches for after scrolling down it. */
+.drawer-head {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  margin: -18px -18px 10px;
+  padding: 14px 18px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+}
+
+@media (max-width: 720px) {
+  /* A drawer that is 92% of a phone is a modal pretending otherwise. */
+  .drawer {
+    width: 100%;
+    border-left: 0;
+  }
+}
+
 /* tags and filtering ------------------------------------------------------ */
 
 .tag {
@@ -459,8 +568,16 @@ tr.is-picked td {
 
 /* Wide enough to type a word into, narrow enough not to look like a form
    field that has wandered into a row of pills. */
+/* The wrapper carries the width: the base input rule is a four-`:not()`
+   chain setting every field to 100%, and a tag field that spans the panel
+   reads as a form to fill in rather than a word to add to a row of pills. */
+.tag-input-wrap {
+  display: inline-block;
+  width: 140px;
+  flex: 0 0 auto;
+}
+
 .tag-input {
-  width: 120px;
   min-height: 24px;
   padding: 1px 8px;
   font-size: 12px;
