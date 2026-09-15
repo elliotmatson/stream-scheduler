@@ -29,6 +29,14 @@ export interface Series {
   /** Bumped by the server whenever the event or its outputs change. */
   version: number
   enabled: boolean
+  /**
+   * When it next runs, or null if it never does again.
+   *
+   * Not the same as having no repeat rule: a weekly with an UNTIL in the
+   * past and a one-off last March are both finished, and the screen says
+   * so the same way for both.
+   */
+  nextAt?: number | null
 }
 
 export interface Device {

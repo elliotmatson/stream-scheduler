@@ -155,6 +155,32 @@ function wallOf(naive: Date): WallTime {
 }
 
 /** A plain-language summary of a rule, for the series list. */
+/**
+ * How far ahead to look before calling an event finished.
+ *
+ * Long enough that a yearly service is not mistaken for one that has run
+ * its course, short enough that the rule iterator is not asked to grind
+ * through decades to answer a question about a screen.
+ */
+const LOOKAHEAD_MS = 5 * 365 * DAY
+
+/**
+ * When this event next runs, or null if it never does again.
+ *
+ * The question the events screen actually asks. It is not the same as
+ * "has no rrule": a weekly with an UNTIL in the past and a one-off last
+ * March are both finished, and both should say so. Answering from the
+ * rule rather than from the occurrence table matters too, because the
+ * table only reaches as far as the materialization horizon, and an event
+ * beyond it has not stopped — it just has not been written down yet.
+ */
+export function nextOccurrenceAfter(schedule: SeriesSchedule, from: number): number | null {
+  const found = expandOccurrences(schedule, from, from + LOOKAHEAD_MS, { limit: 1 })
+  // An occurrence already under way is still the next one: an event does
+  // not become finished halfway through its own window.
+  return found[0]?.start ?? null
+}
+
 export function describeSchedule(schedule: SeriesSchedule): string {
   if (schedule.rrule === null) return 'Does not repeat'
   try {

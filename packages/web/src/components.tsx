@@ -88,9 +88,18 @@ export function Empty({ children }: { children: ReactNode }): ReactNode {
   return <div className="empty">{children}</div>
 }
 
-export function Card({ title, children }: { title?: string; children: ReactNode }): ReactNode {
+export function Card({
+  title,
+  className,
+  children,
+}: {
+  title?: string
+  /** Extra classes for a card in a state of its own, e.g. a finished event. */
+  className?: string
+  children: ReactNode
+}): ReactNode {
   return (
-    <section className="card">
+    <section className={className ? `card ${className}` : 'card'}>
       {title ? <h2>{title}</h2> : null}
       {children}
     </section>
