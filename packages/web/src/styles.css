@@ -1859,3 +1859,31 @@ button.link:hover {
   color: var(--accent);
   font-weight: 700;
 }
+
+/* Somewhere a date could be dropped. Shown only while something is being
+   dragged: a calendar that always looked like this would be noise. */
+.day.droppable,
+.week-day.droppable {
+  outline: 1px dashed var(--border-strong);
+  outline-offset: -2px;
+}
+
+.day.droppable:hover,
+.week-day.droppable:hover {
+  outline-color: var(--accent);
+  background-color: var(--accent-soft);
+}
+
+/* The chip being carried. Faded rather than hidden, so it is still
+   obvious which one is in the air. */
+.event.dragging {
+  opacity: 0.45;
+}
+
+.event[draggable='true'] {
+  cursor: grab;
+}
+
+.event[draggable='true']:active {
+  cursor: grabbing;
+}
