@@ -34,6 +34,21 @@ export interface EngineDeps {
     /** Set when one output failed and the rest of the event carried on. */
     outputLabel?: string
   }) => void
+  /**
+   * Called when a run or one of its outputs reaches air, or comes off it
+   * cleanly. A hook for the same reason `onFailure` is: the engine's job is
+   * to drive the timeline, and it should not know that notifications exist.
+   *
+   * Nothing here is a problem. These are the "it worked" messages, which
+   * is why they are off unless a channel asks for them by name.
+   */
+  onLifecycle?: (event: {
+    kind: 'run.started' | 'run.finished' | 'output.started' | 'output.finished'
+    runId: string
+    occurrenceId: string
+    /** Absent on the two run-level events. */
+    outputLabel?: string
+  }) => void
 }
 
 export interface TickReport {
@@ -192,8 +207,17 @@ export class RunEngine {
         await this.markMissed(run, plan, entry, now, timeline)
         return true
       }
-      if (this.deps.store.getRun(run.id).state === 'ready')
+      if (this.deps.store.getRun(run.id).state === 'ready') {
         this.deps.store.transition(run.id, 'running')
+        // The moment the event is actually on air, which is the one people
+        // mean by "did it start?". Not when the run was created, and not
+        // when it prepared half an hour earlier.
+        this.deps.onLifecycle?.({
+          kind: 'run.started',
+          runId: run.id,
+          occurrenceId: run.occurrence_id,
+        })
+      }
       await this.runOutputPhase(run, plan, entry, 'start')
       return true
     }
@@ -272,6 +296,12 @@ export class RunEngine {
         runId: run.id,
         output: entry.output.label,
       })
+      this.deps.onLifecycle?.({
+        kind: phase === 'start' ? 'output.started' : 'output.finished',
+        runId: run.id,
+        occurrenceId: run.occurrence_id,
+        outputLabel: entry.output.label,
+      })
       return
     }
     await this.failOutput(run, plan, entry, result.failure, { onAir: phase === 'stop' })
@@ -308,6 +338,11 @@ export class RunEngine {
     this.deps.db
       .prepare("UPDATE occurrence SET status = 'done' WHERE id = ?")
       .run(run.occurrence_id)
+    this.deps.onLifecycle?.({
+      kind: 'run.finished',
+      runId: run.id,
+      occurrenceId: run.occurrence_id,
+    })
     return true
   }
 

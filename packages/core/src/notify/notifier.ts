@@ -14,6 +14,7 @@ import {
   type Notification,
   type NotificationChannel,
   type NotificationEvent,
+  defaultsToSending,
 } from './types.js'
 
 export interface ChannelRow {
@@ -328,9 +329,11 @@ export class Notifier {
 
   private wants(row: ChannelRow, event: NotificationEvent): boolean {
     const events = JSON.parse(row.events) as string[]
-    // An empty list means everything, so a channel added without thinking
-    // about it still reports failures.
-    return events.length === 0 || events.includes(event)
+    // An empty list means warnings and errors: a channel added without
+    // thinking about it still reports everything that went wrong, and
+    // stays quiet about every service starting and stopping. Somebody who
+    // wants those asks for them by name.
+    return events.length === 0 ? defaultsToSending(event) : events.includes(event)
   }
 
   private channelFor(

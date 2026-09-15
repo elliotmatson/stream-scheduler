@@ -285,9 +285,31 @@ describe('pre-flight', () => {
     await connections.open(encoder)
     seed({ source: encoder, credentialId: addCredential() })
 
+    // Subscribed by name: the all-clear is an "it worked" message, and a
+    // channel that has not asked for those does not get them.
+    notifier.create({
+      kind: 'webhook',
+      label: 'Reassurance',
+      config: { url: 'https://example.invalid/ready' },
+      events: ['preflight.ready'],
+    })
+
     await checker({ announceReady: true }).run()
     await notifier.flush()
-    expect(sent[0]!.body.event).toBe('preflight.ready')
+    expect(sent.map((entry) => entry.body.event)).toContain('preflight.ready')
+  })
+
+  it('does not send the all-clear to a channel that never asked', async () => {
+    // The default changed: a channel with no explicit choice now gets
+    // warnings and errors only. Reassurance every evening is how a channel
+    // becomes one people scroll past.
+    const encoder = addDevice({ kind: 'encoder' })
+    await connections.open(encoder)
+    seed({ source: encoder, credentialId: addCredential() })
+
+    await checker({ announceReady: true }).run()
+    await notifier.flush()
+    expect(sent).toHaveLength(0)
   })
 
   it("names the time in the event's own timezone", async () => {

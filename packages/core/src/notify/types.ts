@@ -8,13 +8,62 @@ export const NOTIFICATION_EVENTS = [
   'account.reauth_required',
   'device.cache_high',
   'retention.swept',
+  'retention.failed',
   'backup.failed',
+  'run.started',
+  'run.finished',
+  'output.started',
+  'output.finished',
   'test',
 ] as const
 
 export type NotificationEvent = (typeof NOTIFICATION_EVENTS)[number]
 
 export type Severity = 'info' | 'warning' | 'error'
+
+/**
+ * How bad each kind of event is, fixed per kind rather than per message.
+ *
+ * Two things read this. The settings screen groups the checkboxes by it,
+ * so somebody choosing what to be told about is looking at "things that
+ * went wrong" rather than an alphabetical list. And a channel with no
+ * explicit choice uses it to send warnings and errors only, so the
+ * "it worked" messages are opt-in.
+ *
+ * That only works if a kind means one thing. A sweep used to be info or
+ * warning depending on whether a delete failed, which made both the
+ * grouping and the filter a guess — so it is two kinds now, and the
+ * sweeper picks between them.
+ */
+export const EVENT_SEVERITY: Record<NotificationEvent, Severity> = {
+  'run.failed': 'error',
+  'run.cancelled': 'warning',
+  'preflight.problem': 'warning',
+  'preflight.ready': 'info',
+  'account.reauth_required': 'error',
+  'device.cache_high': 'warning',
+  'retention.swept': 'info',
+  'retention.failed': 'warning',
+  'backup.failed': 'warning',
+  'run.started': 'info',
+  'run.finished': 'info',
+  'output.started': 'info',
+  'output.finished': 'info',
+  test: 'info',
+}
+
+/**
+ * What a channel gets when nobody has chosen.
+ *
+ * Warnings and errors. An empty list used to mean everything, which is the
+ * wrong default now that the app can announce every service starting and
+ * stopping: a channel nobody tuned would carry four messages a Sunday, and
+ * a channel people have learnt to ignore does not report the failure
+ * either.
+ */
+export function defaultsToSending(event: NotificationEvent): boolean {
+  return EVENT_SEVERITY[event] !== 'info'
+}
 
 /**
  * One thing worth telling somebody about, in a shape every channel can

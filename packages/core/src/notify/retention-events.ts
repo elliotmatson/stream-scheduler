@@ -15,9 +15,18 @@ const NAMED = 5
  * "2026-01-04 Sunday Service and three others" is something somebody can
  * check against what they expected.
  *
- * A failure inside a sweep raises the severity rather than making a
- * second alert. Some gone and some stuck is one event, and splitting it
- * in two makes the reader join them back up.
+ * A sweep that could not delete something is still *one* message, carrying
+ * both what went and what stuck: some gone and some left behind is one
+ * event, and splitting the message in two would make the reader join them
+ * back up. What changes is which event kind it is announced under —
+ * `retention.failed` rather than `retention.swept` — so that a channel
+ * subscribing to warnings gets the one that went wrong and not the weekly
+ * "removed four old recordings".
+ *
+ * That split exists because the severity used to depend on the outcome,
+ * which made the event kind mean two different things. A screen grouping
+ * kinds by severity had to guess, and a filter working off the kind got it
+ * wrong half the time.
  */
 export function recordingsSweptNotification(
   swept: SweptOutput[],
@@ -29,7 +38,7 @@ export function recordingsSweptNotification(
   const outputs = swept.map((entry) => `${entry.seriesLabel} · ${entry.outputLabel}`)
 
   return {
-    event: 'retention.swept',
+    event: failed.length > 0 ? 'retention.failed' : 'retention.swept',
     severity: failed.length > 0 ? 'warning' : 'info',
     title:
       failed.length > 0

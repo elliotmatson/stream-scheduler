@@ -5,6 +5,7 @@ import {
   useResource,
   type ChannelKind,
   type NotificationChannel,
+  type NotificationEventKind,
   type NotificationSettings,
 } from '../api.ts'
 import {
@@ -261,22 +262,56 @@ const EVENT_LABELS: Record<string, { label: string; detail: string }> = {
     label: 'Old recordings are deleted',
     detail: 'The hourly sweep removed files past an output’s keep-for policy.',
   },
+  'retention.failed': {
+    label: 'A recording would not delete',
+    detail: 'The sweep left files behind — a card may be write-protected, or still in use.',
+  },
+  'backup.failed': {
+    label: 'A scheduled backup fails',
+    detail: 'The backup volume is missing, read-only or full.',
+  },
+  'run.started': {
+    label: 'An event goes on air',
+    detail: 'Its first output started.',
+  },
+  'run.finished': {
+    label: 'An event finishes',
+    detail: 'Everything came off air and the run closed out.',
+  },
+  'output.started': {
+    label: 'One output goes live',
+    detail: 'Every output of every event, separately. The noisiest of these.',
+  },
+  'output.finished': {
+    label: 'One output stops',
+    detail: 'Carries the recording’s name, where the device reports one.',
+  },
 }
 
-/** `3 alerts`, or `every alert` — the count is what fits on the row. */
+/** The three headings the switches are grouped under. */
+const SEVERITY_GROUPS: { severity: 'error' | 'warning' | 'info'; title: string; note: string }[] = [
+  { severity: 'error', title: 'Something broke', note: 'On unless you turn them off.' },
+  { severity: 'warning', title: 'Something needs attention', note: 'On unless you turn them off.' },
+  {
+    severity: 'info',
+    title: 'It worked',
+    note: 'Off unless you ask for them. These arrive every service.',
+  },
+]
+
+/** `3 alerts`, or `problems only` — the count is what fits on the row. */
 function summariseEvents(events: string[]): string {
   const alerts = events.filter((event) => event !== 'test')
-  if (events.length === 0 || alerts.length === Object.keys(EVENT_LABELS).length) {
-    return 'every alert'
-  }
+  if (events.length === 0) return 'problems only'
   if (alerts.length === 0) return 'tests only'
+  if (alerts.length === Object.keys(EVENT_LABELS).length) return 'everything'
   return `${alerts.length} of ${Object.keys(EVENT_LABELS).length} alerts`
 }
 
 /** The full list, for the tooltip, where there is room to spell it out. */
 function describeEvents(events: string[]): string {
   const alerts = events.filter((event) => event !== 'test')
-  if (events.length === 0) return 'Sent for every alert.'
+  if (events.length === 0) return 'Sent for anything that went wrong, and nothing else.'
   if (alerts.length === 0) return 'Sent for nothing but tests.'
   return alerts.map((event) => EVENT_LABELS[event]?.label ?? event).join(', ')
 }
@@ -299,21 +334,27 @@ function EventChoices({
   onChange,
 }: {
   events: string[]
-  all: string[]
+  all: NotificationEventKind[]
   onChange: (next: string[]) => void
 }): ReactNode {
-  const alerts = all.filter((event) => event !== 'test')
-  // An empty stored list means every event, so that is what is shown.
-  const chosen = events.length === 0 ? alerts : alerts.filter((event) => events.includes(event))
+  const alerts = all.filter((entry) => entry.event !== 'test')
+  // An empty stored list means warnings and errors, so that is what is
+  // shown ticked. It used to mean everything, which stopped being a sane
+  // default the moment the app could announce every service starting.
+  const chosen =
+    events.length === 0
+      ? alerts.filter((entry) => entry.severity !== 'info').map((entry) => entry.event)
+      : alerts.map((entry) => entry.event).filter((event) => events.includes(event))
 
   const toggle = (event: string, on: boolean): void => {
     const next = on ? [...chosen, event] : chosen.filter((kept) => kept !== event)
     // Ordered by the API's list, not by what was clicked last.
-    const ordered = alerts.filter((name) => next.includes(name))
+    const ordered = alerts.map((entry) => entry.event).filter((name) => next.includes(name))
     onChange([...ordered, 'test'])
   }
 
-  const setAll = (on: boolean): void => onChange(on ? [...alerts, 'test'] : ['test'])
+  const setAll = (on: boolean): void =>
+    onChange(on ? [...alerts.map((entry) => entry.event), 'test'] : ['test'])
 
   return (
     <div className="stack" style={{ gap: 6 }}>
@@ -329,23 +370,40 @@ function EventChoices({
         </div>
       </div>
 
-      <div className="stack" style={{ gap: 4 }}>
-        {alerts.map((event) => (
-          <label key={event} className="row" style={{ gap: 8, alignItems: 'flex-start' }}>
-            <input
-              type="checkbox"
-              checked={chosen.includes(event)}
-              onChange={(changed) => toggle(event, changed.target.checked)}
-            />
-            <span>
-              {EVENT_LABELS[event]?.label ?? event}
-              <span className="muted" style={{ display: 'block', fontSize: 12 }}>
-                {EVENT_LABELS[event]?.detail ?? ''}
+      {/* Grouped by how bad it is, because that is the question somebody is
+          actually answering. An alphabetical list makes you read every row
+          to find out whether you have turned off something that matters. */}
+      {SEVERITY_GROUPS.map((group) => {
+        const inGroup = alerts.filter((entry) => entry.severity === group.severity)
+        if (inGroup.length === 0) return null
+
+        return (
+          <div key={group.severity} className="stack" style={{ gap: 4 }}>
+            <div className="field-label" style={{ marginTop: 6 }}>
+              {group.title}
+              <span className="muted" style={{ fontWeight: 400 }}>
+                {' '}
+                · {group.note}
               </span>
-            </span>
-          </label>
-        ))}
-      </div>
+            </div>
+            {inGroup.map((entry) => (
+              <label key={entry.event} className="row" style={{ gap: 8, alignItems: 'flex-start' }}>
+                <input
+                  type="checkbox"
+                  checked={chosen.includes(entry.event)}
+                  onChange={(changed) => toggle(entry.event, changed.target.checked)}
+                />
+                <span>
+                  {EVENT_LABELS[entry.event]?.label ?? entry.event}
+                  <span className="muted" style={{ display: 'block', fontSize: 12 }}>
+                    {EVENT_LABELS[entry.event]?.detail ?? ''}
+                  </span>
+                </span>
+              </label>
+            ))}
+          </div>
+        )
+      })}
 
       {chosen.length === 0 ? (
         <p className="muted" style={{ margin: 0, fontSize: 12 }}>
