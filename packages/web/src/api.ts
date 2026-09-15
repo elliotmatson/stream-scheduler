@@ -4,14 +4,47 @@ export interface Occurrence {
   id: string
   seriesId: string
   seriesLabel: string
+  /** What this one is called: its own name where it has been renamed, and
+   *  the series' name otherwise. */
+  label: string
   timezone: string
   scheduledStart: number
   scheduledEnd: number
   localDate: string
   status: string
+  /** Edited away from its series, so later changes to the rule leave it
+   *  alone. See `overrides` for what was changed. */
   detached: boolean
+  overrides: OccurrenceOverrides
   runId: string | null
   runState: string | null
+}
+
+/** What somebody changed about one occurrence, and nothing else. */
+export interface OccurrenceOverrides {
+  label?: string
+  templates?: { title?: string; description?: string; filename?: string }
+  /** Where it was before it was moved. */
+  movedFrom?: number
+  /** How long it was before it was stretched. */
+  lengthenedFrom?: number
+}
+
+/** One occurrence in full, for the screen that edits it. */
+export interface OccurrenceDetail extends Occurrence {
+  /** What the series' templates say, so the form can show what changing
+   *  every one of them would mean. */
+  seriesTemplates: { title?: string; description?: string; filename?: string }
+  outputs: OutputPreview[]
+}
+
+/** An edit to one occurrence. `null` puts a field back on the series;
+ *  leaving it out changes nothing. */
+export interface OccurrenceEdit {
+  label?: string | null
+  startsAt?: { date: string; time: string }
+  durationMs?: number
+  templates?: Record<string, string> | null
 }
 
 export interface Series {
@@ -671,6 +704,19 @@ export const api = {
     request<unknown>(`/api/notifications/channels/${id}`, { method: 'DELETE' }),
   unskip: (occurrenceId: string) =>
     request<unknown>(`/api/occurrences/${occurrenceId}/unskip`, { method: 'POST' }),
+  occurrence: (id: string) => request<OccurrenceDetail>(`/api/occurrences/${id}`),
+  /** Changes this one and only this one. Editing every one of them is a
+   *  `saveSeries` on its series. */
+  editOccurrence: (id: string, edit: OccurrenceEdit) =>
+    request<{ ok: true; detached: boolean }>(`/api/occurrences/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify(edit),
+    }),
+  /** Undoes every change to one occurrence and puts it back on its series. */
+  revertOccurrence: (id: string) =>
+    request<{ ok: true; detached: false }>(`/api/occurrences/${id}/overrides`, {
+      method: 'DELETE',
+    }),
 
   // -- setup --------------------------------------------------------------
 
