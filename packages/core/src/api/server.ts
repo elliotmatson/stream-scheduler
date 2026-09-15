@@ -25,7 +25,7 @@ import {
   validateSchedule,
 } from '../schedule/recurrence.js'
 import { bumpSeriesVersion, materializeSeries } from '../schedule/materialize.js'
-import { isValidTimeZone, zonedWallTimeToUtc } from '../schedule/zoned.js'
+import { isValidTimeZone, localDateAt, zonedWallTimeToUtc } from '../schedule/zoned.js'
 import { ConfigInvalidError, UnknownPluginError } from '../plugins/registry.js'
 import { eventMidRunOn as midRunOn, freeMsOf, reportAll } from '../runs/retention.js'
 import { MAX_TAG_LENGTH, type TaggableKind } from '../tags/index.js'
@@ -40,6 +40,12 @@ import {
   type OutputKind,
 } from '../events/outputs.js'
 import { describeConflict, overlapsForSeries } from '../events/overlap.js'
+import {
+  isEmpty,
+  occurrenceRow,
+  parseOverrides,
+  serializeOverrides,
+} from '../events/occurrence-overrides.js'
 import { assertUnreferenced, ConflictError, NotFoundError } from './errors.js'
 import { buildDashboard, outputsOf } from './dashboard.js'
 import { registerAuthGate, registerAuthRoutes } from './auth-routes.js'
@@ -1021,21 +1027,221 @@ function registerRoutes(fastify: FastifyInstance, app: Application): void {
             ORDER BY o.scheduled_start`,
         )
         .all(from, to) as OccurrenceRowShape[]
-    ).map((row) => ({
+    ).map((row) => {
+      const overrides = parseOverrides(row.overrides)
+      return {
+        id: row.id,
+        seriesId: row.series_id,
+        seriesLabel: row.series_label,
+        // What this one is called, which is not always what the series is
+        // called: a calendar that showed the series' name for a renamed
+        // morning would be showing the wrong thing on the one day it
+        // mattered.
+        label: overrides.label ?? row.series_label,
+        timezone: row.timezone,
+        scheduledStart: row.scheduled_start,
+        scheduledEnd: row.scheduled_end,
+        localDate: row.local_date,
+        status: row.status,
+        detached: row.overrides !== null,
+        overrides,
+        runId: row.run_id,
+        runState: row.run_state,
+      }
+    })
+  })
+
+  /**
+   * One occurrence in full, for the screen that edits it.
+   *
+   * Carries the series' own values alongside the overridden ones, because
+   * the form has to be able to show what "every one of them" currently
+   * says while somebody is deciding whether to change only this one.
+   */
+  fastify.get('/api/occurrences/:id', async (request) => {
+    const { id } = z.object({ id: z.string() }).parse(request.params)
+    const row = db
+      .prepare(
+        `SELECT o.*, s.label AS series_label, s.timezone AS timezone, s.templates AS series_templates,
+                (SELECT r.id FROM run r WHERE r.occurrence_id = o.id ORDER BY r.attempt DESC LIMIT 1) AS run_id,
+                (SELECT r.state FROM run r WHERE r.occurrence_id = o.id ORDER BY r.attempt DESC LIMIT 1) AS run_state
+           FROM occurrence o JOIN event_series s ON s.id = o.series_id
+          WHERE o.id = ?`,
+      )
+      .get(id) as (OccurrenceRowShape & { series_templates: string }) | undefined
+    if (!row) throw new NotFoundError(`No occurrence with id "${id}".`)
+
+    const overrides = parseOverrides(row.overrides)
+    return {
       id: row.id,
       seriesId: row.series_id,
       seriesLabel: row.series_label,
+      label: overrides.label ?? row.series_label,
       timezone: row.timezone,
       scheduledStart: row.scheduled_start,
       scheduledEnd: row.scheduled_end,
       localDate: row.local_date,
       status: row.status,
       detached: row.overrides !== null,
-      overrides: row.overrides ? JSON.parse(row.overrides) : null,
+      overrides,
+      // What the series says, so the form can show what changing every one
+      // of them would mean.
+      seriesTemplates: JSON.parse(row.series_templates || '{}'),
       runId: row.run_id,
       runState: row.run_state,
-    }))
+      // Best effort: a device that has gone away is a reason for the
+      // preview to be short, not for the page not to open.
+      outputs: previewOrNothing(row.id),
+    }
   })
+
+  /**
+   * Changes one occurrence, and only that one.
+   *
+   * The other half of "just this one, or every one of them": every one of
+   * them is a PATCH on the series, and this is the same edit applied to a
+   * single morning. Writing `overrides` is what detaches it — after this,
+   * `materializeSeries` leaves it alone for good, which is what makes the
+   * edit survive a later change to the rule.
+   *
+   * Times are resolved from the wall clock on the server, the same way a
+   * series' start is, so a move onto an hour the clocks skip is refused
+   * rather than quietly landing somewhere else.
+   */
+  fastify.patch('/api/occurrences/:id', async (request) => {
+    const { id } = z.object({ id: z.string() }).parse(request.params)
+    const body = z
+      .object({
+        label: z.string().min(1).max(200).nullable().optional(),
+        startsAt: LOCAL_START.optional(),
+        durationMs: z.number().int().positive().optional(),
+        templates: z.record(z.string()).nullable().optional(),
+      })
+      .parse(request.body ?? {})
+
+    const row = occurrenceRow(db, id)
+    if (!row) throw new NotFoundError(`No occurrence with id "${id}".`)
+
+    const series = db
+      .prepare('SELECT timezone FROM event_series WHERE id = ?')
+      .get(row.series_id) as { timezone: string } | undefined
+    if (!series) throw new NotFoundError(`No series with id "${row.series_id}".`)
+
+    // Something that has already run is history, and history is not
+    // editable: the run that happened does not change because somebody
+    // retyped the name afterwards.
+    if (row.status !== 'pending') {
+      throw new ConflictError(`This occurrence is ${row.status}, so it can no longer be changed.`)
+    }
+    const running = db
+      .prepare(
+        "SELECT id FROM run WHERE occurrence_id = ? AND state NOT IN ('completed', 'failed', 'cancelled') LIMIT 1",
+      )
+      .get(id) as { id: string } | undefined
+    if (running) throw new ConflictError('This event is under way. It cannot be changed now.')
+
+    const overrides = parseOverrides(row.overrides)
+    let scheduledStart = row.scheduled_start
+    let scheduledEnd = row.scheduled_end
+
+    if (body.startsAt) {
+      const moved = resolveDtstart({ dtstartLocal: body.startsAt, timezone: series.timezone })
+      if (moved !== scheduledStart) {
+        if (moved < app.clock.now()) {
+          throw new ConflictError('That is in the past. Pick a time this event could still run at.')
+        }
+        // Only the first move records where it came from: somebody nudging
+        // a service twice still moved it from 09:00, not from 09:15.
+        overrides.movedFrom ??= row.scheduled_start
+        scheduledEnd = moved + (scheduledEnd - scheduledStart)
+        scheduledStart = moved
+      }
+    }
+
+    if (body.durationMs !== undefined) {
+      const was = scheduledEnd - scheduledStart
+      if (body.durationMs !== was) {
+        overrides.lengthenedFrom ??= row.scheduled_end - row.scheduled_start
+        scheduledEnd = scheduledStart + body.durationMs
+      }
+    }
+
+    // null clears an override and puts this one back on the series' value;
+    // absent leaves it as it is. The two are different answers and the
+    // screen offers both.
+    if (body.label === null) delete overrides.label
+    else if (body.label !== undefined) overrides.label = body.label
+
+    if (body.templates === null) delete overrides.templates
+    else if (body.templates !== undefined) {
+      const kept: Record<string, string> = {}
+      for (const key of ['title', 'description', 'filename']) {
+        const value = body.templates[key]
+        if (typeof value === 'string' && value) kept[key] = value
+      }
+      if (Object.keys(kept).length > 0) overrides.templates = kept
+      else delete overrides.templates
+    }
+
+    db.prepare(
+      'UPDATE occurrence SET scheduled_start = ?, scheduled_end = ?, local_date = ?, overrides = ? WHERE id = ?',
+    ).run(
+      scheduledStart,
+      scheduledEnd,
+      localDateAt(scheduledStart, series.timezone),
+      serializeOverrides(overrides),
+      id,
+    )
+
+    app.logger.info('an occurrence was changed on its own', {
+      occurrenceId: id,
+      seriesId: row.series_id,
+      moved: scheduledStart !== row.scheduled_start,
+    })
+    return { ok: true, detached: !isEmpty(overrides) }
+  })
+
+  /**
+   * Puts one occurrence back on its series.
+   *
+   * The way out of a mistake, and the reason the detached state is safe to
+   * offer at all: an edit that could not be undone would make "just this
+   * one" a decision nobody wants to make quickly. Clearing `overrides`
+   * re-attaches it, and the next materialization re-times it from the rule.
+   */
+  fastify.delete('/api/occurrences/:id/overrides', async (request) => {
+    const { id } = z.object({ id: z.string() }).parse(request.params)
+    const row = occurrenceRow(db, id)
+    if (!row) throw new NotFoundError(`No occurrence with id "${id}".`)
+    if (row.status !== 'pending') {
+      throw new ConflictError(`This occurrence is ${row.status}, so it can no longer be changed.`)
+    }
+
+    const overrides = parseOverrides(row.overrides)
+    const start = overrides.movedFrom ?? row.scheduled_start
+    const length = overrides.lengthenedFrom ?? row.scheduled_end - row.scheduled_start
+    const series = db
+      .prepare('SELECT timezone FROM event_series WHERE id = ?')
+      .get(row.series_id) as { timezone: string } | undefined
+
+    db.prepare(
+      'UPDATE occurrence SET scheduled_start = ?, scheduled_end = ?, local_date = ?, overrides = NULL WHERE id = ?',
+    ).run(start, start + length, localDateAt(start, series?.timezone ?? 'UTC'), id)
+    // Re-materialized straight away so the calendar shows the series'
+    // answer rather than waiting an hour to agree with itself.
+    app.materialize()
+    return { ok: true, detached: false }
+  })
+
+  const previewOrNothing = (
+    occurrenceId: string,
+  ): ReturnType<typeof app.planner.previewOutputs> => {
+    try {
+      return app.planner.previewOutputs(occurrenceId)
+    } catch {
+      return []
+    }
+  }
 
   fastify.post('/api/occurrences/:id/skip', async (request) => {
     const { id } = z.object({ id: z.string() }).parse(request.params)

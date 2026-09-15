@@ -301,8 +301,15 @@ function DevicePanel({
   return (
     <>
       {/* Catches the click that means "I am done with this", which on a
-          drawer is anywhere else on the page. */}
-      <button className="drawer-scrim" aria-label="Close" onClick={onClose} />
+          drawer is anywhere else on the page.
+
+          Deliberately not a button. As one it inherited the button hover
+          and active backgrounds, so half the screen lit up on the way to
+          the drawer; it also took a tab stop and a focus ring around the
+          whole viewport, in front of the dialog it was meant to be behind.
+          Escape closes the drawer, and the drawer has its own ×, so
+          nothing is lost by hiding this from the keyboard entirely. */}
+      <div className="drawer-scrim" aria-hidden="true" onClick={onClose} />
       <aside className="drawer" role="dialog" aria-label={device.label}>
         <div className="page-head drawer-head">
           <div>

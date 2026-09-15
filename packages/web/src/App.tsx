@@ -21,6 +21,7 @@ import { Schedule } from './views/Schedule.tsx'
 import { Devices } from './views/Devices.tsx'
 import { SeriesList } from './views/SeriesList.tsx'
 import { RunDetail, Runs } from './views/RunDetail.tsx'
+import { OccurrenceDetail } from './views/OccurrenceDetail.tsx'
 import { Notifications } from './views/Notifications.tsx'
 import { Services } from './views/Services.tsx'
 import { Settings } from './views/Settings.tsx'
@@ -222,6 +223,11 @@ function Route({
 }): ReactNode {
   const run = /^\/runs\/(.+)$/.exec(path)
   if (run) return <RunDetail runId={run[1]!} navigate={navigate} />
+  // One date of a repeating event. The calendar has always linked here;
+  // until now there was nothing to land on and it fell through to the
+  // status screen.
+  const occurrence = /^\/occurrences\/(.+)$/.exec(path)
+  if (occurrence) return <OccurrenceDetail occurrenceId={occurrence[1]!} navigate={navigate} />
   // A device linked to from the status board or a run's own page.
   const device = /^\/devices\/(.+)$/.exec(path)
   if (device) return <Devices focusId={device[1]!} navigate={navigate} />

@@ -1,6 +1,7 @@
 import type { Db } from '../db/index.js'
 import { outputsForOccurrence, type EventOutput } from '../events/outputs.js'
 import type { OutputTemplates } from '../events/outputs.js'
+import { parseOverrides } from '../events/occurrence-overrides.js'
 
 /** When one output goes on and comes off, in absolute time. */
 export interface OutputWindow {
@@ -33,6 +34,9 @@ export interface EventTimeline {
   outputs: OutputWindow[]
   /** Set when an operator started this run by hand; see RunEngine.startNow. */
   forcedAt?: number
+  /** True when this one was edited away from its series: a different name,
+   *  different templates, or moved. */
+  detached: boolean
 }
 
 interface TimelineRow {
@@ -42,6 +46,7 @@ interface TimelineRow {
   label: string
   timezone: string
   templates: string
+  overrides: string | null
   prepare_lead_ms: number
   preroll_ms: number
   postroll_ms: number
@@ -55,7 +60,8 @@ export function timelineFor(
 ): EventTimeline {
   const row = db
     .prepare(
-      `SELECT o.scheduled_start, o.scheduled_end, o.series_id, s.label, s.timezone, s.templates,
+      `SELECT o.scheduled_start, o.scheduled_end, o.series_id, o.overrides,
+              s.label, s.timezone, s.templates,
               s.prepare_lead_ms, s.preroll_ms, s.postroll_ms, s.late_start_grace_ms
          FROM occurrence o JOIN event_series s ON s.id = o.series_id
         WHERE o.id = ?`,
@@ -69,6 +75,12 @@ export function timelineFor(
   const windowStart = options.forcedAt ?? row.scheduled_start
   const shift = windowStart - row.scheduled_start
 
+  // Applied here rather than at each caller, because everything that acts
+  // on an occurrence — the engine, the planner, the preview, the evening
+  // checks — comes through this function. A "just this week" edit that
+  // only some of them honoured would be worse than one that none did.
+  const overrides = parseOverrides(row.overrides)
+
   const outputs = outputsForOccurrence(db, occurrenceId)
     .filter((output) => output.enabled)
     .map((output) => ({
@@ -80,16 +92,20 @@ export function timelineFor(
   return {
     occurrenceId,
     seriesId: row.series_id,
-    label: row.label,
+    label: overrides.label ?? row.label,
     timezone: row.timezone,
     windowStart,
     windowEnd: row.scheduled_end + shift,
-    templates: parseTemplates(row.templates),
+    // Replaced wholesale, not merged. "This week the title is different"
+    // means the title somebody typed on this screen, and a merge would
+    // silently keep a description they had just cleared.
+    templates: overrides.templates ?? parseTemplates(row.templates),
     prepareLeadMs: row.prepare_lead_ms,
     prerollMs: row.preroll_ms,
     postrollMs: row.postroll_ms,
     lateStartGraceMs: row.late_start_grace_ms,
     outputs,
+    detached: row.overrides !== null,
     ...(options.forcedAt === undefined ? {} : { forcedAt: options.forcedAt }),
   }
 }

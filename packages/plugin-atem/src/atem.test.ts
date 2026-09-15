@@ -215,29 +215,60 @@ function context(config: Record<string, unknown> = {}): DeviceContext {
  * no listing and no delete — so this is the only place a file's size or
  * date comes from, and the only way either action can be tested.
  */
-function fakeFtp(files: string[], options: { ignoresDeletes?: boolean } = {}) {
-  const drive = new Map(
-    files.map((name, index) => [
-      name,
-      {
-        name,
-        size: 410_000_000 + index,
-        modifiedAt: Date.parse('2026-09-06T18:48:52Z') + index * 86_400_000,
-      },
-    ]),
-  )
+function fakeFtp(
+  volumes: Record<string, string[]>,
+  options: { ignoresDeletes?: boolean; flat?: boolean } = {},
+) {
+  let stamp = 0
+  const clip = (name: string): RemoteEntry => ({
+    name,
+    size: 410_000_000 + stamp,
+    modifiedAt: Date.parse('2026-09-06T18:48:52Z') + stamp++ * 86_400_000,
+    isDirectory: false,
+  })
+
+  // A tree, not a flat list: the switcher serves the disk plugged into it
+  // as a directory at the root, named after the volume, with the files
+  // inside. A fake that answered every directory with the same files
+  // agreed happily with an adapter listing the root — which on the real
+  // thing comes back with no files in it at all.
+  const tree = new Map<string, Map<string, RemoteEntry>>([['/', new Map()]])
+  const put = (directory: string, entry: RemoteEntry): void => {
+    const here = tree.get(directory) ?? new Map<string, RemoteEntry>()
+    here.set(entry.name, entry)
+    tree.set(directory, here)
+  }
+
+  for (const [volume, names] of Object.entries(volumes)) {
+    if (options.flat) {
+      for (const name of names) put('/', clip(name))
+      continue
+    }
+    put('/', { name: volume, size: 0, isDirectory: true })
+    tree.set(`/${volume}`, new Map())
+    for (const name of names) put(`/${volume}`, clip(name))
+  }
+
   const removed: string[] = []
   let closed = 0
+  const at = (directory: string): Map<string, RemoteEntry> =>
+    tree.get(directory === '' ? '/' : directory) ?? new Map<string, RemoteEntry>()
 
   return {
-    drive,
     removed,
     closed: () => closed,
+    /** What is in a directory, for asserting a delete actually took. */
+    names: (directory: string) =>
+      [...at(directory).values()].filter((entry) => !entry.isDirectory).map((entry) => entry.name),
     connect: async () => ({
-      list: async () => [...drive.values()],
+      entries: async (directory: string) => [...at(directory).values()],
+      list: async (directory: string) =>
+        [...at(directory).values()].filter((entry) => !entry.isDirectory),
       remove: async (path: string) => {
         removed.push(path)
-        if (!options.ignoresDeletes) drive.delete(path.split('/').pop() ?? path)
+        if (options.ignoresDeletes) return
+        const name = path.split('/').pop() ?? path
+        at(path.slice(0, path.lastIndexOf('/')) || '/').delete(name)
       },
       close: async () => {
         closed += 1
@@ -249,7 +280,7 @@ function fakeFtp(files: string[], options: { ignoresDeletes?: boolean } = {}) {
 async function connect(
   client: FakeAtem,
   config: Record<string, unknown> = {},
-  ftp: ReturnType<typeof fakeFtp> = fakeFtp([]),
+  ftp: ReturnType<typeof fakeFtp> = fakeFtp({}),
 ): Promise<DeviceInstance> {
   const plugin = atemPlugin({
     now: () => 1_700_000_000_000,
@@ -655,11 +686,16 @@ describe('telemetry', () => {
 })
 
 describe('what is on the switcher\u2019s drive', () => {
+  // With its disks reported, so the adapter can tell which volume the
+  // switcher is writing to — that is the directory the files are in.
   const recorder = () =>
-    new FakeAtem({ recording: recordingBlock(), streaming: streamingBlock() } as Partial<AtemState>)
+    new FakeAtem({
+      recording: { ...recordingBlock(), disks: disks() },
+      streaming: streamingBlock(),
+    } as Partial<AtemState>)
 
   it('lists files with the size and date only FTP knows', async () => {
-    const ftp = fakeFtp(['MT-9-00.mp4', 'testFile.mp4'])
+    const ftp = fakeFtp({ 'Sunday A': ['MT-9-00.mp4', 'testFile.mp4'] })
     const atem = await connect(recorder(), {}, ftp)
 
     const listed = await atem.invoke('record', 'listMedia', {})
@@ -677,19 +713,42 @@ describe('what is on the switcher\u2019s drive', () => {
     expect(ftp.closed()).toBe(1)
   })
 
+  it('looks on the disk it is writing to, not whichever sorts first', async () => {
+    // Two disks visible to the server. Listing the other one shows
+    // somebody last month's files and calls them this morning's.
+    const ftp = fakeFtp({ Archive: ['old.mp4'], 'Sunday A': ['service.mp4'] })
+    const atem = await connect(recorder(), {}, ftp)
+
+    const listed = await atem.invoke('record', 'listMedia', {})
+    const media = (listed?.raw?.media ?? []) as { name: string }[]
+    expect(media.map((item) => item.name)).toEqual(['service.mp4'])
+  })
+
   it('removes a named file and hangs up after', async () => {
-    const ftp = fakeFtp(['old.mp4', 'keep.mp4'])
+    const ftp = fakeFtp({ 'Sunday A': ['old.mp4', 'keep.mp4'] })
+    const atem = await connect(recorder(), {}, ftp)
+
+    await atem.invoke('record', 'deleteMedia', { name: 'old.mp4' })
+
+    // Inside the volume's directory. A delete issued at the root removes
+    // nothing, and the switcher does not complain about it either.
+    expect(ftp.removed).toEqual(['/Sunday A/old.mp4'])
+    expect(ftp.names('/Sunday A')).toEqual(['keep.mp4'])
+    expect(ftp.closed()).toBe(1)
+  })
+
+  it('works on a switcher that serves the files at the root', async () => {
+    const ftp = fakeFtp({ 'Sunday A': ['old.mp4', 'keep.mp4'] }, { flat: true })
     const atem = await connect(recorder(), {}, ftp)
 
     await atem.invoke('record', 'deleteMedia', { name: 'old.mp4' })
 
     expect(ftp.removed).toEqual(['/old.mp4'])
-    expect([...ftp.drive.keys()]).toEqual(['keep.mp4'])
-    expect(ftp.closed()).toBe(1)
+    expect(ftp.names('/')).toEqual(['keep.mp4'])
   })
 
   it('fails loudly when the switcher keeps the file anyway', async () => {
-    const ftp = fakeFtp(['stuck.mp4'], { ignoresDeletes: true })
+    const ftp = fakeFtp({ 'Sunday A': ['stuck.mp4'] }, { ignoresDeletes: true })
     const atem = await connect(recorder(), {}, ftp)
 
     await expect(atem.invoke('record', 'deleteMedia', { name: 'stuck.mp4' })).rejects.toThrow(
