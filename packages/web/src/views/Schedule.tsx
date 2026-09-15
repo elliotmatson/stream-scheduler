@@ -181,14 +181,15 @@ function CalendarGrid({
                 key={occurrence.id}
                 className={`event ${occurrence.runState === 'running' ? 'live' : ''} ${occurrence.status}`}
                 onClick={() => onSelect(occurrence)}
-                title={`${occurrence.seriesLabel} — ${dateTimeIn(occurrence.scheduledStart, occurrence.timezone)} ${shortZone(occurrence.scheduledStart, occurrence.timezone)}`}
+                title={describeChip(occurrence)}
               >
                 {/* Two lines: at a glance you want the time, and the name
                     would otherwise be cut off in a narrow cell. */}
                 <span className="event-time">
                   {timeIn(occurrence.scheduledStart, occurrence.timezone)}
+                  {occurrence.detached ? <ChangedMark /> : null}
                 </span>
-                <span className="event-name">{occurrence.seriesLabel}</span>
+                <span className="event-name">{occurrence.label}</span>
               </button>
             ))}
           </div>
@@ -214,6 +215,33 @@ const DEFAULT_WINDOW = { from: 6, to: 22 }
  * Every position is computed in the *event's* timezone, like every other
  * date in this app: an evening service abroad belongs at its own evening.
  */
+/**
+ * A dot on a date somebody has changed by hand.
+ *
+ * The trap this exists for: an occurrence edited away from its series
+ * looks identical to one following it, and later changes to the event
+ * leave it behind. A mark is the difference between "the service moved"
+ * and "the service moved except that one and nobody noticed".
+ */
+function ChangedMark(): ReactNode {
+  return (
+    <span className="event-changed" aria-label="changed on its own">
+      •
+    </span>
+  )
+}
+
+/** The chip's tooltip: what it is, when, and whether it is its own. */
+function describeChip(occurrence: Occurrence): string {
+  const when = `${dateTimeIn(occurrence.scheduledStart, occurrence.timezone)} ${shortZone(occurrence.scheduledStart, occurrence.timezone)}`
+  if (!occurrence.detached) return `${occurrence.label} — ${when}`
+  const moved =
+    occurrence.overrides.movedFrom === undefined
+      ? ''
+      : `, moved from ${dateTimeIn(occurrence.overrides.movedFrom, occurrence.timezone)}`
+  return `${occurrence.label} — ${when}. Changed on its own${moved}, so edits to «${occurrence.seriesLabel}» leave it alone.`
+}
+
 function WeekGrid({
   start,
   occurrences,
@@ -318,12 +346,13 @@ function WeekGrid({
                     width: `${(1 / placed.lanes) * 100}%`,
                   }}
                   onClick={() => onSelect(placed.occurrence)}
-                  title={`${placed.occurrence.seriesLabel} — ${dateTimeIn(placed.occurrence.scheduledStart, placed.occurrence.timezone)} ${shortZone(placed.occurrence.scheduledStart, placed.occurrence.timezone)}`}
+                  title={describeChip(placed.occurrence)}
                 >
                   <span className="event-time">
                     {timeIn(placed.occurrence.scheduledStart, placed.occurrence.timezone)}
+                    {placed.occurrence.detached ? <ChangedMark /> : null}
                   </span>
-                  <span className="event-name">{placed.occurrence.seriesLabel}</span>
+                  <span className="event-name">{placed.occurrence.label}</span>
                 </button>
               ))}
             </div>
@@ -445,13 +474,16 @@ function ScheduleList({
                   <div className="muted">{relative(occurrence.scheduledStart)}</div>
                 </td>
                 <td>
-                  {occurrence.seriesLabel}
+                  {occurrence.label}
                   {occurrence.detached ? (
                     <div
                       className="muted"
-                      title="This date was edited on its own, so later changes to the event leave it alone."
+                      title={`This date was edited on its own, so later changes to «${occurrence.seriesLabel}» leave it alone.`}
                     >
                       edited on its own
+                      {occurrence.label === occurrence.seriesLabel
+                        ? ''
+                        : ` · ${occurrence.seriesLabel}`}
                     </div>
                   ) : null}
                 </td>
@@ -471,6 +503,12 @@ function ScheduleList({
                     ) : null}
                     {occurrence.status === 'pending' ? (
                       <>
+                        <button
+                          title="This one date on its own: what it is called, when it runs, and what goes out."
+                          onClick={() => navigate(`/occurrences/${occurrence.id}`)}
+                        >
+                          Open
+                        </button>
                         {/* Makes the broadcast now, so an unlisted link can
                             go out ahead of the day. The outputs still start
                             at their own times. */}

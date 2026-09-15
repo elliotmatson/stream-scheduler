@@ -1842,3 +1842,12 @@ button.link:hover {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
+
+/* A date somebody has changed by hand. Small, because it marks a state
+   rather than a problem — but present, because an edited occurrence is
+   otherwise indistinguishable from one still following its event. */
+.event-changed {
+  margin-left: 4px;
+  color: var(--accent);
+  font-weight: 700;
+}
