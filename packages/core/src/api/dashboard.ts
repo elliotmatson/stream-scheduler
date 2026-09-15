@@ -353,9 +353,11 @@ function factsOf(app: Application, connection: Connection): DeviceFact[] {
     if (signal) add(signal)
 
     // What it is set to record or stream at. Wrong on the day is a whole
-    // service in the wrong codec, and it is invisible until then.
+    // service in the wrong codec, and it is invisible until then. Named
+    // in the value, because "ProRes422HQ" beside a device label reads as a
+    // model number and "standard" reads as nothing at all.
     const quality = state.options?.quality?.current
-    if (quality !== undefined) add({ label: 'Quality', value: quality })
+    if (quality !== undefined) add({ label: 'Quality', value: `${quality} quality` })
   }
 
   // Always something, even for a device that reports nothing at all.

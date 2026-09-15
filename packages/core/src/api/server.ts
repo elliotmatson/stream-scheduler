@@ -1011,11 +1011,11 @@ function registerRoutes(fastify: FastifyInstance, app: Application): void {
     return (
       db
         .prepare(
-          `SELECT r.*, o.scheduled_start, s.label AS series_label
+          `SELECT r.*, o.scheduled_start, s.label AS series_label, s.timezone AS timezone
              FROM run r JOIN occurrence o ON o.id = r.occurrence_id JOIN event_series s ON s.id = o.series_id
             ORDER BY r.created_at DESC LIMIT ?`,
         )
-        .all(limit) as (RunRowShape & { scheduled_start: number; series_label: string })[]
+        .all(limit) as RunJoinShape[]
     ).map(toRunDto)
   })
 
@@ -1023,11 +1023,11 @@ function registerRoutes(fastify: FastifyInstance, app: Application): void {
     const { id } = z.object({ id: z.string() }).parse(request.params)
     const run = db
       .prepare(
-        `SELECT r.*, o.scheduled_start, s.label AS series_label
+        `SELECT r.*, o.scheduled_start, s.label AS series_label, s.timezone AS timezone
            FROM run r JOIN occurrence o ON o.id = r.occurrence_id JOIN event_series s ON s.id = o.series_id
           WHERE r.id = ?`,
       )
-      .get(id) as (RunRowShape & { scheduled_start: number; series_label: string }) | undefined
+      .get(id) as RunJoinShape | undefined
     if (!run) throw new NotFoundError(`No run with id "${id}".`)
 
     // The step timeline is the most valuable debugging surface in the app,
@@ -1070,12 +1070,25 @@ function registerRoutes(fastify: FastifyInstance, app: Application): void {
    */
   fastify.get('/api/runs/:id/telemetry', async (request) => {
     const { id } = z.object({ id: z.string() }).parse(request.params)
-    const { points } = z
-      .object({ points: z.coerce.number().int().min(10).max(2000).default(240) })
+    const { points, windowMs } = z
+      .object({
+        points: z.coerce.number().int().min(10).max(2000).default(240),
+        // The last stretch of the run rather than all of it. A four-hour
+        // service drawn into six hundred pixels hides the ninety seconds
+        // somebody is actually looking for.
+        windowMs: z.coerce.number().int().min(60_000).optional(),
+      })
       .parse(request.query ?? {})
 
+    const all = app.telemetry.read(id)
+    // Measured from the last reading, not from now: a finished run would
+    // otherwise narrow to nothing as the day went on.
+    const latest = all.length === 0 ? 0 : Math.max(...all.map((sample) => sample.at))
+    const cutoff = windowMs === undefined ? undefined : latest - windowMs
+
     const byOutput = new Map<string, ReturnType<typeof app.telemetry.read>>()
-    for (const sample of app.telemetry.read(id)) {
+    for (const sample of all) {
+      if (cutoff !== undefined && sample.at < cutoff) continue
       const key = sample.outputId ?? `${sample.deviceId}/${sample.nodeId}`
       const list = byOutput.get(key) ?? []
       list.push(sample)
@@ -1308,11 +1321,21 @@ function toSeriesDto(row: SeriesRowShape) {
   }
 }
 
-function toRunDto(row: RunRowShape & { scheduled_start: number; series_label: string }) {
+/** A run joined to the occurrence and series it belongs to. */
+type RunJoinShape = RunRowShape & {
+  scheduled_start: number
+  series_label: string
+  timezone: string
+}
+
+function toRunDto(row: RunJoinShape) {
   return {
     id: row.id,
     occurrenceId: row.occurrence_id,
     seriesLabel: row.series_label,
+    // Every time on the run's page is shown in the event's zone, not the
+    // browser's, the same way the schedule is.
+    timezone: row.timezone,
     scheduledStart: row.scheduled_start,
     state: row.state,
     attempt: row.attempt,

@@ -1,5 +1,6 @@
 import { useId, useState } from 'react'
 import type { ReactNode } from 'react'
+import { clockTimeIn } from './format.ts'
 
 /**
  * A small line chart, drawn straight into SVG.
@@ -11,8 +12,15 @@ import type { ReactNode } from 'react'
  * same reason.
  *
  * What it does do: scale to the data, mark gaps where the device stopped
- * answering, and say what a point is when you hover it. What it does not:
- * zoom, pan, or animate.
+ * answering, label both axes, and say what a point is when you hover it.
+ * What it does not: zoom, pan, or animate. Narrowing the window is the
+ * range picker's job, on the server, where the readings are.
+ *
+ * The plot is an SVG stretched to whatever width it is given, so no text
+ * goes inside it — a label in a stretched viewBox is a squashed label.
+ * The gridlines are SVG (a horizontal line survives being stretched); the
+ * numbers beside them and the times underneath are HTML, positioned to
+ * match.
  */
 
 export interface Point {
@@ -21,20 +29,26 @@ export interface Point {
   value: number | null
 }
 
+/** How many gridlines, counting both ends. Four is a scale; eight is a net. */
+const TICKS = 4
+
 export function Chart({
   points,
   label,
   format,
+  /** The event's zone, so the times under the axis are the event's times. */
+  timezone,
   /** Forces the top of the scale, for a reading with a natural ceiling. */
   max,
   /** Below this the line is drawn as trouble. */
   floor,
-  height = 64,
+  height = 96,
   tone = 'accent',
 }: {
   points: Point[]
   label: string
   format: (value: number) => string
+  timezone: string
   max?: number
   floor?: number
   height?: number
@@ -78,6 +92,13 @@ export function Chart({
   const ceiling = max ?? highest + pad
   const range = Math.max(ceiling - bottom, 1)
 
+  // Evenly spaced, top to bottom, so the labels can be a flex column with
+  // space-between rather than each one positioned by hand.
+  const ticks = Array.from(
+    { length: TICKS },
+    (_, i) => ceiling - (i * (ceiling - bottom)) / (TICKS - 1),
+  )
+
   const x = (at: number): number => ((at - from) / span) * width
   const y = (value: number): number =>
     height - ((Math.min(Math.max(value, bottom), ceiling) - bottom) / range) * height
@@ -109,73 +130,99 @@ export function Chart({
         {label}
         <span className="chart-now">{format(hover?.point.value ?? latest.value)}</span>
       </figcaption>
-      <svg
-        viewBox={`0 0 ${width} ${height}`}
-        preserveAspectRatio="none"
-        role="img"
-        aria-label={`${label}: between ${format(lowest)} and ${format(highest)}`}
-        onMouseLeave={() => setHover(null)}
-        onMouseMove={(event) => {
-          const box = event.currentTarget.getBoundingClientRect()
-          const at = from + ((event.clientX - box.left) / box.width) * span
-          const nearest = points.reduce((best, point) =>
-            Math.abs(point.at - at) < Math.abs(best.at - at) ? point : best,
-          )
-          setHover({ x: x(nearest.at), point: nearest })
-        }}
-      >
-        <defs>
-          <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stopColor="currentColor" stopOpacity="0.22" />
-            <stop offset="100%" stopColor="currentColor" stopOpacity="0" />
-          </linearGradient>
-        </defs>
 
-        {floor !== undefined && floor > bottom && floor < ceiling ? (
-          <line
-            className="chart-floor"
-            x1="0"
-            x2={width}
-            y1={y(floor)}
-            y2={y(floor)}
-            vectorEffect="non-scaling-stroke"
-          />
-        ) : null}
+      <div className="chart-plot">
+        <div className="chart-yaxis" aria-hidden>
+          {ticks.map((value) => (
+            <span key={value}>{format(value)}</span>
+          ))}
+        </div>
 
-        {runs.map((run) => (
-          <g key={run[0]!.at}>
-            {run.length > 1 ? (
-              <path
-                className="chart-fill"
-                fill={`url(#${gradientId})`}
-                d={`${path(run)} L${x(run[run.length - 1]!.at).toFixed(1)},${height} L${x(run[0]!.at).toFixed(1)},${height} Z`}
-              />
-            ) : null}
-            <path className="chart-line" d={path(run)} vectorEffect="non-scaling-stroke" />
-            {/* A single reading has no line to draw, so it gets a dot. */}
-            {run.length === 1 ? (
-              <circle className="chart-dot" cx={x(run[0]!.at)} cy={y(run[0]!.value)} r="2.5" />
-            ) : null}
-          </g>
-        ))}
+        <svg
+          viewBox={`0 0 ${width} ${height}`}
+          preserveAspectRatio="none"
+          role="img"
+          aria-label={`${label}: between ${format(lowest)} and ${format(highest)}`}
+          onMouseLeave={() => setHover(null)}
+          onMouseMove={(event) => {
+            const box = event.currentTarget.getBoundingClientRect()
+            const at = from + ((event.clientX - box.left) / box.width) * span
+            const nearest = points.reduce((best, point) =>
+              Math.abs(point.at - at) < Math.abs(best.at - at) ? point : best,
+            )
+            setHover({ x: x(nearest.at), point: nearest })
+          }}
+        >
+          <defs>
+            <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor="currentColor" stopOpacity="0.22" />
+              <stop offset="100%" stopColor="currentColor" stopOpacity="0" />
+            </linearGradient>
+          </defs>
 
-        {hover && hover.point.value !== null ? (
-          <>
+          {/* The scale, behind the line. */}
+          {ticks.map((value) => (
             <line
-              className="chart-cursor"
-              x1={hover.x}
-              x2={hover.x}
-              y1="0"
-              y2={height}
+              key={value}
+              className="chart-grid"
+              x1="0"
+              x2={width}
+              y1={y(value)}
+              y2={y(value)}
               vectorEffect="non-scaling-stroke"
             />
-            <circle className="chart-dot" cx={hover.x} cy={y(hover.point.value)} r="3" />
-          </>
-        ) : null}
-      </svg>
-      <div className="chart-scale">
-        <span>{format(lowest)}</span>
-        <span>{format(highest)}</span>
+          ))}
+
+          {floor !== undefined && floor > bottom && floor < ceiling ? (
+            <line
+              className="chart-floor"
+              x1="0"
+              x2={width}
+              y1={y(floor)}
+              y2={y(floor)}
+              vectorEffect="non-scaling-stroke"
+            />
+          ) : null}
+
+          {runs.map((run) => (
+            <g key={run[0]!.at}>
+              {run.length > 1 ? (
+                <path
+                  className="chart-fill"
+                  fill={`url(#${gradientId})`}
+                  d={`${path(run)} L${x(run[run.length - 1]!.at).toFixed(1)},${height} L${x(run[0]!.at).toFixed(1)},${height} Z`}
+                />
+              ) : null}
+              <path className="chart-line" d={path(run)} vectorEffect="non-scaling-stroke" />
+              {/* A single reading has no line to draw, so it gets a dot. */}
+              {run.length === 1 ? (
+                <circle className="chart-dot" cx={x(run[0]!.at)} cy={y(run[0]!.value)} r="2.5" />
+              ) : null}
+            </g>
+          ))}
+
+          {hover && hover.point.value !== null ? (
+            <>
+              <line
+                className="chart-cursor"
+                x1={hover.x}
+                x2={hover.x}
+                y1="0"
+                y2={height}
+                vectorEffect="non-scaling-stroke"
+              />
+              <circle className="chart-dot" cx={hover.x} cy={y(hover.point.value)} r="3" />
+            </>
+          ) : null}
+        </svg>
+      </div>
+
+      {/* When, in the event's zone. Three is as many as fits at the widths
+          this is drawn at, and the ends are the two that matter. */}
+      <div className="chart-xaxis" aria-hidden>
+        <span>{clockTimeIn(from, timezone)}</span>
+        <span>{span > 60_000 ? clockTimeIn(from + span / 2, timezone) : ''}</span>
+        <span>{clockTimeIn(to, timezone)}</span>
       </div>
     </figure>
   )

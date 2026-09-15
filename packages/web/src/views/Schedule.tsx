@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react'
 import type { ReactNode } from 'react'
 import { api, useLiveRefresh, useResource, type Occurrence } from '../api.ts'
-import { Card, Empty, ErrorBanner, StatusPill, toneFor } from '../components.tsx'
+import { Card, Empty, ErrorBanner, PageHead, StatusPill, toneFor } from '../components.tsx'
 import {
   dateTimeIn,
   dayLabel,
@@ -56,49 +56,47 @@ export function Schedule({ navigate }: { navigate: (path: string) => void }): Re
 
   return (
     <>
-      <div className="page-head">
-        <div>
-          <h1>Schedule</h1>
-          <p className="muted" style={{ margin: '4px 0 0' }}>
-            Every date each event falls on, and what became of it.
-          </p>
-        </div>
-        <div className="row">
-          <div className="toggle">
-            <button aria-pressed={view === 'month'} onClick={() => setView('month')}>
-              Month
-            </button>
-            <button aria-pressed={view === 'week'} onClick={() => setView('week')}>
-              Week
-            </button>
-            <button aria-pressed={view === 'list'} onClick={() => setView('list')}>
-              List
-            </button>
-          </div>
-          {view === 'list' ? null : (
-            <div className="row">
-              <button
-                onClick={() => shift(-1)}
-                aria-label={view === 'week' ? 'Previous week' : 'Previous month'}
-              >
-                ←
+      <PageHead
+        title="Schedule"
+        subtitle="Every date each event falls on, and what became of it."
+        actions={
+          <>
+            <div className="toggle">
+              <button aria-pressed={view === 'month'} onClick={() => setView('month')}>
+                Month
               </button>
-              <strong style={{ minWidth: 150, textAlign: 'center' }}>
-                {view === 'week'
-                  ? weekLabel(weekStart)
-                  : monthLabel(anchor.getFullYear(), anchor.getMonth())}
-              </strong>
-              <button
-                onClick={() => shift(1)}
-                aria-label={view === 'week' ? 'Next week' : 'Next month'}
-              >
-                →
+              <button aria-pressed={view === 'week'} onClick={() => setView('week')}>
+                Week
               </button>
-              <button onClick={() => setAnchor(new Date())}>Today</button>
+              <button aria-pressed={view === 'list'} onClick={() => setView('list')}>
+                List
+              </button>
             </div>
-          )}
-        </div>
-      </div>
+            {view === 'list' ? null : (
+              <div className="row">
+                <button
+                  onClick={() => shift(-1)}
+                  aria-label={view === 'week' ? 'Previous week' : 'Previous month'}
+                >
+                  ←
+                </button>
+                <strong style={{ minWidth: 150, textAlign: 'center' }}>
+                  {view === 'week'
+                    ? weekLabel(weekStart)
+                    : monthLabel(anchor.getFullYear(), anchor.getMonth())}
+                </strong>
+                <button
+                  onClick={() => shift(1)}
+                  aria-label={view === 'week' ? 'Next week' : 'Next month'}
+                >
+                  →
+                </button>
+                <button onClick={() => setAnchor(new Date())}>Today</button>
+              </div>
+            )}
+          </>
+        }
+      />
 
       <ErrorBanner error={error} />
 

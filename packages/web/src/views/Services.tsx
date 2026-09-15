@@ -16,6 +16,7 @@ import {
   Empty,
   ErrorBanner,
   Field,
+  PageHead,
   StatusPill,
 } from '../components.tsx'
 
@@ -56,15 +57,10 @@ export function Services(): ReactNode {
 
   return (
     <>
-      <div className="page-head">
-        <div>
-          <h1>Services</h1>
-          <p className="muted" style={{ margin: '4px 0 0' }}>
-            Where streams go: the accounts that make their own broadcasts, and keys for everything
-            else.
-          </p>
-        </div>
-      </div>
+      <PageHead
+        title="Services"
+        subtitle="Where streams go: the accounts that make their own broadcasts, and keys for everything else."
+      />
       <ErrorBanner
         error={
           error ??

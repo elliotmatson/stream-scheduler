@@ -8,9 +8,19 @@ import {
   type RunStep,
   type TelemetrySample,
 } from '../api.ts'
-import { Card, CopyButton, Empty, ErrorBanner, Fact, StatusPill } from '../components.tsx'
+import {
+  Card,
+  CopyButton,
+  Empty,
+  ErrorBanner,
+  Fact,
+  IconButton,
+  PageHead,
+  StatusPill,
+} from '../components.tsx'
 import { Chart, type Point } from '../chart.tsx'
-import { duration, relative } from '../format.ts'
+import { clockTimeIn, dateTimeIn, duration, relative } from '../format.ts'
+import { IconExternal } from '../icons.tsx'
 
 /**
  * The run timeline.
@@ -40,9 +50,11 @@ export function RunDetail({
   // On its own clock, and slower: the readings themselves are only taken
   // every fifteen seconds, so re-fetching the whole history on every pulse
   // would be the same picture at four times the bandwidth.
+  const [range, setRange] = useState<RangeKey>('all')
+  const [chartsOpen, setChartsOpen] = useState(true)
   const { data: telemetry, reload: reloadTelemetry } = useResource(
-    () => api.runTelemetry(runId),
-    [runId],
+    () => api.runTelemetry(runId, RANGES[range].windowMs),
+    [runId, range],
   )
   useEffect(() => {
     if (finished) return
@@ -70,33 +82,31 @@ export function RunDetail({
 
   return (
     <>
-      <div className="page-head">
-        <div>
-          <h1>{run.seriesLabel}</h1>
-          <p
-            className="muted"
-            style={{ margin: '4px 0 0' }}
-            title="A run is retried from the start if it fails early enough to be worth retrying."
-          >
+      <PageHead
+        title={run.seriesLabel}
+        back={{ to: '/', label: 'Back to Now', onNavigate: navigate }}
+        subtitle={
+          <span title="A run is retried from the start if it fails early enough to be worth retrying.">
             Attempt {run.attempt} · started {run.startedAt ? relative(run.startedAt) : 'not yet'}
-          </p>
-        </div>
-        <div className="row">
-          <StatusPill status={run.state} />
-          {/* The scheduler must never be the only way to stop a stream. */}
-          {stoppable ? (
-            <button
-              className="danger solid"
-              disabled={busy}
-              title="Ends every stream and recording in this run, now."
-              onClick={() => void cancel()}
-            >
-              Stop now
-            </button>
-          ) : null}
-          <button onClick={() => navigate('/')}>Back to Now</button>
-        </div>
-      </div>
+          </span>
+        }
+        actions={
+          <>
+            <StatusPill status={run.state} />
+            {/* The scheduler must never be the only way to stop a stream. */}
+            {stoppable ? (
+              <button
+                className="danger solid"
+                disabled={busy}
+                title="Ends every stream and recording in this run, now."
+                onClick={() => void cancel()}
+              >
+                Stop now
+              </button>
+            ) : null}
+          </>
+        }
+      />
 
       <ErrorBanner error={actionError} />
 
@@ -113,6 +123,8 @@ export function RunDetail({
 
         {/* What this page is for once the event is on: every number the
             devices report, and the shape each of them made over the run. */}
+        <ChartControls range={range} onRange={setRange} open={chartsOpen} onOpen={setChartsOpen} />
+
         {(run.outputs ?? []).map((output) => (
           <OutputDetail
             key={output.id}
@@ -121,36 +133,78 @@ export function RunDetail({
               telemetry?.outputs.find((entry) => entry.outputId === output.id)?.samples ?? []
             }
             navigate={navigate}
+            timezone={run.timezone}
+            showCharts={chartsOpen}
           />
         ))}
-
-        {/* The reason somebody opens this page before the day: an unlisted
-            broadcast's link, ready to send round, as soon as it exists. */}
-        {(run.links ?? []).length > 0 ? (
-          <Card title="Where to watch">
-            <div className="stack" style={{ gap: 8 }}>
-              {(run.links ?? []).map((link) => (
-                <div key={link.url} className="row" style={{ gap: 10, alignItems: 'baseline' }}>
-                  <span style={{ minWidth: 130 }}>{link.label}</span>
-                  <a href={link.url} target="_blank" rel="noreferrer">
-                    {link.url}
-                  </a>
-                  <CopyButton value={link.url} />
-                </div>
-              ))}
-            </div>
-          </Card>
-        ) : null}
 
         <Card title="Steps">
           {(run.steps ?? []).length === 0 ? (
             <p className="muted">Nothing has been attempted yet.</p>
           ) : (
-            (run.steps ?? []).map((step) => <Step key={step.seq} step={step} />)
+            (run.steps ?? []).map((step) => (
+              <Step key={step.seq} step={step} timezone={run.timezone} />
+            ))
           )}
         </Card>
       </div>
     </>
+  )
+}
+
+/**
+ * How much of the run the charts show.
+ *
+ * A four-hour service drawn into six hundred pixels is a smear: the ninety
+ * seconds somebody came here to look at are four pixels wide. Narrowing
+ * the window is the difference between a chart and a decoration. The
+ * window is applied on the server, so a long run does not ship four hours
+ * of readings to draw fifteen minutes of them.
+ */
+type RangeKey = 'all' | '15m' | '1h' | '3h'
+
+const RANGES: Record<RangeKey, { label: string; windowMs?: number }> = {
+  all: { label: 'Whole run' },
+  '15m': { label: 'Last 15 min', windowMs: 15 * 60_000 },
+  '1h': { label: 'Last hour', windowMs: 60 * 60_000 },
+  '3h': { label: 'Last 3 hours', windowMs: 3 * 60 * 60_000 },
+}
+
+const RANGE_KEYS = Object.keys(RANGES) as RangeKey[]
+
+function ChartControls({
+  range,
+  onRange,
+  open,
+  onOpen,
+}: {
+  range: RangeKey
+  onRange: (next: RangeKey) => void
+  open: boolean
+  onOpen: (next: boolean) => void
+}): ReactNode {
+  return (
+    <div className="chart-controls">
+      <h2 title="What the devices reported while this run was on air.">Readings</h2>
+      <div className="toggle" role="group" aria-label="How much of the run to chart">
+        {RANGE_KEYS.map((key) => (
+          <button
+            key={key}
+            aria-pressed={range === key}
+            disabled={!open}
+            onClick={() => onRange(key)}
+          >
+            {RANGES[key].label}
+          </button>
+        ))}
+      </div>
+      <button
+        onClick={() => onOpen(!open)}
+        title={open ? 'Charts off, facts only.' : 'Draw the charts again.'}
+      >
+        {open ? 'Hide charts' : 'Show charts'}
+      </button>
+    </div>
   )
 }
 
@@ -165,10 +219,14 @@ function OutputDetail({
   output,
   samples,
   navigate,
+  timezone,
+  showCharts,
 }: {
   output: DashboardOutput
   samples: TelemetrySample[]
   navigate: (path: string) => void
+  timezone: string
+  showCharts: boolean
 }): ReactNode {
   // The newest reading wins, and the sampler's is newer than the last one
   // the device pushed of its own accord. Without this the figure above a
@@ -226,13 +284,30 @@ function OutputDetail({
         </div>
         <div className="row">
           <StatusPill status={output.state === 'live' ? 'running' : output.state} />
+          {/* The reason somebody opens this page before the day: an unlisted
+              broadcast's link, ready to send round, as soon as it exists.
+              Beside the output that produced it rather than in a card of its
+              own further down, which listed the same links a second time. */}
           {output.watchUrl ? (
-            <a href={output.watchUrl} target="_blank" rel="noreferrer" title={output.watchUrl}>
-              Watch
-            </a>
+            <>
+              <IconButton label="Watch" href={output.watchUrl} icon={<IconExternal />} />
+              <CopyButton value={output.watchUrl} label="Copy the watch link" icon />
+            </>
           ) : null}
         </div>
       </div>
+
+      {output.watchUrl ? (
+        <a
+          className="muted watch-url"
+          href={output.watchUrl}
+          target="_blank"
+          rel="noreferrer"
+          title="Where this broadcast can be watched."
+        >
+          {output.watchUrl}
+        </a>
+      ) : null}
 
       {now === undefined ? (
         <p className="muted" style={{ margin: 0 }}>
@@ -288,11 +363,12 @@ function OutputDetail({
         </div>
       )}
 
-      {samples.length > 1 ? (
+      {samples.length > 1 && showCharts ? (
         <div className="charts">
           {has((sample) => sample.bitrateBps) ? (
             <Chart
               label="Bitrate"
+              timezone={timezone}
               points={series((sample) => sample.bitrateBps)}
               format={(value) => `${Math.round(value / 1000)} kbps`}
             />
@@ -300,6 +376,7 @@ function OutputDetail({
           {has((sample) => sample.remainingMs) ? (
             <Chart
               label="Media left"
+              timezone={timezone}
               points={series((sample) => sample.remainingMs)}
               format={(value) => duration(value)}
               floor={3_600_000}
@@ -309,6 +386,7 @@ function OutputDetail({
           {has((sample) => sample.cachePercent) ? (
             <Chart
               label="Cache"
+              timezone={timezone}
               points={series((sample) => sample.cachePercent)}
               format={(value) => `${Math.round(value)}%`}
               max={100}
@@ -319,6 +397,7 @@ function OutputDetail({
           {has((sample) => sample.cacheBufferedMs) ? (
             <Chart
               label="Held in cache"
+              timezone={timezone}
               points={series((sample) => sample.cacheBufferedMs)}
               format={(value) => duration(value)}
               tone="warn"
@@ -335,7 +414,7 @@ function OutputDetail({
   )
 }
 
-function Step({ step }: { step: RunStep }): ReactNode {
+function Step({ step, timezone }: { step: RunStep; timezone: string }): ReactNode {
   const [open, setOpen] = useState(false)
   const hasDetail = step.request !== null || step.response !== null || step.error !== null
 
@@ -373,12 +452,22 @@ function Step({ step }: { step: RunStep }): ReactNode {
           </>
         ) : null}
       </div>
-      <div
-        className="muted"
-        style={{ whiteSpace: 'nowrap' }}
-        title="How long the device or service took to answer."
-      >
-        {step.durationMs === null ? '—' : `${step.durationMs} ms`}
+      {/* When it happened, then how long it took. A step list is read when
+          something went wrong, and "it took 40 ms" is no use without the
+          clock time to line it up against what somebody saw in the room. */}
+      <div className="step-when muted">
+        <div
+          title={
+            step.startedAt === null
+              ? 'This step has not started.'
+              : `Started ${dateTimeIn(step.startedAt, timezone)}.`
+          }
+        >
+          {step.startedAt === null ? '—' : clockTimeIn(step.startedAt, timezone)}
+        </div>
+        <div title="How long the device or service took to answer.">
+          {step.durationMs === null ? '' : `${step.durationMs} ms`}
+        </div>
       </div>
     </div>
   )

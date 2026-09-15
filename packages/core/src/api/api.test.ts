@@ -366,7 +366,7 @@ describe('the status screen', () => {
     )
     expect(facts['Media left']).toBe('4h left')
     expect(facts['Input']).toBe('1080p50 on SDI')
-    expect(facts['Quality']).toBe('standard')
+    expect(facts['Quality']).toBe('standard quality')
     // Always at least the type, so no device is ever a bare name.
     expect(facts['Type']).toBe('Mock device')
   })
