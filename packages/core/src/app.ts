@@ -29,6 +29,7 @@ import { Tags } from './tags/index.js'
 import { eventMidRunOn } from './runs/retention.js'
 import { Sweeper } from './runs/sweep.js'
 import { runFailedNotification } from './notify/run-events.js'
+import { applyPendingRestore, type RestoreApplied } from './backup/index.js'
 
 /**
  * How long a tick may run before the next one stops waiting for it.
@@ -102,6 +103,14 @@ export class Application {
   readonly auth: Auth
   readonly logger: Logger
   readonly clock: Clock
+  /**
+   * Set when this start began by putting a backup in place.
+   *
+   * Reported on the settings screen rather than only logged: somebody who
+   * has just restored wants to see that it happened, what was in it, and
+   * where the database it replaced went.
+   */
+  readonly restored: RestoreApplied | undefined
 
   /**
    * Where a browser last reached this app.
@@ -146,6 +155,7 @@ export class Application {
     tickIntervalMs: number
     horizonMs: number
     links: { origin: string; configured: boolean }
+    restored?: RestoreApplied
   }) {
     this.paths = init.paths
     this.db = init.db
@@ -190,6 +200,7 @@ export class Application {
     this.tickIntervalMs = init.tickIntervalMs
     this.horizonMs = init.horizonMs
     this.links = init.links
+    this.restored = init.restored
   }
 
   get publicOrigin(): string {
@@ -235,6 +246,19 @@ export class Application {
     const clock = options.clock ?? systemClock
     const logger =
       options.logger ?? createConsoleLogger({ level: options.logLevel ?? 'info', scrubber })
+
+    // Before anything opens the database or resolves a key. A restore that
+    // swapped the file under a live handle would be a corruption, and the
+    // salt an environment-derived key needs has to be in place before that
+    // key is derived — both of which mean here, and only here.
+    const restored = applyPendingRestore(paths, clock.now())
+    if (restored) {
+      logger.warn('a backup was restored on startup', {
+        takenAt: restored.manifest.takenAt,
+        counts: restored.manifest.counts,
+        previousDatabase: restored.previous,
+      })
+    }
 
     // Refuses to start rather than keeping stream keys and OAuth tokens in
     // plaintext; the error names the fix for each platform.
@@ -341,6 +365,7 @@ export class Application {
     return new Application({
       paths,
       db,
+      ...(restored === undefined ? {} : { restored }),
       vault,
       registry,
       destinations,

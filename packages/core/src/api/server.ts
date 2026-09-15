@@ -44,6 +44,7 @@ import { assertUnreferenced, ConflictError, NotFoundError } from './errors.js'
 import { buildDashboard, outputsOf } from './dashboard.js'
 import { registerAuthGate, registerAuthRoutes } from './auth-routes.js'
 import { registerNotifyRoutes } from './notify-routes.js'
+import { registerBackupRoutes } from './backup-routes.js'
 import { registerOAuthRoutes } from './oauth-routes.js'
 import { originOf } from './origin.js'
 
@@ -126,6 +127,7 @@ export async function createServer(options: ServerOptions): Promise<FastifyInsta
   registerRoutes(fastify, app)
   registerOAuthRoutes(fastify, app)
   registerNotifyRoutes(fastify, app)
+  registerBackupRoutes(fastify, app)
   registerWebsocket(fastify, app)
 
   if (options.webRoot && existsSync(options.webRoot)) {
