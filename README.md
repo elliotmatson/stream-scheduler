@@ -54,18 +54,29 @@ records, stops and tidies up — without anyone touching it.
   real HTTP. One adapter for both, because current firmware serves the same
   API on each — check a Web Presenter answers on `/control/api/v1/`, since
   older firmware speaks a different protocol that is not implemented
+- **OBS Studio** adapter over obs-websocket v5, which pushes its own state
+  changes rather than being polled
+- **ProPresenter** (7.9+) adapter. One capture, not two outputs: it streams
+  or records, and "keep a local copy while streaming" is how you get both
+- **vMix** adapter over the Web Controller. Five stream destinations that
+  start and stop independently, plus the recorder
+- **Magewell Ultra Encode** adapter over `usapi` — the one device here that
+  lists and deletes its own recordings, so retention can manage it
 - **YouTube**: bring-your-own OAuth, automated broadcast creation with
   templated title and description, automatic playlist insertion, a reusable
   ingestion stream so the encoder key never changes, and a quota ledger that
   keeps a reserve for the calls that make a stream happen
-- Alerts to **Google Chat**, Slack, a generic webhook or email when a run
-  fails, plus a pre-flight check the evening before that catches an expired
-  YouTube token or an unplugged encoder while there is still time
+- Alerts to **Google Chat**, Slack, a generic webhook or email, grouped by
+  how bad a thing is: problems are sent by default and "it worked" messages
+  only if you ask. Plus a pre-flight check the evening before that catches an
+  expired YouTube token or an unplugged encoder while there is still time
 - Calendar and list views, a run timeline, and a device health page
-- Setup entirely in the browser: adding a device (with network discovery
-  where a plugin supports it), connecting a YouTube account, and writing a
-  recurring event and its outputs against a live preview of what the rule and
-  the name templates would actually produce
+- Setup entirely in the browser: adding a device, connecting a YouTube
+  account, and writing a recurring event and its outputs against a live
+  preview of what the rule and the name templates would actually produce
+- Backup and restore: one consistent file taken without stopping the app,
+  daily on a schedule into a volume of its own, and a restore that tells you
+  what is in a file and whether your key can open it before anything changes
 - Runs headless, in Docker, or as an Electron tray app from one codebase
 
 **Not built yet**
@@ -73,7 +84,9 @@ records, stops and tidies up — without anyone touching it.
 - Fanning one encoder out to several services _at once_, which needs a relay in
   front of it. Several services one after another across a morning does work
 - Week and day calendar views, and dragging an occurrence to reschedule it
-- Backup and restore, and signed installers
+- Signed installers
+- Finding a device on the network. The plugin SDK has a slot for it and no
+  adapter fills it, so every device is added by address
 
 None of the adapters has met real hardware yet, which is the biggest open
 question about all of this.
