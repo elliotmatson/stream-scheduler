@@ -17,6 +17,7 @@ import {
   SlotStatus,
   TransportStatus,
 } from 'hyperdeck-connection'
+import { connectFtp as realConnectFtp, type FtpConnect } from './ftp.js'
 
 /**
  * Blackmagic HyperDeck Studio / Extreme / Shuttle.
@@ -108,6 +109,8 @@ class HyperdeckDevice {
     private readonly host: string,
     private readonly port: number,
     private readonly now: () => number,
+    /** Injected in tests, which have no FTP server to talk to. */
+    private readonly connectFtp: FtpConnect = realConnectFtp,
   ) {}
 
   async connect(): Promise<void> {
@@ -235,7 +238,14 @@ class HyperdeckDevice {
             maxLinks: 1,
           },
         ],
-        supports: ['startRecording', 'stopRecording', 'selectSlot', 'formatStorage', 'listMedia'],
+        supports: [
+          'startRecording',
+          'stopRecording',
+          'selectSlot',
+          'formatStorage',
+          'listMedia',
+          'deleteMedia',
+        ],
       },
     ]
   }
@@ -285,6 +295,42 @@ class HyperdeckDevice {
           ...(clip.duration === undefined ? {} : { durationMs: clip.duration }),
           ...(clip.codec === undefined ? {} : { codec: clip.codec }),
         }))
+      },
+      /**
+       * Removes one clip, over FTP.
+       *
+       * Not over the control port, because the protocol has no delete verb
+       * at all — the card is served over FTP and that is the only way in.
+       * A second connection over a second protocol for one file is
+       * wasteful, and it is still the right shape: a sweep removing four
+       * files does four of these, and four short sessions are easier to
+       * reason about than one held open across a decision.
+       *
+       * Checked rather than assumed. FTP servers vary in what they say
+       * about a delete that did not happen, and a sweep that reports
+       * success on a file still sitting on the card is worse than one that
+       * fails loudly.
+       */
+      deleteMedia: async ({ name, slot }) => {
+        const directory = slot === undefined ? '/' : `/${slot}`
+        const session = await this.connectFtp({ host: this.host })
+        try {
+          await session.remove(`${directory}/${name}`.replace('//', '/'))
+
+          const left = await session.list(directory)
+          if (left.includes(name)) {
+            throw new DeviceError(
+              'delete-failed',
+              `The deck still has "${name}" after being told to remove it.`,
+              {
+                remediation:
+                  'The card may be write-protected, or the deck may be using the file. Check it is not recording.',
+              },
+            )
+          }
+        } finally {
+          await session.close().catch(() => {})
+        }
       },
       /**
        * Erases a card. The deck's own protocol is a handshake — `format
@@ -684,6 +730,8 @@ function describe(error: unknown): string {
 
 export interface HyperdeckPluginOptions {
   now?: () => number
+  /** Injected in tests, which have no FTP server to talk to. */
+  connectFtp?: FtpConnect
 }
 
 export function hyperdeckPlugin(options: HyperdeckPluginOptions = {}): PluginDefinition {
@@ -698,7 +746,7 @@ export function hyperdeckPlugin(options: HyperdeckPluginOptions = {}): PluginDef
       if (!host) throw new DeviceError('no-host', 'This HyperDeck has no address configured.')
       const port = typeof ctx.config.port === 'number' ? ctx.config.port : DEFAULT_PORT
 
-      const device = new HyperdeckDevice(ctx, host, port, now)
+      const device = new HyperdeckDevice(ctx, host, port, now, options.connectFtp)
       await device.connect()
 
       return defineDevice({

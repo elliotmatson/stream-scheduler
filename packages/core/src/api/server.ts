@@ -26,7 +26,8 @@ import {
 import { bumpSeriesVersion, materializeSeries } from '../schedule/materialize.js'
 import { isValidTimeZone, zonedWallTimeToUtc } from '../schedule/zoned.js'
 import { ConfigInvalidError, UnknownPluginError } from '../plugins/registry.js'
-import { reportAll } from '../runs/retention.js'
+import { eventMidRunOn as midRunOn, reportAll } from '../runs/retention.js'
+import { SweepRefused } from '../runs/sweep.js'
 import { renderTemplate, TemplateError } from '../template/render.js'
 import { sanitizeFilename } from '../template/index.js'
 import {
@@ -319,27 +320,8 @@ function registerRoutes(fastify: FastifyInstance, app: Application): void {
     return { state: await app.connections.invoke(id, nodeId, 'readState') }
   })
 
-  /**
-   * The event, if any, that is mid-run on this device.
-   *
-   * Two things on this screen are refused while one is: erasing a card and
-   * re-pointing an encoder. Both would be undone or, worse, not undone, by
-   * a run that is part-way through its window.
-   */
-  const eventMidRunOn = (deviceId: string): string | undefined =>
-    (
-      db
-        .prepare(
-          `SELECT s.label AS label
-             FROM run r
-             JOIN occurrence o ON o.id = r.occurrence_id
-             JOIN event_series s ON s.id = o.series_id
-             JOIN event_output eo ON eo.series_id = s.id AND eo.enabled = 1
-            WHERE r.state NOT IN ('completed', 'failed', 'cancelled') AND eo.device_id = ?
-            LIMIT 1`,
-        )
-        .get(deviceId) as { label: string } | undefined
-    )?.label
+  /** Shared with the sweeper, which refuses for the same reason. */
+  const eventMidRunOn = (deviceId: string): string | undefined => midRunOn(db, deviceId)
 
   /**
    * Point an encoder at a stored stream target by hand.
@@ -1146,6 +1128,49 @@ function registerRoutes(fastify: FastifyInstance, app: Application): void {
       },
     })
     return { outputs: reports }
+  })
+
+  /**
+   * Prepares a sweep: the exact list, and a token to run it with.
+   *
+   * Two steps, like formatting a card, and for a stronger reason: the
+   * confirm removes precisely the files this call named. A sweep that
+   * re-derived "what is old" at the moment it deleted could remove
+   * something the operator never saw, because a recording finished in the
+   * seconds between looking and pressing.
+   */
+  fastify.post('/api/retention/sweep', async (request, reply) => {
+    const body = z
+      .object({ outputId: z.string().min(1), confirm: z.string().min(1).optional() })
+      .parse(request.body ?? {})
+
+    try {
+      if (body.confirm === undefined) {
+        const plan = await app.sweeper.prepare(body.outputId)
+        return {
+          swept: false,
+          confirm: plan.token,
+          outputLabel: plan.outputLabel,
+          seriesLabel: plan.seriesLabel,
+          files: plan.files.map((file) => ({ filename: file.filename, slot: file.slot })),
+        }
+      }
+
+      const outcome = await app.sweeper.confirm(body.confirm)
+      // Loud in the log whatever the UI does with it: this is the one
+      // operation in the app that destroys somebody's footage.
+      app.logger.warn('an operator swept recordings', {
+        outputId: body.outputId,
+        removed: outcome.removed.map((file) => file.filename),
+        failed: outcome.failed.map((file) => file.filename),
+      })
+      return { swept: true, ...outcome }
+    } catch (error) {
+      if (error instanceof SweepRefused) {
+        return reply.code(409).send({ error: { code: 'sweep-refused', message: error.message } })
+      }
+      throw error
+    }
   })
 
   fastify.post('/api/runs/:id/cancel', async (request) => {

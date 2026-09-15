@@ -183,8 +183,45 @@ function context(): DeviceContext {
   }
 }
 
-async function connect(config: Record<string, unknown> = {}): Promise<DeviceInstance> {
-  const plugin = hyperdeckPlugin({ now: () => 1_700_000_000_000 })
+/**
+ * A card, and what an FTP client sees of it.
+ *
+ * The deck serves its media over FTP because its control protocol has no
+ * delete verb, so a sweep is a second protocol this test has no server
+ * for. The seam is injected instead, which is also how the
+ * did-it-actually-go check gets exercised: a server that says "fine" and
+ * keeps the file is the failure worth having a test for.
+ */
+function fakeFtp(files: string[], options: { ignoresDeletes?: boolean } = {}) {
+  const card = new Set(files)
+  const removed: string[] = []
+  let closed = 0
+
+  return {
+    card,
+    removed,
+    closed: () => closed,
+    connect: async () => ({
+      remove: async (path: string) => {
+        removed.push(path)
+        if (!options.ignoresDeletes) card.delete(path.split('/').pop() ?? path)
+      },
+      list: async () => [...card],
+      close: async () => {
+        closed += 1
+      },
+    }),
+  }
+}
+
+async function connect(
+  config: Record<string, unknown> = {},
+  ftp?: ReturnType<typeof fakeFtp>,
+): Promise<DeviceInstance> {
+  const plugin = hyperdeckPlugin({
+    now: () => 1_700_000_000_000,
+    ...(ftp === undefined ? {} : { connectFtp: ftp.connect }),
+  })
   const created = await plugin.createDevice({
     ...context(),
     config: { ...context().config, ...config },
@@ -247,6 +284,7 @@ describe('connecting', () => {
       'selectSlot',
       'formatStorage',
       'listMedia',
+      'deleteMedia',
     ])
   })
 })
@@ -509,5 +547,48 @@ describe('what is on the card', () => {
     }
     await hyperdeck.invoke('record', 'listMedia', { slot: 2 })
     expect(asked).toEqual(['2'])
+  })
+})
+
+describe('taking something off the card', () => {
+  it('removes the named file over FTP, and hangs up after', async () => {
+    const ftp = fakeFtp(['old.mov', 'keep.mov'])
+    const hyperdeck = await connect({}, ftp)
+
+    await hyperdeck.invoke('record', 'deleteMedia', { name: 'old.mov', slot: 1 })
+
+    expect(ftp.removed).toEqual(['/1/old.mov'])
+    expect([...ftp.card]).toEqual(['keep.mov'])
+    // A sweep is several of these; a session left open each time is a deck
+    // that stops answering by the fourth file.
+    expect(ftp.closed()).toBe(1)
+  })
+
+  it('fails loudly when the deck keeps the file anyway', async () => {
+    // FTP servers vary in what they say about a delete that did not
+    // happen. Reporting success on a file still sitting on the card is
+    // worse than failing, because the ledger would then mark it gone.
+    const ftp = fakeFtp(['stuck.mov'], { ignoresDeletes: true })
+    const hyperdeck = await connect({}, ftp)
+
+    await expect(
+      hyperdeck.invoke('record', 'deleteMedia', { name: 'stuck.mov', slot: 1 }),
+    ).rejects.toThrow(/still has "stuck.mov"/)
+    // And it still hung up, rather than leaking the session on the way out.
+    expect(ftp.closed()).toBe(1)
+  })
+
+  it('refuses a call with no name rather than guessing', async () => {
+    const ftp = fakeFtp(['a.mov'])
+    const hyperdeck = await connect({}, ftp)
+
+    await expect(hyperdeck.invoke('record', 'deleteMedia', {})).rejects.toThrow(/"name"/)
+    expect(ftp.removed).toEqual([])
+  })
+
+  it('says it can do it, so the host knows a sweep is possible here', async () => {
+    const hyperdeck = await connect()
+    const nodes = await hyperdeck.listNodes()
+    expect(nodes[0]?.supports).toContain('deleteMedia')
   })
 })

@@ -93,6 +93,31 @@ export class RecordingLedger {
       .run(at, runId, outputId)
   }
 
+  /**
+   * Marks one file gone, once the device has confirmed it is.
+   *
+   * Only ever called after a delete the plugin has verified: a row marked
+   * deleted for a file still on the card is a lie the next sweep cannot
+   * detect, because a deleted row is not looked at again.
+   */
+  deleted(id: string, at: number): void {
+    this.db.prepare('UPDATE recording_artifact SET deleted_at = ? WHERE id = ?').run(at, id)
+  }
+
+  /** Records why a delete did not happen, so a card that keeps refusing is
+   *  visible rather than silently retried forever. */
+  failed(id: string, message: string): void {
+    this.db.prepare('UPDATE recording_artifact SET last_error = ? WHERE id = ?').run(message, id)
+  }
+
+  /** One row by id, for a sweep confirming what it is about to remove. */
+  get(id: string): RecordingArtifact | undefined {
+    const rows = this.map(
+      this.db.prepare('SELECT * FROM recording_artifact WHERE id = ?').all(id) as ArtifactRow[],
+    )
+    return rows[0]
+  }
+
   /** Everything still on the card, for one output, newest first. */
   forOutput(outputId: string): RecordingArtifact[] {
     return this.map(

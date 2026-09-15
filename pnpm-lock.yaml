@@ -165,6 +165,9 @@ importers:
       '@scheduler/plugin-sdk':
         specifier: workspace:*
         version: link:../plugin-sdk
+      basic-ftp:
+        specifier: ^6.2.1
+        version: 6.2.1
       hyperdeck-connection:
         specifier: ^2.0.1
         version: 2.0.1
@@ -1162,6 +1165,10 @@ packages:
     resolution: {integrity: sha512-le521dGVfxM7yRX0EikCoSz+rOK+hHzdDt/E7mG1jOJB/6WAAUuwVroLwaB7ApaUsz5Q0kFlDXLSA9MheUIfRQ==}
     engines: {node: '>=6.0.0'}
     hasBin: true
+
+  basic-ftp@6.2.1:
+    resolution: {integrity: sha512-bK67isD+lKq46AU8vNtjvMaT2ZqAOAmNCbxUHlFBRD4k15NWxyEjmaKtZPlgce58So4BNTjITGQOVTjL9y0ECA==}
+    engines: {node: '>=10.0.0'}
 
   better-sqlite3@11.10.0:
     resolution: {integrity: sha512-EwhOpyXiOEL/lKzHz9AW1msWFNzGc/z+LzeB3/jnFJpxu+th2yqvzsSWas1v9jgs9+xiXJcD5A8CJxAG2TaghQ==}
@@ -4241,6 +4248,8 @@ snapshots:
   base64-js@1.5.1: {}
 
   baseline-browser-mapping@2.11.23: {}
+
+  basic-ftp@6.2.1: {}
 
   better-sqlite3@11.10.0:
     dependencies:

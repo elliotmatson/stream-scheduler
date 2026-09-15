@@ -41,6 +41,8 @@ export type NodeAction =
   | 'formatStorage'
   /** Lists what is on the media. Read-only. */
   | 'listMedia'
+  /** Removes one file from the media. Irreversible; see `NodeActions`. */
+  | 'deleteMedia'
 
 export interface StreamTarget {
   url: string
@@ -267,6 +269,24 @@ export interface NodeActions {
    * a deck can show its contents without implying it can be swept.
    */
   listMedia?(options: { slot?: number }): Promise<MediaItem[]>
+  /**
+   * Removes one named file.
+   *
+   * One file per call, by name, rather than a pattern or a sweep: the
+   * caller has already decided exactly what goes, and a device that takes
+   * a wildcard is a device that can be asked to empty a card by a bug in
+   * somebody else's code.
+   *
+   * Declared apart from `listMedia` because the two are not the same
+   * capability. A HyperDeck lists over its control port and cannot delete
+   * over it at all — deletion is a different protocol entirely — so a deck
+   * that can show its contents may still not be sweepable.
+   *
+   * Must throw rather than resolve if the file is still there afterwards.
+   * A sweep that reports success on a file it did not remove is worse than
+   * one that fails loudly.
+   */
+  deleteMedia?(options: { slot?: number; name: string }): Promise<void>
   stopRecording?(): Promise<void>
   route?(options: { input: string; output: string }): Promise<void>
   /**

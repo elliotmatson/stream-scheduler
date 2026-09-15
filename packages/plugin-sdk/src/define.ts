@@ -113,6 +113,15 @@ export function defineDevice(spec: DeviceSpec): DeviceInstance {
             output: readString(args, 'output'),
           })
           break
+        case 'deleteMedia':
+          // Named explicitly rather than passed through: the one argument
+          // that decides which file is destroyed is not somewhere to be
+          // lenient about types.
+          await actions.deleteMedia!({
+            name: readString(args, 'name'),
+            ...(typeof args.slot === 'number' ? { slot: args.slot } : {}),
+          })
+          break
         case 'startStreaming':
         case 'stopStreaming':
         case 'stopRecording':

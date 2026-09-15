@@ -1,5 +1,5 @@
 import { systemClock } from '@scheduler/plugin-sdk'
-import type { Clock, DestinationProvider, PluginDefinition } from '@scheduler/plugin-sdk'
+import type { Clock, DestinationProvider, MediaItem, PluginDefinition } from '@scheduler/plugin-sdk'
 import { openDatabase, type Db } from './db/index.js'
 import { resolvePaths, type Paths } from './config/paths.js'
 import { createConsoleLogger, silentLogger, type Logger, type LogLevel } from './log.js'
@@ -25,6 +25,8 @@ import { RunStore } from './runs/store.js'
 import { Notifier } from './notify/notifier.js'
 import { PreflightChecker, DEFAULT_PREFLIGHT_LEAD_MS } from './notify/preflight.js'
 import { RecordingLedger } from './runs/artifacts.js'
+import { eventMidRunOn } from './runs/retention.js'
+import { Sweeper } from './runs/sweep.js'
 import { runFailedNotification } from './notify/run-events.js'
 
 /**
@@ -92,6 +94,8 @@ export class Application {
   readonly thresholds: Thresholds
   /** What this scheduler has recorded, and where it put it. */
   readonly ledger: RecordingLedger
+  /** Removes recordings a policy says are past their keep-by date. */
+  readonly sweeper: Sweeper
   readonly auth: Auth
   readonly logger: Logger
   readonly clock: Clock
@@ -156,6 +160,26 @@ export class Application {
     // Stateless SQL over the same database as the planner's own, so the
     // two are the same ledger rather than two views of one.
     this.ledger = new RecordingLedger({ db: init.db })
+    this.sweeper = new Sweeper({
+      db: init.db,
+      ledger: this.ledger,
+      clock: init.clock,
+      listMedia: async (deviceId, nodeId) => {
+        const state = await this.connections.invoke(deviceId, nodeId, 'listMedia')
+        const media = state?.raw?.media
+        return Array.isArray(media) ? (media as unknown as MediaItem[]) : undefined
+      },
+      deleteMedia: async (deviceId, nodeId, args) => {
+        await this.connections.invoke(deviceId, nodeId, 'deleteMedia', args)
+      },
+      stateOf: (deviceId) => this.connections.lastStates(deviceId).map((entry) => entry.state),
+      runOn: (deviceId) => eventMidRunOn(init.db, deviceId),
+      canDelete: (deviceId, nodeId) =>
+        this.connections
+          .get(deviceId)
+          ?.nodes.find((node) => node.id === nodeId)
+          ?.supports.includes('deleteMedia') === true,
+    })
     this.auth = init.auth
     this.logger = init.logger
     this.clock = init.clock
