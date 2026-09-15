@@ -60,6 +60,8 @@ export interface OutputSettings {
     keepDays?: number
     /** Never let the newest this many go, whatever their age. */
     keepLast?: number
+    /** Sweep early when the card drops below this much recording time. */
+    minFreeHours?: number
   }
 }
 
@@ -159,13 +161,16 @@ function parseSettings(raw: string): OutputSettings {
     // where the comment explaining why can sit next to the decision.
     const retention = parsed.retention
     if (retention && typeof retention === 'object') {
-      const value = retention as { keepDays?: unknown; keepLast?: unknown }
+      const value = retention as { keepDays?: unknown; keepLast?: unknown; minFreeHours?: unknown }
       const kept: NonNullable<OutputSettings['retention']> = {}
       if (typeof value.keepDays === 'number' && Number.isInteger(value.keepDays)) {
         kept.keepDays = value.keepDays
       }
       if (typeof value.keepLast === 'number' && Number.isInteger(value.keepLast)) {
         kept.keepLast = value.keepLast
+      }
+      if (typeof value.minFreeHours === 'number' && Number.isInteger(value.minFreeHours)) {
+        kept.minFreeHours = value.minFreeHours
       }
       if (Object.keys(kept).length > 0) out.retention = kept
     }

@@ -1,4 +1,4 @@
-import type { Clock, MediaItem } from '@scheduler/plugin-sdk'
+import type { Clock, MediaItem, NodeState } from '@scheduler/plugin-sdk'
 import type { Db } from '../db/index.js'
 import { outputsForSeries, type OutputSettings } from '../events/outputs.js'
 import type { RecordingArtifact, RecordingLedger } from './artifacts.js'
@@ -6,20 +6,21 @@ import type { RecordingArtifact, RecordingLedger } from './artifacts.js'
 /**
  * Which recordings a policy says are past their keep-by date.
  *
- * Deliberately only an answer, not an action. Automated deletion of
- * somebody's Sunday is the sort of feature that has to earn its place: this
- * says what would go, on a screen, and a later phase gets the ability to
- * actually do it. Everything hard is already here — deciding what is
- * eligible is the part that has to be right.
+ * This module is the decision; `sweep.ts` is the act. Keeping them apart
+ * is what makes the act reviewable — the hard part is deciding what is
+ * eligible, and it is decided in one place whether a person pressed
+ * something or the hourly sweep came round.
  *
- * Three rails, and they are the reason this is safe to build on:
+ * Four rails, and they are the reason this is safe to act on:
  *
  *  - Only files this scheduler recorded, from its own ledger. A card that
  *    somebody put a camera dump on is not this app's business.
  *  - Only runs that finished. A recording still being written, or one whose
  *    run died halfway, is not a candidate for anything.
  *  - Always keep the newest few, whatever the dates say. A quiet month must
- *    not empty a card.
+ *    not empty a card, and a card running out of room must not either.
+ *  - Nothing at all unless a limit was set. An output with no policy is
+ *    never swept; setting one is what asks for it to be enforced.
  */
 
 export interface RetentionPolicy {
@@ -27,10 +28,27 @@ export interface RetentionPolicy {
   keepDays?: number
   /** Never let the newest this many go, whatever their age. */
   keepLast?: number
+  /**
+   * Sweep early when the card has less than this much recording time left.
+   *
+   * The case a keep-for date cannot cover: a fortnight of extra services
+   * fills a card long before anything on it is thirty days old, and the
+   * first anybody hears of it is a recording that stops halfway through.
+   * Under that much headroom, everything past `keepLast` is eligible
+   * whatever its age — which is exactly what `keepLast` is a promise
+   * about.
+   */
+  minFreeHours?: number
 }
 
-/** The floor, when a policy sets no other. Three Sundays. */
-export const DEFAULT_KEEP_LAST = 3
+/**
+ * The floor, when a policy sets no other.
+ *
+ * Ten, which on a weekly service is about a quarter. Enough that somebody
+ * noticing in March that they wanted January still has February, and few
+ * enough to be worth sweeping at all.
+ */
+export const DEFAULT_KEEP_LAST = 10
 
 export interface RetentionCandidate {
   artifact: RecordingArtifact
@@ -62,6 +80,13 @@ export interface RetentionReport {
   wouldDelete: RetentionCandidate[]
   /** Named by the device and not in our ledger — somebody else's files. */
   unknownToUs: string[]
+  /** `keepLast` with the default filled in, so a screen need not know it. */
+  effectiveKeepLast: number
+  /** Whether the card is under its free-space floor, so age stopped
+   *  deciding and everything past `keepLast` is eligible. */
+  underPressure: boolean
+  /** Recording time left, where the device reported it. */
+  freeMs?: number
 }
 
 /**
@@ -79,12 +104,20 @@ export function policyOf(settings: OutputSettings): RetentionPolicy {
   return {
     ...(typeof raw.keepDays === 'number' && raw.keepDays > 0 ? { keepDays: raw.keepDays } : {}),
     ...(typeof raw.keepLast === 'number' && raw.keepLast >= 0 ? { keepLast: raw.keepLast } : {}),
+    ...(typeof raw.minFreeHours === 'number' && raw.minFreeHours > 0
+      ? { minFreeHours: raw.minFreeHours }
+      : {}),
   }
 }
 
-/** True when a policy would ever delete anything. */
+/**
+ * True when a policy would ever delete anything.
+ *
+ * Also the consent: setting a limit is what asks for it to be enforced,
+ * and an output with neither limit is never swept, by hand or otherwise.
+ */
 export function isConfigured(policy: RetentionPolicy): boolean {
-  return policy.keepDays !== undefined
+  return policy.keepDays !== undefined || policy.minFreeHours !== undefined
 }
 
 /**
@@ -104,6 +137,8 @@ export function assess(input: {
   policy: RetentionPolicy
   artifacts: RecordingArtifact[]
   media?: MediaItem[]
+  /** Recording time left on the slot, where the device reports it. */
+  freeMs?: number
   now: number
 }): RetentionReport {
   const names =
@@ -130,6 +165,17 @@ export function assess(input: {
   const cutoff =
     input.policy.keepDays === undefined ? undefined : input.policy.keepDays * 86_400_000
 
+  // The card is running out of room, and the policy said what to do about
+  // it. Age stops deciding: everything past the newest `keepLast` is
+  // eligible, which is the promise `keepLast` was making all along.
+  //
+  // Only when the device actually said how much room is left. A deck that
+  // does not report headroom must not have silence read as "nearly full".
+  const underPressure =
+    input.policy.minFreeHours !== undefined &&
+    input.freeMs !== undefined &&
+    input.freeMs < input.policy.minFreeHours * 3_600_000
+
   const wouldDelete = isConfigured(input.policy)
     ? ours.filter(
         (candidate, index) =>
@@ -137,8 +183,7 @@ export function assess(input: {
           // is not a candidate for anything.
           candidate.artifact.endedAt !== null &&
           index >= keepLast &&
-          cutoff !== undefined &&
-          candidate.ageMs > cutoff &&
+          (underPressure || (cutoff !== undefined && candidate.ageMs > cutoff)) &&
           candidate.onDevice,
       )
     : []
@@ -158,6 +203,9 @@ export function assess(input: {
     kept: ours,
     wouldDelete,
     unknownToUs,
+    effectiveKeepLast: keepLast,
+    underPressure,
+    ...(input.freeMs === undefined ? {} : { freeMs: input.freeMs }),
   }
 }
 
@@ -217,6 +265,8 @@ export async function reportAll(deps: {
   ledger: RecordingLedger
   clock: Clock
   listMedia: (deviceId: string, nodeId: string) => Promise<MediaItem[] | undefined>
+  /** Recording time left on the node's media, where it says. */
+  freeMs?: (deviceId: string, nodeId: string) => number | undefined
 }): Promise<RetentionReport[]> {
   const now = deps.clock.now()
   // One listing per node, however many outputs write to it.
@@ -229,16 +279,46 @@ export async function reportAll(deps: {
       listings.set(key, await deps.listMedia(output.deviceId, output.nodeId))
     }
     const media = listings.get(key)
+    const free = deps.freeMs?.(output.deviceId, output.nodeId)
     reports.push(
       assess({
         ...output,
         artifacts: deps.ledger.forOutput(output.outputId),
         ...(media === undefined ? {} : { media }),
+        ...(free === undefined ? {} : { freeMs: free }),
         now,
       }),
     )
   }
   return reports
+}
+
+/**
+ * How much recording time a node says is left on its media.
+ *
+ * The active slot's headroom where the device names one, and the largest
+ * otherwise: a deck that rolls onto a second card has that card's room
+ * available to it too, and treating a nearly-full first card as the whole
+ * story would sweep for no reason.
+ */
+export function freeMsOf(states: NodeState[]): number | undefined {
+  let best: number | undefined
+  for (const state of states) {
+    const slots = state.recording?.slots ?? []
+    const active = slots.find((slot) => slot.active)?.remainingMs
+    const candidate =
+      active ??
+      (slots.length > 0
+        ? slots.reduce<number | undefined>(
+            (most, slot) =>
+              slot.remainingMs === undefined ? most : Math.max(most ?? 0, slot.remainingMs),
+            undefined,
+          )
+        : state.recording?.remainingMs)
+    if (candidate === undefined) continue
+    best = best === undefined ? candidate : Math.max(best, candidate)
+  }
+  return best
 }
 
 /**

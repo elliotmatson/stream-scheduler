@@ -27,7 +27,7 @@ import {
 import { bumpSeriesVersion, materializeSeries } from '../schedule/materialize.js'
 import { isValidTimeZone, localDateAt, zonedWallTimeToUtc } from '../schedule/zoned.js'
 import { ConfigInvalidError, UnknownPluginError } from '../plugins/registry.js'
-import { eventMidRunOn as midRunOn, reportAll } from '../runs/retention.js'
+import { eventMidRunOn as midRunOn, freeMsOf, reportAll } from '../runs/retention.js'
 import { MAX_TAG_LENGTH, type TaggableKind } from '../tags/index.js'
 import { SweepRefused } from '../runs/sweep.js'
 import { renderTemplate, TemplateError } from '../template/render.js'
@@ -910,6 +910,7 @@ function registerRoutes(fastify: FastifyInstance, app: Application): void {
           .object({
             keepDays: z.number().int().min(1).max(3650).optional(),
             keepLast: z.number().int().min(0).max(100).optional(),
+            minFreeHours: z.number().int().min(1).max(1000).optional(),
           })
           .optional(),
       })
@@ -1425,17 +1426,23 @@ function registerRoutes(fastify: FastifyInstance, app: Application): void {
   /**
    * What each recording output's policy says could go.
    *
-   * Nothing is deleted here, and nothing is deleted anywhere yet: this
-   * answers the question so somebody can look at the answer before the
-   * ability to act on it exists. Asking the devices is the slow part — one
-   * listing per node however many outputs write to it — and it is a screen
-   * somebody opens deliberately, not one that polls.
+   * Nothing is deleted here: this is the answer, and acting on it is
+   * either the sweep button or the hourly job. Asking the devices is the
+   * slow part — one listing per node however many outputs write to it —
+   * and it is a screen somebody opens deliberately, not one that polls.
    */
   fastify.get('/api/retention', async () => {
     const reports = await reportAll({
       db,
       ledger: app.ledger,
       clock: app.clock,
+      freeMs: (deviceId, nodeId) =>
+        freeMsOf(
+          app.connections
+            .lastStates(deviceId)
+            .filter((entry) => entry.nodeId === nodeId)
+            .map((entry) => entry.state),
+        ),
       listMedia: async (deviceId, nodeId) => {
         try {
           const state = await app.connections.invoke(deviceId, nodeId, 'listMedia')
