@@ -31,9 +31,22 @@ export function DeviceFiles({
   // a deck with a second card mounted mid-session should offer it without
   // the page being rebuilt around it.
   const live = useLive()
-  const slots = (live.nodeStates[`${deviceId}/${nodeId}`]?.recording?.slots ?? []).map(
-    (entry) => entry.id,
+  // But the live channel only carries states the device has pushed since
+  // this page opened, and a deck sitting still has no reason to push one.
+  // So on a fresh load there were no slots, the card picker was hidden,
+  // and it appeared only once something else made the deck emit — which
+  // from the outside looks like "the selector shows up after I change
+  // slots somewhere else". Asking once, on mount, is what makes it there
+  // from the start; the live state still wins the moment it arrives.
+  const { data: known } = useResource(
+    () => api.nodeState(deviceId, nodeId).catch(() => ({ state: null })),
+    [deviceId, nodeId],
   )
+  const slots = (
+    live.nodeStates[`${deviceId}/${nodeId}`]?.recording?.slots ??
+    known?.state?.recording?.slots ??
+    []
+  ).map((entry) => entry.id)
   const [chosen, setChosen] = useState<number>()
   const slot = chosen ?? slots[0]
   const [open, setOpen] = useState(false)
