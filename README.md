@@ -141,8 +141,11 @@ and the wrong way to run anything else. Two ways to set one:
 
 - **In the app**, under Settings. Best for a desktop or `node` install.
 - **`SCHEDULER_UI_PASSWORD`**, which is what a container wants — there is no
-  first-run screen in something you started with `docker run`. Set this way
-  it cannot be changed from the UI, only from the environment.
+  first-run screen in something you started with `docker run`. It is copied
+  into the database the first time the app starts and then never read again,
+  so you can change the password in Settings afterwards and it will stick.
+  Leaving the variable in your compose file does not undo that, and it will
+  not put the lock back on an install where you deliberately removed it.
 
 One password, shared by everyone who runs it. Signing in sets an `HttpOnly`
 cookie, which is what makes the live status work: browsers do not send an
@@ -170,14 +173,14 @@ archive of it is the entire backup.
 
 ## Configuration
 
-| Variable                | Default      | Meaning                                                                             |
-| ----------------------- | ------------ | ----------------------------------------------------------------------------------- |
-| `SCHEDULER_CONFIG_DIR`  | per-platform | Database, logs, master key                                                          |
-| `SCHEDULER_SECRET`      | —            | Derives the master key when no keychain or key file is available                    |
-| `SCHEDULER_HOST`        | `127.0.0.1`  | Listen address. Anything but loopback with no password set logs a warning           |
-| `SCHEDULER_PORT`        | `8500`       | Listen port                                                                         |
-| `SCHEDULER_UI_PASSWORD` | —            | Locks the UI and API behind one password. Set here, it cannot be changed in the app |
-| `SCHEDULER_LOG_LEVEL`   | `info`       | `debug`, `info`, `warn`, `error`                                                    |
+| Variable                | Default      | Meaning                                                                   |
+| ----------------------- | ------------ | ------------------------------------------------------------------------- |
+| `SCHEDULER_CONFIG_DIR`  | per-platform | Database, logs, master key                                                |
+| `SCHEDULER_SECRET`      | —            | Derives the master key when no keychain or key file is available          |
+| `SCHEDULER_HOST`        | `127.0.0.1`  | Listen address. Anything but loopback with no password set logs a warning |
+| `SCHEDULER_PORT`        | `8500`       | Listen port                                                               |
+| `SCHEDULER_UI_PASSWORD` | —            | Sets the first password on a new install. Read once, then the app owns it |
+| `SCHEDULER_LOG_LEVEL`   | `info`       | `debug`, `info`, `warn`, `error`                                          |
 
 ## Connecting YouTube
 

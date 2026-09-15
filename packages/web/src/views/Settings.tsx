@@ -259,17 +259,6 @@ function Security({
   const mismatch = confirm !== '' && confirm !== password
   const tooShort = password !== '' && password.length < session.minPasswordLength
 
-  if (session.managedByEnvironment) {
-    return (
-      <Card title="Password">
-        <p className="muted" style={{ marginTop: 0 }}>
-          Set by <code>SCHEDULER_UI_PASSWORD</code> on the machine this runs on, so it cannot be
-          changed from here. Change it there and restart.
-        </p>
-      </Card>
-    )
-  }
-
   return (
     <Card title="Password">
       <p className="muted" style={{ marginTop: 0 }}>
@@ -277,6 +266,18 @@ function Security({
           ? 'One password, shared by everyone who runs this. Changing it signs everybody out, including you on your other devices.'
           : 'No password is set, so anyone who can reach this address can start a broadcast and drive your devices. On a booth machine nobody else can reach, that is a reasonable way to run it.'}
       </p>
+
+      {/* Said once, where somebody about to change it will read it. The
+          variable is almost always still sitting in a compose file, and
+          "why did my change stick?" is a fair question to have answered
+          before you make it rather than after. */}
+      {session.seededFromEnvironment ? (
+        <p className="muted" style={{ marginTop: 0 }}>
+          This password started out as <code>SCHEDULER_UI_PASSWORD</code>. It was copied here the
+          first time the app started and that variable is no longer read, so changing it here is
+          what counts from now on.
+        </p>
+      ) : null}
 
       <ErrorBanner error={error} />
       {done ? <div className="banner info">{done}</div> : null}

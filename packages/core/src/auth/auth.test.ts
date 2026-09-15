@@ -221,15 +221,51 @@ describe('Auth', () => {
     expect(auth.allows(session.token)).toBe(false)
   })
 
-  it('will not let a stored password override the environment', () => {
+  it('takes its first password from the environment, which is what Docker needs', () => {
     const auth = new Auth({ db, clock, envPassword: 'from-the-environment' })
-    expect(auth.managedByEnvironment).toBe(true)
     expect(auth.required).toBe(true)
-    expect(() => auth.setPassword('something else')).toThrow(/SCHEDULER_UI_PASSWORD/)
-    expect(() => auth.clearPassword()).toThrow(/SCHEDULER_UI_PASSWORD/)
+    expect(auth.seededFromEnvironment).toBe(true)
+    expect(auth.login({ password: 'from-the-environment', from: '10.0.0.5' }).ok).toBe(true)
+  })
 
-    const session = auth.login({ password: 'from-the-environment', from: '10.0.0.5' })
-    expect(session.ok).toBe(true)
+  it('hands the password over to the UI once it has been seeded', () => {
+    const auth = new Auth({ db, clock, envPassword: 'from-the-environment' })
+    auth.setPassword('chosen in the app')
+
+    expect(auth.login({ password: 'chosen in the app', from: '10.0.0.5' }).ok).toBe(true)
+    expect(auth.login({ password: 'from-the-environment', from: '10.0.0.6' }).ok).toBe(false)
+  })
+
+  it('does not put the environment password back on the next restart', () => {
+    // The whole reason the seeded marker is stored rather than inferred.
+    // The variable is still sitting in the compose file on every boot.
+    new Auth({ db, clock, envPassword: 'from-the-environment' }).setPassword('chosen in the app')
+
+    const restarted = new Auth({ db, clock, envPassword: 'from-the-environment' })
+    expect(restarted.login({ password: 'chosen in the app', from: '10.0.0.5' }).ok).toBe(true)
+    expect(restarted.login({ password: 'from-the-environment', from: '10.0.0.6' }).ok).toBe(false)
+  })
+
+  it('does not re-lock an install where somebody took the password off', () => {
+    // Worse than the last one: this would put a lock back on a machine
+    // whose operator deliberately removed it, and they would have no idea
+    // what the password now was.
+    new Auth({ db, clock, envPassword: 'from-the-environment' }).clearPassword()
+
+    const restarted = new Auth({ db, clock, envPassword: 'from-the-environment' })
+    expect(restarted.required).toBe(false)
+  })
+
+  it('keeps the environment password working across the upgrade that changed this', () => {
+    // An install that predates seeding has the environment outranking a
+    // stored password. The environment's is the one that works today, so
+    // it has to be the one that works tomorrow.
+    const before = new Auth({ db, clock })
+    before.setPassword('set long ago in the app')
+
+    const seeded = new Auth({ db, clock, envPassword: 'from-the-environment' })
+    expect(seeded.login({ password: 'from-the-environment', from: '10.0.0.5' }).ok).toBe(true)
+    expect(seeded.login({ password: 'set long ago in the app', from: '10.0.0.6' }).ok).toBe(false)
   })
 
   it('refuses a password too short to be worth typing', () => {

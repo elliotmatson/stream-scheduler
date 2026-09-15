@@ -58,7 +58,7 @@ export function registerAuthRoutes(fastify: FastifyInstance, app: Application): 
   fastify.get('/api/session', async (request) => ({
     required: app.auth.required,
     signedIn: app.auth.allows(tokenFrom(request)),
-    managedByEnvironment: app.auth.managedByEnvironment,
+    seededFromEnvironment: app.auth.seededFromEnvironment,
     minPasswordLength: MIN_PASSWORD_LENGTH,
   }))
 
@@ -122,12 +122,6 @@ export function registerAuthRoutes(fastify: FastifyInstance, app: Application): 
           .nullable(),
       })
       .parse(request.body)
-
-    if (app.auth.managedByEnvironment) {
-      return reply
-        .code(409)
-        .send({ error: 'The password is set by SCHEDULER_UI_PASSWORD. Change it there.' })
-    }
 
     if (body.password === null) {
       app.auth.clearPassword()
