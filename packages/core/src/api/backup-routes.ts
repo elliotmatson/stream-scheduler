@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import { z } from 'zod'
 import { readFileSync, rmSync, writeFileSync } from 'node:fs'
 import type { FastifyInstance } from 'fastify'
 import type { Application } from '../app.js'
@@ -14,6 +15,14 @@ import {
   stageRestore,
   writeBackup,
 } from '../backup/index.js'
+import {
+  MAX_EVERY_HOURS,
+  MAX_KEEP,
+  MIN_EVERY_HOURS,
+  MIN_KEEP,
+  scheduleState,
+  writeSchedule,
+} from '../backup/schedule.js'
 import { join } from 'node:path'
 
 /** A restore somebody has looked at but not yet agreed to. */
@@ -59,6 +68,7 @@ export function registerBackupRoutes(fastify: FastifyInstance, app: Application)
     return {
       keyId,
       keySource: kind,
+      schedule: scheduleState(app.db, app.paths.backupDir),
       keySourceLabel: describeKeySource(kind ?? 'unknown'),
       // Whether the secrets already here can actually be read, which is
       // the same question a restore raises and is worth answering before
@@ -92,6 +102,27 @@ export function registerBackupRoutes(fastify: FastifyInstance, app: Application)
             },
           }),
     }
+  })
+
+  /**
+   * Changes when backups are taken and how many are kept.
+   *
+   * Deliberately does not take a directory. Where the files go is a
+   * deployment decision — a volume in Docker, an environment variable
+   * otherwise — and a path typed into a browser is a path somebody can
+   * point at the database's own directory by accident.
+   */
+  fastify.put('/api/backup/schedule', async (request) => {
+    const body = z
+      .object({
+        enabled: z.boolean().optional(),
+        everyHours: z.number().int().min(MIN_EVERY_HOURS).max(MAX_EVERY_HOURS).optional(),
+        keep: z.number().int().min(MIN_KEEP).max(MAX_KEEP).optional(),
+      })
+      .parse(request.body)
+
+    writeSchedule(app.db, body)
+    return scheduleState(app.db, app.paths.backupDir)
   })
 
   /** The file itself. A consistent copy, taken while the app keeps running. */

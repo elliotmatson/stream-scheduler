@@ -16,12 +16,27 @@ services:
       SCHEDULER_SECRET: ${SCHEDULER_SECRET:?set SCHEDULER_SECRET to a long random string}
       SCHEDULER_PORT: 8500
       # Host networking means this binds the machine's own interfaces, so
-      # loopback keeps it to this machine. There is no authentication yet:
-      # change to 0.0.0.0 only if you accept that anyone on the network can
-      # start broadcasts and read stream keys.
+      # loopback keeps it to this machine. Before changing this to 0.0.0.0,
+      # set a password — either SCHEDULER_UI_PASSWORD below or in Settings
+      # once it is running — because without one anyone who can reach the
+      # port can start broadcasts and read stream keys.
       SCHEDULER_HOST: 127.0.0.1
+      # Sets the password on a new install. It is copied into the database
+      # the first time the app starts and never read again, so you can
+      # change it in Settings afterwards and it will stick. Leaving this
+      # here does not undo that.
+      # SCHEDULER_UI_PASSWORD: change-me
+      # Where scheduled backups are written, inside the container. What it
+      # is worth depends on where the volume below actually lives.
+      SCHEDULER_BACKUP_DIR: /backups
     volumes:
       - scheduler-config:/config
+      # A separate volume on purpose: a backup sitting in the same place as
+      # the database survives a bad restore, and does not survive the disk.
+      # Point this at another drive or a NAS mount to make it worth more,
+      # e.g.  - /mnt/nas/stream-scheduler:/backups
+      - scheduler-backups:/backups
 
 volumes:
   scheduler-config:
+  scheduler-backups:

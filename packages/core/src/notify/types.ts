@@ -8,6 +8,7 @@ export const NOTIFICATION_EVENTS = [
   'account.reauth_required',
   'device.cache_high',
   'retention.swept',
+  'backup.failed',
   'test',
 ] as const
 

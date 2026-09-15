@@ -1,6 +1,12 @@
 import { useRef, useState } from 'react'
 import type { ReactNode } from 'react'
-import { api, useResource, type BackupInspection, type SessionState } from '../api.ts'
+import {
+  api,
+  useResource,
+  type BackupInspection,
+  type BackupSchedule,
+  type SessionState,
+} from '../api.ts'
 import { Card, ConfirmButton, Empty, ErrorBanner, Field, PageHead } from '../components.tsx'
 import { dateTimeIn, relative } from '../format.ts'
 
@@ -117,6 +123,8 @@ function Backup(): ReactNode {
               Download a backup
             </a>
           </div>
+
+          <Schedule schedule={data.schedule} onChanged={reload} />
         </>
       ) : null}
 
@@ -322,5 +330,108 @@ function Security({
         </div>
       </div>
     </Card>
+  )
+}
+
+/**
+ * When the app takes its own backups, and how many it keeps.
+ *
+ * The directory is shown rather than edited. Where the files go is a
+ * deployment decision — a volume in Docker, an environment variable
+ * otherwise — and a path typed into a browser is a path somebody can point
+ * at the database's own directory by accident, which would leave them with
+ * a backup on the disk it is meant to survive.
+ */
+function Schedule({
+  schedule,
+  onChanged,
+}: {
+  schedule: BackupSchedule
+  onChanged: () => void
+}): ReactNode {
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string>()
+
+  const save = (next: { enabled?: boolean; everyHours?: number; keep?: number }): void => {
+    setBusy(true)
+    setError(undefined)
+    void api
+      .setBackupSchedule(next)
+      .then(() => onChanged())
+      .catch((err: unknown) => setError(err instanceof Error ? err.message : String(err)))
+      .finally(() => setBusy(false))
+  }
+
+  return (
+    <div style={{ marginTop: 20 }}>
+      <h3 style={{ margin: '0 0 4px' }}>On a schedule</h3>
+      <p className="muted" style={{ marginTop: 0 }}>
+        Written to <code>{schedule.directory}</code>. What these are worth depends on where that
+        actually is: on the same disk as the database they will bring you back from a bad restore,
+        and go down with the drive.
+      </p>
+
+      <ErrorBanner error={error} />
+
+      {/* The failure that actually happens: a volume that stopped being
+          writable and a directory that has been empty ever since. */}
+      {schedule.lastError ? (
+        <div className="banner error">
+          <strong>The last backup did not happen.</strong>
+          <div style={{ marginTop: 4 }}>{schedule.lastError}</div>
+        </div>
+      ) : null}
+
+      <div className="row" style={{ marginBottom: 8 }}>
+        <label className="row" style={{ gap: 6 }}>
+          <input
+            type="checkbox"
+            checked={schedule.enabled}
+            disabled={busy}
+            onChange={(event) => save({ enabled: event.target.checked })}
+          />
+          <span>Take one automatically</span>
+        </label>
+      </div>
+
+      {schedule.enabled ? (
+        <div className="row">
+          <Field label="Every">
+            <select
+              value={String(schedule.everyHours)}
+              disabled={busy}
+              onChange={(event) => save({ everyHours: Number(event.target.value) })}
+            >
+              <option value="6">6 hours</option>
+              <option value="12">12 hours</option>
+              <option value="24">day</option>
+              <option value="168">week</option>
+            </select>
+          </Field>
+          <Field label="Keep" hint="Oldest removed first.">
+            <select
+              value={String(schedule.keep)}
+              disabled={busy}
+              onChange={(event) => save({ keep: Number(event.target.value) })}
+            >
+              <option value="7">7</option>
+              <option value="14">14</option>
+              <option value="30">30</option>
+              <option value="90">90</option>
+            </select>
+          </Field>
+        </div>
+      ) : null}
+
+      <p className="muted" style={{ marginBottom: 0 }}>
+        {schedule.count === 0
+          ? 'None taken yet.'
+          : `${schedule.count} in the folder${
+              schedule.lastAt === undefined
+                ? ''
+                : `, most recent ${dateTimeIn(schedule.lastAt, here)}`
+            }.`}
+      </p>
+    </div>
   )
 }

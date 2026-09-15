@@ -171,6 +171,23 @@ without you doing anything.
 Everything lives in one config directory (`/config` in Docker). A single
 archive of it is the entire backup.
 
+### Backups
+
+The app takes one of its own every day and keeps the last fourteen, in
+`SCHEDULER_BACKUP_DIR` — a second volume in the supplied `docker-compose.yml`.
+Cadence and how many to keep are both settable under Settings, and it can be
+turned off if you are already backing that volume up by other means.
+
+Where that volume actually lives decides what the backups are worth. Left on
+the same disk they will bring you back from a bad restore or a mistaken bulk
+delete, and go down with the drive. Pointed at another disk or a NAS mount —
+one line in the compose file — they survive the machine.
+
+A backup that cannot be written says so through your notification channels
+rather than only in a log, because the failure that actually happens is a
+volume that stopped being writable months ago and a directory that has been
+empty ever since.
+
 ## Configuration
 
 | Variable                | Default      | Meaning                                                                   |

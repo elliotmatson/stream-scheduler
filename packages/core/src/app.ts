@@ -30,6 +30,14 @@ import { eventMidRunOn, freeMsOf } from './runs/retention.js'
 import { Sweeper } from './runs/sweep.js'
 import { runFailedNotification } from './notify/run-events.js'
 import { applyPendingRestore, type RestoreApplied } from './backup/index.js'
+import {
+  backupDue,
+  readSchedule,
+  recordFailure,
+  recordSuccess,
+  takeScheduledBackup,
+} from './backup/schedule.js'
+import { backupFailed } from './notify/backup-events.js'
 import { recordingsSweptNotification } from './notify/retention-events.js'
 
 /**
@@ -471,6 +479,12 @@ export class Application {
         this.lastSweepAt = now
         await this.sweep()
       }
+
+      // The backup's own cadence is stored rather than held here, because
+      // it has to survive a restart: a container in a crash loop would
+      // otherwise take a backup on every boot and prune the useful ones
+      // out of the directory within the hour.
+      if (backupDue(this.db, now)) this.backup(now)
       // After the engine, so a run that has just gone on air is sampled
       // rather than waiting a whole interval to appear on its own timeline.
       await this.telemetry.tick()
@@ -526,6 +540,40 @@ export class Application {
       this.logger.error('the scheduled sweep failed', {
         error: error instanceof Error ? error.message : String(error),
       })
+    }
+  }
+
+  /**
+   * Takes a scheduled backup, and never lets that be what breaks a Sunday.
+   *
+   * Synchronous because `VACUUM INTO` is, and cheap enough not to matter:
+   * the database is a few megabytes and this happens once a day.
+   *
+   * A failure is announced rather than logged and forgotten. The failure
+   * that actually happens here is a volume that stopped being writable
+   * months ago and a directory that has been empty ever since — and by the
+   * time anybody opens a backup screen, they already need a backup.
+   */
+  private backup(now: number): void {
+    try {
+      const taken = takeScheduledBackup(this.db, this.paths, this.paths.backupDir, now)
+      recordSuccess(this.db, now)
+      this.logger.info('took a scheduled backup', {
+        file: taken.file,
+        ...(taken.pruned.length === 0 ? {} : { pruned: taken.pruned }),
+      })
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error)
+      recordFailure(this.db, now, reason)
+      this.logger.error('a scheduled backup failed', { directory: this.paths.backupDir, reason })
+      this.notifier.enqueue(
+        backupFailed({
+          directory: this.paths.backupDir,
+          reason,
+          at: now,
+          nextAttemptInHours: readSchedule(this.db).everyHours,
+        }),
+      )
     }
   }
 
