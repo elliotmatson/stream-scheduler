@@ -340,3 +340,42 @@ export function ConfirmButton({
     </button>
   )
 }
+
+/**
+ * On or off, as a switch rather than a button.
+ *
+ * A button labelled "Turn off" states the action; a switch states the
+ * state. In a list of several, the second is readable at a glance and the
+ * first has to be read one row at a time.
+ */
+export function Switch({
+  checked,
+  label,
+  disabled,
+  onChange,
+}: {
+  checked: boolean
+  /** Describes what is being switched, for screen readers. */
+  label: string
+  disabled?: boolean
+  onChange: (next: boolean) => void
+}): ReactNode {
+  return (
+    <button
+      type="button"
+      role="switch"
+      className="switch"
+      aria-checked={checked}
+      aria-label={label}
+      disabled={disabled}
+      title={
+        checked ? 'On. Turn off to stop sending to it.' : 'Off. Turn on to start sending again.'
+      }
+      onClick={() => onChange(!checked)}
+    >
+      <span className="switch-track">
+        <span className="switch-thumb" />
+      </span>
+    </button>
+  )
+}

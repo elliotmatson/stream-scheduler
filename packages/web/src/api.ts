@@ -741,7 +741,7 @@ export interface Dashboard {
     health: string
     lastError: string | null
     detail: string | null
-    facts: { label: string; value: string }[]
+    facts: { label: string; value: string; tone?: 'bad' }[]
   }[]
   attention: { kind: string; message: string; href: string }[]
 }
