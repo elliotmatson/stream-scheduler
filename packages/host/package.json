@@ -10,12 +10,13 @@
   },
   "dependencies": {
     "@scheduler/core": "workspace:*",
-    "@scheduler/plugin-mock": "workspace:*",
-    "@scheduler/plugin-sdk": "workspace:*",
-    "@scheduler/plugin-hyperdeck": "workspace:*",
     "@scheduler/plugin-atem": "workspace:*",
-    "@scheduler/plugin-youtube": "workspace:*",
-    "@scheduler/plugin-streaming-encoder": "workspace:*"
+    "@scheduler/plugin-hyperdeck": "workspace:*",
+    "@scheduler/plugin-mock": "workspace:*",
+    "@scheduler/plugin-obs": "workspace:*",
+    "@scheduler/plugin-sdk": "workspace:*",
+    "@scheduler/plugin-streaming-encoder": "workspace:*",
+    "@scheduler/plugin-youtube": "workspace:*"
   },
   "devDependencies": {
     "typescript": "^5.7.2"
