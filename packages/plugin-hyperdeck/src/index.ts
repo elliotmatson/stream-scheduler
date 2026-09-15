@@ -32,6 +32,15 @@ import {
 export const DEFAULT_PORT = 9993
 
 /**
+ * Longest a single command may take before the deck is called unreachable.
+ *
+ * Generous, because a deck spinning up media genuinely is slow, and a
+ * false unreachable costs a reconnect. Bounded, because an unbounded wait
+ * is how one busy deck stops the whole scheduler.
+ */
+export const COMMAND_TIMEOUT_MS = 10_000
+
+/**
  * Codecs to suggest, not a list of what any particular deck has.
  *
  * These are the spellings in Blackmagic's own protocol documentation. A
@@ -551,12 +560,48 @@ class HyperdeckDevice {
     }
   }
 
+  /**
+   * One command, with a deadline.
+   *
+   * The deadline is the point. `sendCommand` resolves when the deck
+   * answers and there is no answer it is obliged to give: a deck that
+   * accepts the socket and then stops talking — which is exactly what one
+   * does while it remounts a card it has just been told to format —
+   * leaves the promise pending forever. That is not a device problem; it
+   * becomes a host problem, because whatever was awaiting it never
+   * returns either, all the way up to the scheduler loop.
+   *
+   * So every command has an upper bound, and a deck that misses it is
+   * reported as unreachable rather than silently holding a caller open.
+   */
   private async send<T>(command: Commands.AbstractCommand<T>): Promise<T> {
     if (this.disposed) throw new DeviceError('disposed', 'This device has been closed.')
+
+    let timer: ReturnType<typeof setTimeout> | undefined
     try {
-      return await this.deck.sendCommand(command)
+      return await Promise.race([
+        this.deck.sendCommand(command),
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(
+            () =>
+              reject(
+                new DeviceError(
+                  'command-timeout',
+                  `The deck did not answer within ${COMMAND_TIMEOUT_MS / 1000} seconds.`,
+                  {
+                    remediation:
+                      'It may be busy formatting or remounting a card. It will be retried once it answers again.',
+                  },
+                ),
+              ),
+            COMMAND_TIMEOUT_MS,
+          )
+        }),
+      ])
     } catch (error) {
       throw toDeviceError(error)
+    } finally {
+      if (timer) clearTimeout(timer)
     }
   }
 

@@ -46,6 +46,7 @@ const configSchema: ConfigField[] = [
       { id: 'flaky', label: 'Fails the first command after connecting' },
       { id: 'slow-to-settle', label: 'Takes a few reads to report a change' },
       { id: 'ignores-quality', label: 'Takes a quality profile and stays where it was' },
+      { id: 'never-answers', label: 'Accepts commands and never answers' },
     ],
     default: 'none',
   },
@@ -79,6 +80,16 @@ type Fault =
    *  kind of real failure: the stream comes up, at the wrong bitrate, and
    *  nothing says so unless the setting is read back. */
   | 'ignores-quality'
+  /**
+   * Takes the command and never resolves.
+   *
+   * What a HyperDeck does while it remounts a card it was told to format:
+   * the socket stays open, the command is accepted, and no answer ever
+   * comes. Nothing in JavaScript can cancel that promise, so every caller
+   * above it has to have its own deadline — and this is how those get
+   * tested without a deck.
+   */
+  | 'never-answers'
 
 class MockDevice {
   private streaming = false
@@ -211,7 +222,8 @@ class MockDevice {
           this.streamingSince = undefined
           this.emit(nodeId)
         },
-        readState: async () => this.stateOf(nodeId),
+        readState: async () =>
+          this.fault === 'never-answers' ? this.hang() : this.stateOf(nodeId),
       }
     }
     if (nodeId === 'record' && this.canRecord) {
@@ -277,7 +289,8 @@ class MockDevice {
           this.emit(nodeId)
           return {}
         },
-        readState: async () => this.stateOf(nodeId),
+        readState: async () =>
+          this.fault === 'never-answers' ? this.hang() : this.stateOf(nodeId),
       }
     }
     return undefined
@@ -400,6 +413,11 @@ class MockDevice {
     if (this.settleReads === 0) return value
     this.settleReads--
     return !value
+  }
+
+  /** Never resolves, for the fault of the same name. */
+  private hang(): Promise<never> {
+    return new Promise<never>(() => {})
   }
 
   private guard(): void {
