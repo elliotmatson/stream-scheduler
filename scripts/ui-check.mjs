@@ -91,6 +91,7 @@ async function main() {
       ['form fields', () => formFieldsAreStyled(browser, host.base)],
       ['forms', () => discoveryAndPreview(browser, host.base)],
       ['run timeline', () => theRunTimeline(browser, host.base, started.runId)],
+      ['file browser', () => theFileBrowser(browser, host.base)],
     ]) {
       try {
         await run()
@@ -309,6 +310,48 @@ async function theRunTimeline(browser, base, runId) {
 
   check('timeline: no console errors', problems.length === 0, problems.slice(0, 3).join(' | '))
   if (problems.length > 0) await shoot(page, 'timeline')
+  await context.close()
+}
+
+/**
+ * The file browser on a recorder, on a page nobody has touched yet.
+ *
+ * The regression: the card picker came from the live channel alone, which
+ * only carries states a device has pushed since the page opened. A deck
+ * sitting still pushes nothing, so on a fresh load there were no slots and
+ * the picker was hidden — it appeared only once something else made the
+ * deck emit, which from the outside looks like the picker turning up after
+ * you change slots somewhere else entirely.
+ *
+ * So this check is deliberately cold: load, open, look. Touching anything
+ * that moves the deck first would hide the bug.
+ */
+async function theFileBrowser(browser, base) {
+  const context = await browser.newContext()
+  const page = await context.newPage()
+  const problems = []
+  watch(page, problems, 'files')
+
+  await page.goto(`${base}/#/devices`)
+  await page.locator('.device-row-item', { hasText: 'HyperDeck — archive' }).first().click()
+  const drawer = page.locator('aside.drawer')
+  await drawer.waitFor({ timeout: TIMEOUT })
+
+  const files = drawer.locator('.card', { has: page.locator('h2:text-is("Files")') }).first()
+  await files.waitFor({ timeout: TIMEOUT })
+
+  const picker = files.locator('select').first()
+  await picker.waitFor({ timeout: TIMEOUT }).catch(() => undefined)
+  const offered = await picker.count()
+  check('the card picker is there before anything has moved', offered === 1)
+  if (offered !== 1) await shoot(page, 'files-no-slot-picker')
+
+  if (offered === 1) {
+    const names = await picker.locator('option').allInnerTexts()
+    check('and it offers every card the deck has', names.length === 2, names.join(', '))
+  }
+
+  check('files: no console errors', problems.length === 0, problems.slice(0, 3).join(' | '))
   await context.close()
 }
 
