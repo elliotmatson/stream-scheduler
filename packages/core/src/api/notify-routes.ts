@@ -2,7 +2,7 @@ import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
 import type { ConfigValues } from '@scheduler/plugin-sdk'
 import type { Application } from '../app.js'
-import { NOTIFICATION_EVENTS } from '../notify/types.js'
+import { EVENT_SEVERITY, NOTIFICATION_EVENTS } from '../notify/types.js'
 
 export function registerNotifyRoutes(fastify: FastifyInstance, app: Application): void {
   fastify.get('/api/notifications/kinds', async () =>
@@ -13,7 +13,16 @@ export function registerNotifyRoutes(fastify: FastifyInstance, app: Application)
     })),
   )
 
-  fastify.get('/api/notifications/events', async () => NOTIFICATION_EVENTS)
+  /**
+   * Every event, with how bad it is.
+   *
+   * The severity travels with the list rather than being a table the UI
+   * keeps its own copy of: a new event kind should appear grouped
+   * correctly without anybody remembering to edit the web package.
+   */
+  fastify.get('/api/notifications/events', async () =>
+    NOTIFICATION_EVENTS.map((event) => ({ event, severity: EVENT_SEVERITY[event] })),
+  )
 
   /** When the scheduler decides something is worth telling somebody about. */
   fastify.get('/api/notifications/settings', async () => app.thresholds.get())

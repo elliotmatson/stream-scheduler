@@ -29,6 +29,7 @@ import { Tags } from './tags/index.js'
 import { eventMidRunOn, freeMsOf } from './runs/retention.js'
 import { Sweeper } from './runs/sweep.js'
 import { runFailedNotification } from './notify/run-events.js'
+import { lifecycleNotification } from './notify/lifecycle-events.js'
 import { applyPendingRestore, type RestoreApplied } from './backup/index.js'
 import {
   backupDue,
@@ -334,6 +335,13 @@ export class Application {
         // Read at send time, not at startup: by the time a run fails, the
         // app may have learnt where it is really being reached.
         notifier.enqueue(runFailedNotification(db, event, links.origin))
+      },
+      // Queued on the same terms as a failure, and reaching nobody unless
+      // a channel asked for these by name: they are the "it worked"
+      // messages, and a channel full of those is a channel people stop
+      // reading.
+      onLifecycle: (event) => {
+        notifier.enqueue(lifecycleNotification(db, event, links.origin))
       },
     })
 

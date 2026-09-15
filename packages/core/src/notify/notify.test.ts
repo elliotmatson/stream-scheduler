@@ -564,3 +564,64 @@ describe('a failed run reaching a channel', () => {
     expect(store.getRun(store.findRunForOccurrence('o1')!.id).state).toBe('failed')
   })
 })
+
+describe('what a channel gets when nobody has chosen', () => {
+  const info = (over: Partial<Notification> = {}): Notification =>
+    failure({
+      event: 'run.started',
+      severity: 'info',
+      title: 'Sunday Service is on air',
+      dedupeKey: 'run.started:r1:',
+      ...over,
+    })
+
+  it('sends warnings and errors', () => {
+    const n = notifier()
+    n.create({ kind: 'google-chat', label: 'Tech team', config: { webhookUrl: CHAT_WEBHOOK } })
+
+    expect(n.enqueue(failure())).toBe(1)
+    expect(n.enqueue(failure({ event: 'device.cache_high', dedupeKey: 'cache:1' }))).toBe(1)
+  })
+
+  it('stays quiet about the ones that went fine', () => {
+    // The default used to be everything, which stopped being sane the
+    // moment the app could announce every service starting and stopping:
+    // a channel nobody tuned would carry four messages a Sunday, and a
+    // channel people scroll past does not report the failure either.
+    const n = notifier()
+    n.create({ kind: 'google-chat', label: 'Tech team', config: { webhookUrl: CHAT_WEBHOOK } })
+
+    expect(n.enqueue(info())).toBe(0)
+    expect(n.enqueue(info({ event: 'output.finished', dedupeKey: 'output.finished:r1:a' }))).toBe(0)
+    expect(n.enqueue(info({ event: 'retention.swept', dedupeKey: 'swept:1' }))).toBe(0)
+  })
+
+  it('sends them to a channel that asked for them by name', () => {
+    const n = notifier()
+    n.create({
+      kind: 'google-chat',
+      label: 'Ops log',
+      config: { webhookUrl: CHAT_WEBHOOK },
+      events: ['run.started', 'run.finished'],
+    })
+
+    expect(n.enqueue(info())).toBe(1)
+    // And still only the ones it named.
+    expect(n.enqueue(info({ event: 'output.started', dedupeKey: 'output.started:r1:a' }))).toBe(0)
+  })
+
+  it('tells a warning sweep from a clean one', () => {
+    // The reason retention is two event kinds. It used to be one kind with
+    // a severity that depended on the outcome, so a channel filtering by
+    // kind either got every sweep or missed the failures.
+    const n = notifier()
+    n.create({ kind: 'google-chat', label: 'Tech team', config: { webhookUrl: CHAT_WEBHOOK } })
+
+    expect(n.enqueue(info({ event: 'retention.swept', dedupeKey: 'swept:clean' }))).toBe(0)
+    expect(
+      n.enqueue(
+        failure({ event: 'retention.failed', severity: 'warning', dedupeKey: 'swept:stuck' }),
+      ),
+    ).toBe(1)
+  })
+})

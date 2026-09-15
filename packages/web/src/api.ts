@@ -326,6 +326,12 @@ export interface Destination {
 }
 
 /** What a backup would hold, and what restoring one would need. */
+/** One kind of thing worth telling somebody about, and how bad it is. */
+export interface NotificationEventKind {
+  event: string
+  severity: 'info' | 'warning' | 'error'
+}
+
 export interface BackupSchedule {
   enabled: boolean
   everyHours: number
@@ -716,7 +722,7 @@ export const api = {
   skip: (occurrenceId: string) =>
     request<unknown>(`/api/occurrences/${occurrenceId}/skip`, { method: 'POST' }),
   notificationKinds: () => request<ChannelKind[]>('/api/notifications/kinds'),
-  notificationEvents: () => request<string[]>('/api/notifications/events'),
+  notificationEvents: () => request<NotificationEventKind[]>('/api/notifications/events'),
   notificationSettings: () => request<NotificationSettings>('/api/notifications/settings'),
   updateNotificationSettings: (input: Partial<NotificationSettings>) =>
     request<NotificationSettings>('/api/notifications/settings', {
