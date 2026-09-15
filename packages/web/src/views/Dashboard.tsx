@@ -142,13 +142,34 @@ export function Dashboard({ navigate }: { navigate: (path: string) => void }): R
           {data.devices.length === 0 ? (
             <Empty>No devices are set up yet.</Empty>
           ) : (
-            <div className="stack" style={{ gap: 6 }}>
+            <div className="stack" style={{ gap: 2 }}>
               {data.devices.map((device) => (
-                <div key={device.id} className="row" style={{ gap: 12, alignItems: 'baseline' }}>
-                  <StatusPill status={device.health} />
+                // What it is doing, not whether a socket is open: five rows
+                // of "connected" say nothing about whether the morning is
+                // being recorded. The whole row opens the device.
+                <button
+                  key={device.id}
+                  className="device-row"
+                  title={`Open ${device.label}`}
+                  onClick={() => navigate(`/devices/${device.id}`)}
+                >
+                  <StatusPill status={device.activity} />
                   <strong>{device.label}</strong>
-                  <span className="muted">{device.detail ?? device.lastError ?? 'idle'}</span>
-                </div>
+                  {device.activity === 'unreachable' && device.lastError ? (
+                    <span className="bad">{device.lastError}</span>
+                  ) : (
+                    device.facts.map((fact) => (
+                      <span key={fact.label} className="muted" title={fact.label}>
+                        {fact.value}
+                      </span>
+                    ))
+                  )}
+                  {device.health === 'degraded' ? (
+                    <span className="muted" title={device.lastError ?? undefined}>
+                      · answering, but not everything works
+                    </span>
+                  ) : null}
+                </button>
               ))}
             </div>
           )}
@@ -161,12 +182,15 @@ export function Dashboard({ navigate }: { navigate: (path: string) => void }): R
 /**
  * One output's line.
  *
- * The telemetry is the last thing the device said, not a fresh read — so
- * when it is old, the age is shown rather than the number being presented
- * as current.
+ * Deliberately not the numbers. Bitrate, cache and headroom live on the
+ * run's own page, which is the detailed view; what belongs on a screen
+ * somebody glances at between services is whether it is on, and anything
+ * that is wrong with it.
  */
 function Output({ output, now }: { output: DashboardOutput; now: number }): ReactNode {
   const stale = output.telemetry !== undefined && now - output.telemetry.at > 60_000
+  const lowMedia =
+    output.telemetry?.remainingMs !== undefined && output.telemetry.remainingMs < 3_600_000
 
   return (
     <div className="row" style={{ gap: 12, alignItems: 'baseline', flexWrap: 'wrap' }}>
@@ -183,17 +207,11 @@ function Output({ output, now }: { output: DashboardOutput; now: number }): Reac
         <span className="muted">{duration(Math.max(output.endsAt - now, 0))} left</span>
       ) : null}
 
-      {output.telemetry?.bitrateBps ? (
-        <span className="muted" title="What the encoder says it is sending.">
-          {Math.round(output.telemetry.bitrateBps / 1000)} kbps
-        </span>
-      ) : null}
-      {output.telemetry?.remainingMs !== undefined ? (
-        <span
-          className={output.telemetry.remainingMs < 3_600_000 ? 'bad' : 'muted'}
-          title="Recording time left on the slot being written to."
-        >
-          {duration(output.telemetry.remainingMs)} of media
+      {/* Only what is wrong. Everything else is a number, and numbers are
+          on the timeline. */}
+      {lowMedia ? (
+        <span className="bad" title="Recording time left on the slot being written to.">
+          {duration(output.telemetry!.remainingMs!)} of media left
         </span>
       ) : null}
       {output.telemetry?.inputPresent === false ? (

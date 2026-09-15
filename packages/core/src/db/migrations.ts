@@ -386,6 +386,40 @@ CREATE TABLE session (
 CREATE INDEX session_live ON session (token_hash) WHERE revoked_at IS NULL;
 `,
   },
+  {
+    id: 9,
+    name: 'telemetry',
+    sql: `
+-- What the devices were doing while an event was on air.
+--
+-- The status screen shows the last thing each one said, which answers "is
+-- it working now". This is for the question asked afterwards — why it fell
+-- apart at 09:40 — which is a shape over time and invisible in a single
+-- reading.
+--
+-- Keyed by the instant so a retry or an overlapping tick cannot write the
+-- same reading twice; WITHOUT ROWID because the key is the whole row's
+-- identity and these are written far more often than they are read.
+CREATE TABLE telemetry_sample (
+  run_id            TEXT    NOT NULL,
+  device_id         TEXT    NOT NULL,
+  node_id           TEXT    NOT NULL,
+  output_id         TEXT,
+  at                INTEGER NOT NULL,
+  bitrate_bps       INTEGER,
+  remaining_ms      INTEGER,
+  elapsed_ms        INTEGER,
+  cache_percent     REAL,
+  cache_buffered_ms INTEGER,
+  input_present     INTEGER,
+  streaming         INTEGER,
+  recording         INTEGER,
+  PRIMARY KEY (run_id, device_id, node_id, output_id, at)
+) WITHOUT ROWID;
+
+CREATE INDEX telemetry_age ON telemetry_sample (at);
+`,
+  },
 ]
 
 interface GraphNode {

@@ -6,6 +6,7 @@ export const NOTIFICATION_EVENTS = [
   'preflight.problem',
   'preflight.ready',
   'account.reauth_required',
+  'device.cache_high',
   'test',
 ] as const
 

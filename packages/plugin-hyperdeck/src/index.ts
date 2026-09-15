@@ -291,6 +291,7 @@ class HyperdeckDevice {
     const slot = await this.slotInfo(transport)
     const slots = await this.allSlots(transport)
     const config = await this.configuration()
+    const cache = await this.cacheInfo()
 
     return {
       recording: {
@@ -308,6 +309,20 @@ class HyperdeckDevice {
         // there is somewhere for it to go.
         rollover: slots.filter((entry) => entry.status === SlotStatus.MOUNTED).length > 1,
       },
+      // A deck with an internal cache records into it and writes out to the
+      // card behind itself. It reports what it is doing and how much is
+      // still waiting rather than how full it is, so that is what is said
+      // here — a percentage would be invented.
+      ...(cache === undefined
+        ? {}
+        : {
+            cache: {
+              status: cache.status,
+              ...(cache.recordingTime === undefined
+                ? {}
+                : { bufferedMs: cache.recordingTime * 1000 }),
+            },
+          }),
       // A deck's quality is the codec it records in. It takes one by name
       // and will not say which names it knows, so the current one is
       // reported as fact and the rest offered as suggestions.
@@ -494,6 +509,20 @@ class HyperdeckDevice {
   }
 
   /** What the deck is set to record *from*. Older firmware may not answer. */
+  /**
+   * The write cache, on the models that have one.
+   *
+   * Older decks and the Studio Mini answer "unsupported", which is not a
+   * fault: absent means the deck writes straight to the card.
+   */
+  private async cacheInfo(): Promise<Commands.CacheInfoCommandResponse | undefined> {
+    try {
+      return await this.send(new Commands.CacheInfoGetCommand())
+    } catch {
+      return undefined
+    }
+  }
+
   private async configuration(): Promise<Commands.ConfigurationCommandResponse | undefined> {
     if (this.config) return this.config
     try {

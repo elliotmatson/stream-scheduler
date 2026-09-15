@@ -222,6 +222,9 @@ function Route({
 }): ReactNode {
   const run = /^\/runs\/(.+)$/.exec(path)
   if (run) return <RunDetail runId={run[1]!} navigate={navigate} />
+  // A device linked to from the status board or a run's own page.
+  const device = /^\/devices\/(.+)$/.exec(path)
+  if (device) return <Devices focusId={device[1]!} />
   if (path === '/settings') return <Settings onSessionChanged={onSessionChanged} />
   if (path === '/schedule') return <Schedule navigate={navigate} />
   if (path === '/devices') return <Devices />

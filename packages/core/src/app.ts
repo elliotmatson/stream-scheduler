@@ -14,6 +14,9 @@ import {
 } from './secrets/master-key.js'
 import { scrubber } from './secrets/scrubber.js'
 import { Auth } from './auth/index.js'
+import { TelemetryRecorder } from './runs/telemetry.js'
+import { cacheHighNotification } from './notify/run-events.js'
+import { Thresholds } from './notify/thresholds.js'
 import { SecretVault } from './secrets/vault.js'
 import { DEFAULT_HORIZON_MS, materializeAll } from './schedule/materialize.js'
 import { EventPlanner } from './runs/event-planner.js'
@@ -40,6 +43,10 @@ export interface AppOptions {
   enforceSerialization?: boolean
   /** How far ahead events are pre-flight checked. */
   preflightLeadMs?: number
+  /** How often a running event's devices are asked what they are doing. */
+  telemetryIntervalMs?: number
+  /** How long those readings are kept. */
+  telemetryRetentionMs?: number
   /** Used in notification links back into the UI. */
   baseUrl?: string
   /**
@@ -71,6 +78,8 @@ export class Application {
   readonly engine: RunEngine
   readonly notifier: Notifier
   readonly preflight: PreflightChecker
+  readonly telemetry: TelemetryRecorder
+  readonly thresholds: Thresholds
   readonly auth: Auth
   readonly logger: Logger
   readonly clock: Clock
@@ -106,6 +115,8 @@ export class Application {
     engine: RunEngine
     notifier: Notifier
     preflight: PreflightChecker
+    telemetry: TelemetryRecorder
+    thresholds: Thresholds
     auth: Auth
     logger: Logger
     clock: Clock
@@ -124,6 +135,8 @@ export class Application {
     this.engine = init.engine
     this.notifier = init.notifier
     this.preflight = init.preflight
+    this.telemetry = init.telemetry
+    this.thresholds = init.thresholds
     this.auth = init.auth
     this.logger = init.logger
     this.clock = init.clock
@@ -247,6 +260,30 @@ export class Application {
       leadMs: options.preflightLeadMs ?? DEFAULT_PREFLIGHT_LEAD_MS,
     })
 
+    const thresholds = new Thresholds({ db })
+
+    const telemetry = new TelemetryRecorder({
+      db,
+      store,
+      connections,
+      clock,
+      logger,
+      // Read at the moment of the check, not at startup: a threshold
+      // changed on a Sunday morning should take effect on that morning.
+      cacheWarningPercent: () => thresholds.get().cacheWarningPercent,
+      ...(options.telemetryIntervalMs === undefined
+        ? {}
+        : { intervalMs: options.telemetryIntervalMs }),
+      ...(options.telemetryRetentionMs === undefined
+        ? {}
+        : { retentionMs: options.telemetryRetentionMs }),
+      // Queued rather than sent from here, for the same reason a failed run
+      // is: sampling must not wait on a mail server.
+      onCacheHigh: (event) => {
+        notifier.enqueue(cacheHighNotification(db, event, links.origin))
+      },
+    })
+
     const auth = new Auth({
       db,
       clock,
@@ -266,6 +303,8 @@ export class Application {
       engine,
       notifier,
       preflight,
+      telemetry,
+      thresholds,
       auth,
       logger,
       clock,
@@ -313,6 +352,9 @@ export class Application {
         this.lastPreflightAt = now
         await this.preflight.run()
       }
+      // After the engine, so a run that has just gone on air is sampled
+      // rather than waiting a whole interval to appear on its own timeline.
+      await this.telemetry.tick()
       await this.notifier.flush()
     } catch (error) {
       this.logger.error('scheduler tick failed', {

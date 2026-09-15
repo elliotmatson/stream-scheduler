@@ -72,6 +72,10 @@ export interface NodeState {
   recording?: {
     active: boolean
     filename?: string
+    /** How long this recording has been going, where the device counts it
+     *  for itself. A deck does not, so the host falls back to when its own
+     *  start step landed. */
+    durationMs?: number
     /** Headroom on the slot being recorded to. */
     remainingMs?: number
     /** Every slot the device has, so an operator can see the card they are
@@ -94,6 +98,24 @@ export interface NodeState {
     format?: string
     /** Which input it is set to take, where the device has a choice. */
     source?: string
+  }
+  /**
+   * The device's own buffer, where it has one.
+   *
+   * Worth watching for the same reason on either side of the box: a send
+   * cache filling up is a stream about to stall, and a write cache that
+   * stops draining is a card about to refuse. Devices count it differently
+   * — an ATEM and a Web Presenter report how full it is, a HyperDeck says
+   * what it is doing and how much is waiting — so all three have somewhere
+   * to put what they know rather than one being made to lie.
+   */
+  cache?: {
+    /** How full, 0–100. */
+    percent?: number
+    /** As the device names it: 'ready', 'transferring', and so on. */
+    status?: string
+    /** Recording held in the cache, not yet written to the card. */
+    bufferedMs?: number
   }
   routing?: Record<string, string>
   /**

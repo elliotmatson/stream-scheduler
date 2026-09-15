@@ -31,7 +31,7 @@ import {
 } from '../events/outputs.js'
 import { describeConflict, overlapsForSeries } from '../events/overlap.js'
 import { assertUnreferenced, ConflictError, NotFoundError } from './errors.js'
-import { buildDashboard } from './dashboard.js'
+import { buildDashboard, outputsOf } from './dashboard.js'
 import { registerAuthGate, registerAuthRoutes } from './auth-routes.js'
 import { registerNotifyRoutes } from './notify-routes.js'
 import { registerOAuthRoutes } from './oauth-routes.js'
@@ -1035,6 +1035,9 @@ function registerRoutes(fastify: FastifyInstance, app: Application): void {
     // before they were ever written.
     return {
       ...toRunDto(run),
+      // The same view of an output the status screen has. This page is the
+      // detailed one, so it carries the numbers as well as the steps.
+      outputs: outputsOf(app, id, run.occurrence_id),
       // Where each prepared stream can be watched. Pulled out of the step
       // responses because that is where it lands, and buried in a timeline
       // is no use to somebody who needs to send the link round.
@@ -1054,6 +1057,35 @@ function registerRoutes(fastify: FastifyInstance, app: Application): void {
         startedAt: step.started_at,
         endedAt: step.ended_at,
         durationMs: step.started_at && step.ended_at ? step.ended_at - step.started_at : null,
+      })),
+    }
+  })
+
+  /**
+   * What the devices were doing, over the whole run.
+   *
+   * Decimated to at most `points` readings per output: a chart is six
+   * hundred pixels wide and a four-hour service is a thousand samples, so
+   * sending all of them costs bandwidth to draw the same line.
+   */
+  fastify.get('/api/runs/:id/telemetry', async (request) => {
+    const { id } = z.object({ id: z.string() }).parse(request.params)
+    const { points } = z
+      .object({ points: z.coerce.number().int().min(10).max(2000).default(240) })
+      .parse(request.query ?? {})
+
+    const byOutput = new Map<string, ReturnType<typeof app.telemetry.read>>()
+    for (const sample of app.telemetry.read(id)) {
+      const key = sample.outputId ?? `${sample.deviceId}/${sample.nodeId}`
+      const list = byOutput.get(key) ?? []
+      list.push(sample)
+      byOutput.set(key, list)
+    }
+
+    return {
+      outputs: [...byOutput.entries()].map(([outputId, samples]) => ({
+        outputId,
+        samples: decimate(samples, points),
       })),
     }
   })
@@ -1142,6 +1174,20 @@ function watchLinks(app: Application, runId: string): { label: string; url: stri
     })
   }
   return links
+}
+
+/**
+ * Thins a series to at most `limit` readings, keeping the first and the last.
+ *
+ * Every nth rather than an average: an averaged bitrate hides the dip that
+ * is the whole reason somebody opened the chart.
+ */
+function decimate<T>(samples: T[], limit: number): T[] {
+  if (samples.length <= limit) return samples
+  const step = (samples.length - 1) / (limit - 1)
+  const out: T[] = []
+  for (let i = 0; i < limit; i++) out.push(samples[Math.round(i * step)]!)
+  return out
 }
 
 function statusFor(error: Error): number {

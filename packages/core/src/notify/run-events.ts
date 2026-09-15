@@ -76,3 +76,48 @@ function occurrenceContext(
     )
     .get(occurrenceId) as { label: string; scheduledStart: number; timezone: string } | undefined
 }
+
+/**
+ * A device's send cache filling up while it is on air.
+ *
+ * The one failure that gives warning. An encoder whose uplink cannot keep
+ * up does not stop: it buffers, and the buffer climbs, and some minutes
+ * later the stream drops or the service cuts it off. By then the only
+ * evidence is a dead stream. Told at eighty per cent, somebody has time to
+ * look at the network before the congregation notices.
+ */
+export function cacheHighNotification(
+  db: Db,
+  event: {
+    runId: string
+    occurrenceId: string
+    deviceLabel: string
+    outputLabel: string
+    percent: number
+  },
+  baseUrl: string,
+): Notification {
+  const context = occurrenceContext(db, event.occurrenceId)
+  const label = context?.label ?? 'A scheduled event'
+  const percent = Math.round(event.percent)
+
+  return {
+    event: 'device.cache_high',
+    severity: 'warning',
+    title: `${event.deviceLabel} is falling behind`,
+    summary: `Its cache is ${percent}% full while "${event.outputLabel}" is on air. A cache that keeps climbing ends in a dropped stream.`,
+    facts: [
+      { label: 'Event', value: label },
+      { label: 'Device', value: event.deviceLabel },
+      { label: 'Output', value: event.outputLabel },
+      { label: 'Cache', value: `${percent}%` },
+    ],
+    remediation:
+      'Check the upload the device is sharing — another large transfer, or a link that cannot carry the bitrate it is set to. Lowering the quality is the quickest way out mid-service.',
+    link: { label: 'Open the run timeline', url: `${baseUrl}/#/runs/${event.runId}` },
+    threadKey: `occurrence-${event.occurrenceId}`,
+    // Once per device per run: a cache that sits high for an hour is one
+    // problem, not two hundred messages.
+    dedupeKey: `cache-high:${event.runId}:${event.deviceLabel}`,
+  }
+}

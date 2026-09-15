@@ -359,6 +359,74 @@ describe('configuration', () => {
     expect(JSON.stringify(n.list())).not.toContain('secret-token')
   })
 
+  it('changes a channel without being given its secret again', () => {
+    const n = notifier()
+    const id = n.create({
+      kind: 'google-chat',
+      label: 'Tech team',
+      config: { webhookUrl: CHAT_WEBHOOK },
+    })
+
+    // What an edit form has to work with: the masked marker, because there
+    // is no read path for the real one.
+    const shown = n.list()[0]!
+    expect(shown.config.webhookUrl).toBe('••••••••')
+
+    n.update(id, { label: 'AV team', config: shown.config, events: ['run.failed'] })
+
+    const after = n.list()[0]!
+    expect(after.label).toBe('AV team')
+    expect(after.events).toEqual(['run.failed'])
+    // Saving the form back must not have replaced a working webhook with
+    // eight dots.
+    expect(n.enqueue(failure({ dedupeKey: 'after-edit' }))).toBe(1)
+  })
+
+  it('takes a new secret when one is actually typed', () => {
+    const n = notifier()
+    const id = n.create({
+      kind: 'google-chat',
+      label: 'Tech team',
+      config: { webhookUrl: CHAT_WEBHOOK },
+    })
+    n.update(id, { config: { webhookUrl: 'https://chat.googleapis.invalid/v1/spaces/B/messages' } })
+    expect(JSON.stringify(n.list())).not.toContain('spaces/B')
+    // Stored, not echoed: the proof it took is that it still delivers.
+    expect(n.enqueue(failure({ dedupeKey: 'new-secret' }))).toBe(1)
+  })
+
+  it('sends nothing to a channel that has been switched off', () => {
+    const n = notifier()
+    const id = n.create({
+      kind: 'google-chat',
+      label: 'Tech team',
+      config: { webhookUrl: CHAT_WEBHOOK },
+    })
+    n.update(id, { enabled: false })
+    expect(n.list()[0]!.enabled).toBe(false)
+    expect(n.enqueue(failure({ dedupeKey: 'while-off' }))).toBe(0)
+
+    n.update(id, { enabled: true })
+    expect(n.enqueue(failure({ dedupeKey: 'back-on' }))).toBe(1)
+  })
+
+  it('only sends the events a channel asked for', () => {
+    const n = notifier()
+    const id = n.create({
+      kind: 'google-chat',
+      label: 'Tech team',
+      config: { webhookUrl: CHAT_WEBHOOK },
+    })
+    n.update(id, { events: ['device.cache_high'] })
+
+    expect(n.enqueue(failure({ dedupeKey: 'not-subscribed' }))).toBe(0)
+    expect(n.enqueue(failure({ event: 'device.cache_high', dedupeKey: 'subscribed' }))).toBe(1)
+  })
+
+  it('refuses to change one that is not there', () => {
+    expect(() => notifier().update('nope', { label: 'x' })).toThrow(/nope/)
+  })
+
   it('offers Google Chat, Slack, a webhook and email', () => {
     expect(
       notifier()
