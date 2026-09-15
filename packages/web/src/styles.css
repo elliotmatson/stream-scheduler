@@ -1839,6 +1839,11 @@ button.link:hover {
   /* Buttons centre their contents by default, which for a row of facts
      reads as a mistake. */
   justify-content: flex-start;
+  /* A deck reports as many facts as it has, and on a phone they do not
+     fit on one line. Without this the row cannot break, so it widens the
+     card, the card widens the page, and the whole app scrolls sideways —
+     which is what it did: 309px of it on a 390px screen. */
+  flex-wrap: wrap;
   gap: 12px;
   width: 100%;
   padding: 6px 8px;
@@ -1849,6 +1854,20 @@ button.link:hover {
   text-align: left;
   font: inherit;
   color: inherit;
+}
+
+/* A flex child will not shrink below its own content by default, so one
+   long value — a codec name, a filename — keeps the row wide however much
+   it is allowed to wrap. These two lines are what let it give way. */
+.device-row > * {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+/* The name and its status stay together on the first line; the facts wrap
+   underneath rather than splitting the thing being named. */
+.device-row > strong {
+  flex: 1 1 auto;
 }
 
 .device-row:hover {

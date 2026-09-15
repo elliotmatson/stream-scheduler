@@ -93,6 +93,7 @@ async function main() {
       ['run timeline', () => theRunTimeline(browser, host.base, started.runId)],
       ['file browser', () => theFileBrowser(browser, host.base)],
       ['device list', () => theDeviceList(browser, host.base)],
+      ['phone', () => nothingOverflowsOnAPhone(browser, host.base)],
     ]) {
       try {
         await run()
@@ -131,7 +132,8 @@ async function everyScreenRenders(browser, base) {
       }
     }
 
-    // Nothing may scroll sideways at a laptop width.
+    // Nothing may scroll sideways at a laptop width. Phone width is
+    // checked separately, below — that is where this actually goes wrong.
     const overflow = await page.evaluate(
       () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
     )
@@ -311,6 +313,51 @@ async function theRunTimeline(browser, base, runId) {
 
   check('timeline: no console errors', problems.length === 0, problems.slice(0, 3).join(' | '))
   if (problems.length > 0) await shoot(page, 'timeline')
+  await context.close()
+}
+
+/**
+ * Every screen on a phone, which is where somebody checks on a Sunday.
+ *
+ * There was already an overflow check and it ran at 1280px, where nothing
+ * has ever overflowed. The device rows on the status screen pushed the page
+ * 309px wider than a 390px phone — a flex row of facts with no way to wrap
+ * — and it reached a real install before anybody saw it.
+ *
+ * Reported per screen rather than as one number, because "something
+ * overflows" without saying where is a bug report you have to redo.
+ */
+async function nothingOverflowsOnAPhone(browser, base) {
+  // An iPhone in portrait, which is what is in somebody's hand.
+  const context = await browser.newContext({ viewport: { width: 390, height: 844 } })
+  const page = await context.newPage()
+  const problems = []
+  watch(page, problems, 'phone')
+
+  for (const screen of SCREENS) {
+    await page.goto(`${base}/#${screen.route}`)
+    await page.locator(screen.sees).first().waitFor({ timeout: TIMEOUT })
+
+    const overflow = await page.evaluate(
+      () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
+    )
+    // Name the widest offender, so a failure says what to look at.
+    const worst = await page.evaluate(() => {
+      const width = document.documentElement.clientWidth
+      const out = [...document.querySelectorAll('*')]
+        .map((el) => ({ el, right: el.getBoundingClientRect().right }))
+        .filter((entry) => entry.right > width + 1)
+        .sort((a, b) => b.right - a.right)[0]
+      if (!out) return ''
+      const name = out.el.className ? `.${String(out.el.className).split(' ')[0]}` : ''
+      return `${out.el.tagName.toLowerCase()}${name} reaches ${Math.round(out.right)}px`
+    })
+
+    check(`${screen.name} fits a phone`, overflow <= 1, `${overflow}px over — ${worst}`)
+    if (overflow > 1) await shoot(page, `overflow-${screen.name}`)
+  }
+
+  check('phone: no console errors', problems.length === 0, problems.slice(0, 3).join(' | '))
   await context.close()
 }
 
