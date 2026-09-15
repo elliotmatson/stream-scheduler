@@ -159,7 +159,11 @@ export function Dashboard({ navigate }: { navigate: (path: string) => void }): R
                     <span className="bad">{device.lastError}</span>
                   ) : (
                     device.facts.map((fact) => (
-                      <span key={fact.label} className="muted" title={fact.label}>
+                      <span
+                        key={fact.label}
+                        className={fact.tone === 'bad' ? 'bad' : 'muted'}
+                        title={fact.label}
+                      >
                         {fact.value}
                       </span>
                     ))

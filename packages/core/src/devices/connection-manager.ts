@@ -167,11 +167,39 @@ export class ConnectionManager {
       this.recordHealth(deviceId, health)
       this.emit({ type: 'health', deviceId, report: health })
       this.logger.info('device connected', { deviceId, model: capabilities.model })
+      await this.primeState(connection)
       return connection
     } catch (error) {
       if (device) await device.dispose().catch(() => {})
       this.noteFailure(deviceId, error)
       throw error
+    }
+  }
+
+  /**
+   * Asks a freshly connected device what it is doing, once.
+   *
+   * Without this, a device that has connected but not yet been asked to do
+   * anything has nothing in the state cache, and every screen showing it
+   * has nothing to show — a status row reading only "idle" beside a device
+   * that could perfectly well say it has no card in it. Devices push as
+   * things change, but nothing pushes the first reading.
+   *
+   * Best-effort on purpose: a node that will not answer is not a reason to
+   * throw away a connection that just probed successfully.
+   */
+  private async primeState(connection: Connection): Promise<void> {
+    for (const node of connection.nodes) {
+      try {
+        const state = await connection.device.invoke(node.id, 'readState')
+        if (state) this.remember(connection.deviceId, node.id, state)
+      } catch (error) {
+        this.logger.debug('could not read initial state', {
+          deviceId: connection.deviceId,
+          nodeId: node.id,
+          error: error instanceof Error ? error.message : String(error),
+        })
+      }
     }
   }
 

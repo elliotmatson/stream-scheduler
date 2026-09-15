@@ -1,4 +1,6 @@
+import type { NodeState } from '@scheduler/plugin-sdk'
 import type { Application } from '../app.js'
+import type { Connection } from '../devices/connection-manager.js'
 import { outputsForSeries } from '../events/outputs.js'
 import { timelineFor } from '../runs/timeline.js'
 
@@ -85,7 +87,15 @@ export interface DashboardDevice {
   /** One line about what it is doing, in the device's own terms. */
   detail: string | null
   /** The numbers worth seeing without opening the device. */
-  facts: { label: string; value: string }[]
+  facts: DeviceFact[]
+}
+
+export interface DeviceFact {
+  /** What it is, shown on hover: the value alone has to be short. */
+  label: string
+  value: string
+  /** Set when the reading is the reason somebody should look. */
+  tone?: 'bad'
 }
 
 export interface DashboardAttention {
@@ -272,7 +282,7 @@ function devices(app: Application): DashboardDevice[] {
     lastError: connection.health.message ?? null,
     activity: activityOf(app, connection.deviceId, connection.health.state),
     detail: describeDevice(app, connection.deviceId),
-    facts: factsOf(app, connection.deviceId),
+    facts: factsOf(app, connection),
   }))
 }
 
@@ -295,34 +305,121 @@ function activityOf(
 }
 
 /**
- * The few numbers worth showing beside a device without opening it.
+ * The few things worth showing beside a device without opening it.
  *
- * Deliberately short: this is a glance, and the run's own page is where
- * the full picture and the history live.
+ * A row that says only "idle" is a row nobody reads. Every device can say
+ * something about itself even when it is doing nothing — what is on its
+ * input, what is in its card slot, what quality it is set to — and those
+ * are exactly the things that are wrong on the Sunday a service fails to
+ * record. Kept to a handful and ordered most-urgent first: this is a
+ * glance, and the device's own page is where the full picture lives.
  */
-function factsOf(app: Application, deviceId: string): { label: string; value: string }[] {
-  const facts: { label: string; value: string }[] = []
-  for (const { state } of app.connections.lastStates(deviceId)) {
+function factsOf(app: Application, connection: Connection): DeviceFact[] {
+  const facts: DeviceFact[] = []
+  const seen = new Set<string>()
+  const add = (fact: DeviceFact): void => {
+    // Several nodes on one device report overlapping state; the same
+    // reading twice in a row reads as a bug.
+    if (seen.has(fact.label)) return
+    seen.add(fact.label)
+    facts.push(fact)
+  }
+
+  for (const { state } of app.connections.lastStates(connection.deviceId)) {
     if (state.streaming?.active && state.streaming.bitrateBps !== undefined) {
-      facts.push({
+      add({
         label: 'Bitrate',
         value: `${Math.round(state.streaming.bitrateBps / 1000)} kbps`,
       })
     }
     if (state.cache?.percent !== undefined && state.cache.percent >= 1) {
-      facts.push({ label: 'Cache', value: `cache ${Math.round(state.cache.percent)}%` })
-    }
-    if (state.recording?.remainingMs !== undefined) {
-      facts.push({
-        label: 'Media left',
-        value: `${describeSpan(state.recording.remainingMs)} left`,
+      add({
+        label: 'Cache',
+        value: `cache ${Math.round(state.cache.percent)}%`,
+        ...(state.cache.percent >= app.thresholds.get().cacheWarningPercent
+          ? { tone: 'bad' as const }
+          : {}),
       })
+    } else if (state.cache?.status !== undefined && !QUIET_CACHE.has(state.cache.status)) {
+      // A deck writing out its cache has nothing to do with being full,
+      // and is worth seeing before somebody pulls the card.
+      add({ label: 'Cache', value: `cache ${state.cache.status}` })
     }
-    if (state.input?.format !== undefined && state.input.present) {
-      facts.push({ label: 'Input', value: state.input.format })
+
+    const storage = storageFact(state)
+    if (storage) add(storage)
+
+    const signal = signalFact(state)
+    if (signal) add(signal)
+
+    // What it is set to record or stream at. Wrong on the day is a whole
+    // service in the wrong codec, and it is invisible until then.
+    const quality = state.options?.quality?.current
+    if (quality !== undefined) add({ label: 'Quality', value: quality })
+  }
+
+  // Always something, even for a device that reports nothing at all.
+  add({ label: 'Type', value: pluginName(app, connection.pluginId) })
+  return facts
+}
+
+/** Cache states that mean "nothing is happening", and so are not worth a line. */
+const QUIET_CACHE = new Set(['ready', 'idle', 'none', 'stopped'])
+
+/** What the plugin calls itself, minus the maker, which every row shares. */
+function pluginName(app: Application, pluginId: string): string {
+  try {
+    return app.registry.get(pluginId).displayName.replace(/^Blackmagic /, '')
+  } catch {
+    return pluginId
+  }
+}
+
+/**
+ * The card, and whether there is one.
+ *
+ * `remainingMs` is what the device says about the slot it would record to,
+ * and is the best answer when it is there. Failing that the slot list can
+ * still say whether anything is mounted — and "no card" is the single most
+ * useful thing this screen can tell somebody on a Saturday.
+ */
+function storageFact(state: NodeState): DeviceFact | undefined {
+  const recording = state.recording
+  if (recording === undefined) return undefined
+
+  if (recording.remainingMs !== undefined) {
+    return { label: 'Media left', value: `${describeSpan(recording.remainingMs)} left` }
+  }
+
+  const slots = recording.slots ?? []
+  if (slots.length === 0) return undefined
+
+  const mounted = slots.filter((slot) => MOUNTED.has(slot.status.toLowerCase()))
+  if (mounted.length === 0) {
+    return { label: 'Media left', value: 'no card', tone: 'bad' }
+  }
+
+  // The one it would write to, else the emptiest, which is the one it
+  // would roll onto.
+  const best = mounted.find((slot) => slot.active) ?? mounted[0]
+  if (best?.remainingMs === undefined) {
+    return {
+      label: 'Media left',
+      value: `${mounted.length} card${mounted.length === 1 ? '' : 's'}`,
     }
   }
-  return facts
+  return { label: 'Media left', value: `${describeSpan(best.remainingMs)} left` }
+}
+
+const MOUNTED = new Set(['mounted', 'ready', 'ok'])
+
+/** What is arriving on the input, or that nothing is. */
+function signalFact(state: NodeState): DeviceFact | undefined {
+  const input = state.input
+  if (input === undefined) return undefined
+  if (!input.present) return { label: 'Input', value: 'no signal', tone: 'bad' }
+  const source = input.source ? ` on ${input.source}` : ''
+  return { label: 'Input', value: `${input.format ?? 'signal'}${source}` }
 }
 
 /** `3h 12m`, for a fact that has no room for a sentence. */

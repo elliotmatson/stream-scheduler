@@ -346,6 +346,31 @@ describe('the status screen', () => {
     expect(dashboard.attention[0].href).toBe(`/runs/${dashboard.onAir[0].runId}`)
   })
 
+  it('gives an idle device something to say for itself', async () => {
+    const deck = await post('/api/devices', {
+      pluginId: 'mock',
+      label: 'Deck',
+      config: { kind: 'recorder' },
+    })
+    await post(`/api/devices/${deck.json.id}/connect`, {})
+
+    const dashboard = (await get('/api/dashboard')).json
+    const row = dashboard.devices.find((device: { id: string }) => device.id === deck.json.id)
+    expect(row.activity).toBe('idle')
+
+    // A row that says only "idle" is a row nobody reads. What is on the
+    // input, how much card is left and what it is set to record at are all
+    // things that are wrong on the Sunday a service fails to record.
+    const facts = Object.fromEntries(
+      row.facts.map((fact: { label: string; value: string }) => [fact.label, fact.value]),
+    )
+    expect(facts['Media left']).toBe('4h left')
+    expect(facts['Input']).toBe('1080p50 on SDI')
+    expect(facts['Quality']).toBe('standard')
+    // Always at least the type, so no device is ever a bare name.
+    expect(facts['Type']).toBe('Mock device')
+  })
+
   it('warns about a card with less than a service left on it', async () => {
     const deck = await post('/api/devices', {
       pluginId: 'mock',

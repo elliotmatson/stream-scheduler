@@ -15,15 +15,16 @@ import {
   ErrorBanner,
   Field,
   StatusPill,
+  Switch,
 } from '../components.tsx'
 import { relative } from '../format.ts'
 
 /**
  * Where the scheduler tells somebody.
  *
- * The screen leads with "send a test", because a notification nobody has
- * proved works is worse than none — it reads as coverage while being
- * silence.
+ * Testing lives on the edit form rather than in the list: a notification
+ * nobody has proved works is worse than none, and the moment somebody is
+ * most likely to prove it is straight after changing the webhook.
  */
 export function Notifications(): ReactNode {
   const { data, error, reload } = useResource(() => api.notificationChannels(), [])
@@ -32,19 +33,12 @@ export function Notifications(): ReactNode {
   const [editing, setEditing] = useState<string>()
   const [busy, setBusy] = useState<string>()
   const [actionError, setActionError] = useState<string>()
-  const [tested, setTested] = useState<string>()
 
-  const act = async (
-    id: string,
-    action: () => Promise<unknown>,
-    thenTested = false,
-  ): Promise<void> => {
+  const act = async (id: string, action: () => Promise<unknown>): Promise<void> => {
     setBusy(id)
     setActionError(undefined)
-    setTested(undefined)
     try {
       await action()
-      if (thenTested) setTested(id)
       reload()
     } catch (err) {
       setActionError(err instanceof Error ? err.message : String(err))
@@ -61,8 +55,7 @@ export function Notifications(): ReactNode {
         <div>
           <h1>Notifications</h1>
           <p className="muted" style={{ margin: '4px 0 0' }}>
-            Where to be told when a run fails — or, the evening before, when something would stop
-            Sunday working.
+            Where to be told when something goes wrong.
           </p>
         </div>
         <button className="primary" onClick={() => setAdding((open) => !open)}>
@@ -86,8 +79,8 @@ export function Notifications(): ReactNode {
         {channels.length === 0 && !adding ? (
           <Card>
             <Empty>
-              Nothing is set up, so a failed run passes in silence. Google Chat takes about a
-              minute: add a webhook to your space and paste the URL here.
+              Nothing is set up, so a failed run passes in silence. Add a Google Chat webhook to get
+              started.
             </Empty>
           </Card>
         ) : null}
@@ -108,38 +101,24 @@ export function Notifications(): ReactNode {
               <div className="page-head" style={{ marginBottom: 8 }}>
                 <div>
                   <h2 style={{ marginBottom: 2 }}>{channel.label}</h2>
-                  <span className="muted" title="What it is, and which events it is sent for.">
+                  <span className="muted" title={describeEvents(channel.events)}>
                     {kinds?.find((kind) => kind.kind === channel.kind)?.displayName ?? channel.kind}{' '}
-                    · {channel.events.length === 0 ? 'every event' : channel.events.join(', ')}
+                    · {summariseEvents(channel.events)}
                   </span>
                 </div>
                 <div className="row">
-                  <StatusPill
-                    status={channel.lastError ? 'failed' : channel.enabled ? 'ok' : 'off'}
+                  {/* The switch already says on or off; a pill repeating it
+                      is noise. Failed is the one state it cannot show. */}
+                  {channel.lastError ? <StatusPill status="failed" /> : null}
+                  <Switch
+                    checked={channel.enabled}
+                    label={`Send to ${channel.label}`}
+                    disabled={busy === channel.id}
+                    onChange={(enabled) =>
+                      void act(channel.id, () => api.updateChannel(channel.id, { enabled }))
+                    }
                   />
                   <button onClick={() => setEditing(channel.id)}>Edit</button>
-                  <button
-                    disabled={busy === channel.id}
-                    title={
-                      channel.enabled
-                        ? 'Keeps it set up but stops sending to it.'
-                        : 'Starts sending to it again.'
-                    }
-                    onClick={() =>
-                      void act(channel.id, () =>
-                        api.updateChannel(channel.id, { enabled: !channel.enabled }),
-                      )
-                    }
-                  >
-                    {channel.enabled ? 'Turn off' : 'Turn on'}
-                  </button>
-                  <button
-                    disabled={busy === channel.id}
-                    title="Sends a message now, so you can see it arrive."
-                    onClick={() => void act(channel.id, () => api.testChannel(channel.id), true)}
-                  >
-                    {busy === channel.id ? 'Sending…' : 'Send a test'}
-                  </button>
                   <ConfirmButton
                     label="Remove"
                     disabled={busy === channel.id}
@@ -148,11 +127,6 @@ export function Notifications(): ReactNode {
                 </div>
               </div>
 
-              {tested === channel.id ? (
-                <div className="banner info">
-                  Sent. If it did not arrive, the webhook URL is probably wrong.
-                </div>
-              ) : null}
               {channel.lastError ? <div className="banner error">{channel.lastError}</div> : null}
               <p className="muted" style={{ margin: '8px 0 0' }}>
                 Last delivered {channel.lastSentAt ? relative(channel.lastSentAt) : 'never'}.
@@ -161,7 +135,7 @@ export function Notifications(): ReactNode {
           ),
         )}
 
-        <WhenToTell />
+        <Thresholds />
 
         {data && data.pending > 0 ? (
           <div className="banner info">
@@ -175,12 +149,12 @@ export function Notifications(): ReactNode {
 }
 
 /**
- * When the scheduler decides something is worth saying.
+ * The numbers the warnings are measured against.
  *
  * On this page rather than under Settings because this is where somebody
  * comes when the messages are wrong — too many, or too late.
  */
-function WhenToTell(): ReactNode {
+function Thresholds(): ReactNode {
   const { data, error, reload } = useResource(() => api.notificationSettings(), [])
   const [draft, setDraft] = useState<NotificationSettings>()
   const [saving, setSaving] = useState(false)
@@ -212,18 +186,14 @@ function WhenToTell(): ReactNode {
   const changed = draft !== undefined && JSON.stringify(draft) !== JSON.stringify(data)
 
   return (
-    <Card title="When to tell you">
-      <p className="muted" style={{ marginTop: 0 }}>
-        The two warnings that depend on a number rather than on something having already gone wrong.
-        Both are also what the status screen uses.
-      </p>
+    <Card title="Thresholds">
       <ErrorBanner error={error ?? problem} />
       {saved && !changed ? <div className="banner info">Saved.</div> : null}
 
       <div className="row" style={{ gap: 18, alignItems: 'flex-start' }}>
         <Field
           label="Cache full (%)"
-          hint="A device buffering this much while on air is falling behind. Below 100, because at 100 the stream has already gone."
+          hint="A device buffering this much while on air is falling behind."
         >
           <input
             type="number"
@@ -235,7 +205,7 @@ function WhenToTell(): ReactNode {
         </Field>
         <Field
           label="Media left (min)"
-          hint="Recording time left on the card being written to, below which it is worth knowing."
+          hint="Warn when the card being recorded to has less than this left."
         >
           <input
             type="number"
@@ -258,7 +228,7 @@ function WhenToTell(): ReactNode {
 }
 
 /**
- * Which events are worth a message, in words rather than event names.
+ * Which alerts are worth a message, in words rather than event names.
  *
  * The stored value is the event key; nobody outside this codebase should
  * have to know that a device falling behind is called `device.cache_high`.
@@ -266,32 +236,60 @@ function WhenToTell(): ReactNode {
 const EVENT_LABELS: Record<string, { label: string; detail: string }> = {
   'run.failed': {
     label: 'A run fails',
-    detail: 'Something went wrong on the day: a device refused, a broadcast could not be made.',
+    detail: 'A device refused, or a broadcast could not be made.',
   },
   'run.cancelled': {
     label: 'A run is stopped by hand',
     detail: 'Somebody pressed Stop now.',
   },
   'preflight.problem': {
-    label: 'A problem found the evening before',
-    detail: 'The checks that run ahead of an event found something that would stop it.',
+    label: 'The evening checks find a problem',
+    detail: 'Something would stop the next event working.',
   },
   'preflight.ready': {
     label: 'The evening checks pass',
-    detail: 'Reassurance rather than news. Most people leave this one off.',
+    detail: 'Reassurance rather than news.',
   },
   'account.reauth_required': {
     label: 'A service needs signing in again',
-    detail: 'A YouTube account whose sign-in expired. Nothing can stream to it until it is fixed.',
+    detail: 'Nothing can stream to it until it is fixed.',
   },
   'device.cache_high': {
     label: 'A device is falling behind',
-    detail: 'Its cache is filling up mid-service, which ends in a dropped stream if it continues.',
+    detail: 'Its cache is filling up mid-service.',
   },
-  test: { label: 'Test messages', detail: 'Sent when you press Send a test.' },
 }
 
-/** Which events a notification is sent for, as a set of switches. */
+/** `3 alerts`, or `every alert` — the count is what fits on the row. */
+function summariseEvents(events: string[]): string {
+  const alerts = events.filter((event) => event !== 'test')
+  if (events.length === 0 || alerts.length === Object.keys(EVENT_LABELS).length) {
+    return 'every alert'
+  }
+  if (alerts.length === 0) return 'tests only'
+  return `${alerts.length} of ${Object.keys(EVENT_LABELS).length} alerts`
+}
+
+/** The full list, for the tooltip, where there is room to spell it out. */
+function describeEvents(events: string[]): string {
+  const alerts = events.filter((event) => event !== 'test')
+  if (events.length === 0) return 'Sent for every alert.'
+  if (alerts.length === 0) return 'Sent for nothing but tests.'
+  return alerts.map((event) => EVENT_LABELS[event]?.label ?? event).join(', ')
+}
+
+/**
+ * Which alerts a notification is sent for, one switch each.
+ *
+ * Stored as an explicit list rather than as "everything", because a list
+ * is the thing somebody can read back. The empty list the API uses to mean
+ * every event is still honoured on the way in — it is just never written
+ * back out, so what is stored and what is ticked always agree.
+ *
+ * `test` is not offered: it is sent by the button below, and a channel
+ * that had it switched off would swallow its own test silently, which is
+ * the one failure this screen exists to prevent.
+ */
 function EventChoices({
   events,
   all,
@@ -301,51 +299,56 @@ function EventChoices({
   all: string[]
   onChange: (next: string[]) => void
 }): ReactNode {
-  // Empty means everything, and that needs saying: a list of empty tick
-  // boxes otherwise reads as "you will never hear anything".
-  const everything = events.length === 0
+  const alerts = all.filter((event) => event !== 'test')
+  // An empty stored list means every event, so that is what is shown.
+  const chosen = events.length === 0 ? alerts : alerts.filter((event) => events.includes(event))
+
+  const toggle = (event: string, on: boolean): void => {
+    const next = on ? [...chosen, event] : chosen.filter((kept) => kept !== event)
+    // Ordered by the API's list, not by what was clicked last.
+    const ordered = alerts.filter((name) => next.includes(name))
+    onChange([...ordered, 'test'])
+  }
+
+  const setAll = (on: boolean): void => onChange(on ? [...alerts, 'test'] : ['test'])
 
   return (
     <div className="stack" style={{ gap: 6 }}>
-      <span className="field-label">Send it when</span>
-      <label className="row" style={{ gap: 8 }}>
-        <input
-          type="checkbox"
-          checked={everything}
-          onChange={(event) =>
-            onChange(event.target.checked ? [] : all.filter((name) => name !== 'test'))
-          }
-        />
-        <span>Anything happens worth telling you about</span>
-      </label>
-
-      {everything ? null : (
-        <div className="stack" style={{ gap: 4, paddingLeft: 22 }}>
-          {all
-            .filter((event) => event !== 'test')
-            .map((event) => (
-              <label key={event} className="row" style={{ gap: 8, alignItems: 'flex-start' }}>
-                <input
-                  type="checkbox"
-                  checked={events.includes(event)}
-                  onChange={(changed) =>
-                    onChange(
-                      changed.target.checked
-                        ? [...events, event]
-                        : events.filter((kept) => kept !== event),
-                    )
-                  }
-                />
-                <span>
-                  {EVENT_LABELS[event]?.label ?? event}
-                  <span className="muted" style={{ display: 'block', fontSize: 12 }}>
-                    {EVENT_LABELS[event]?.detail ?? ''}
-                  </span>
-                </span>
-              </label>
-            ))}
+      <div className="row" style={{ justifyContent: 'space-between' }}>
+        <span className="field-label">Send it when</span>
+        <div className="row" style={{ gap: 6 }}>
+          <button type="button" className="link" onClick={() => setAll(true)}>
+            All
+          </button>
+          <button type="button" className="link" onClick={() => setAll(false)}>
+            None
+          </button>
         </div>
-      )}
+      </div>
+
+      <div className="stack" style={{ gap: 4 }}>
+        {alerts.map((event) => (
+          <label key={event} className="row" style={{ gap: 8, alignItems: 'flex-start' }}>
+            <input
+              type="checkbox"
+              checked={chosen.includes(event)}
+              onChange={(changed) => toggle(event, changed.target.checked)}
+            />
+            <span>
+              {EVENT_LABELS[event]?.label ?? event}
+              <span className="muted" style={{ display: 'block', fontSize: 12 }}>
+                {EVENT_LABELS[event]?.detail ?? ''}
+              </span>
+            </span>
+          </label>
+        ))}
+      </div>
+
+      {chosen.length === 0 ? (
+        <p className="muted" style={{ margin: 0, fontSize: 12 }}>
+          Nothing is ticked, so this only receives tests.
+        </p>
+      ) : null}
     </div>
   )
 }
@@ -366,6 +369,8 @@ function EditNotification({
   const [chosen, setChosen] = useState<string[]>(channel.events)
   const [error, setError] = useState<string>()
   const [saving, setSaving] = useState(false)
+  const [testing, setTesting] = useState(false)
+  const [tested, setTested] = useState(false)
 
   const definition = kinds.find((kind) => kind.kind === channel.kind)
 
@@ -379,6 +384,27 @@ function EditNotification({
       setError(err instanceof Error ? err.message : String(err))
     } finally {
       setSaving(false)
+    }
+  }
+
+  /**
+   * Saves first, then sends.
+   *
+   * A test that went to the stored webhook while a corrected one sat
+   * unsaved in the box above would prove the wrong thing.
+   */
+  const test = async (): Promise<void> => {
+    setTesting(true)
+    setError(undefined)
+    setTested(false)
+    try {
+      await api.updateChannel(channel.id, { label, config, events: chosen })
+      await api.testChannel(channel.id)
+      setTested(true)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setTesting(false)
     }
   }
 
@@ -401,9 +427,22 @@ function EditNotification({
 
         <EventChoices events={chosen} all={events ?? []} onChange={setChosen} />
 
+        {tested ? (
+          <div className="banner info">
+            Sent. If it did not arrive, the webhook URL is probably wrong.
+          </div>
+        ) : null}
+
         <div className="row">
           <button className="primary" disabled={saving || !label} onClick={() => void save()}>
             {saving ? 'Saving…' : 'Save'}
+          </button>
+          <button
+            disabled={saving || testing || !label}
+            title="Saves what is here, then sends a message so you can see it arrive."
+            onClick={() => void test()}
+          >
+            {testing ? 'Sending…' : 'Send a test'}
           </button>
           <button onClick={onDone}>Cancel</button>
         </div>
