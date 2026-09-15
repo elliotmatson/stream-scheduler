@@ -468,20 +468,14 @@ tr.is-picked td {
   font-size: 12px;
 }
 
-/* Anywhere else on the page means "I am done with this". */
+/* Anywhere else on the page means "I am done with this". A plain div, not
+   a button: the button rules brought a hover and an active background with
+   them, which lit the whole screen up on the way to the drawer. */
 .drawer-scrim {
   position: fixed;
   inset: 0;
   z-index: 40;
-  border: 0;
-  border-radius: 0;
-  box-shadow: none;
-  padding: 0;
-  min-height: 0;
-  background: rgb(0 0 0 / 35%);
-}
-
-.drawer-scrim:hover {
+  cursor: pointer;
   background: rgb(0 0 0 / 35%);
 }
 
@@ -764,6 +758,20 @@ details[open] > summary::before {
   align-items: center;
   gap: 8px;
   flex-wrap: wrap;
+}
+
+/*
+ * A select in a row sizes to its options, not to the row.
+ *
+ * Form controls are full-width by default, which is right in a stacked
+ * field and self-contradictory beside a label: at 100% of the row the
+ * select wrapped onto its own line, so "Sort" sat above its box while the
+ * search field beside it stayed on one — the two controls then lined up
+ * on nothing. Fields stack their own label, so this reaches only the
+ * controls that were meant to be side by side.
+ */
+.row > select {
+  width: auto;
 }
 
 /* controls ---------------------------------------------------------------- */
@@ -1841,6 +1849,43 @@ button.link:hover {
 .card.focused {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
+}
+
+/* A date somebody has changed by hand. Small, because it marks a state
+   rather than a problem — but present, because an edited occurrence is
+   otherwise indistinguishable from one still following its event. */
+.event-changed {
+  margin-left: 4px;
+  color: var(--accent);
+  font-weight: 700;
+}
+
+/* Somewhere a date could be dropped. Shown only while something is being
+   dragged: a calendar that always looked like this would be noise. */
+.day.droppable,
+.week-day.droppable {
+  outline: 1px dashed var(--border-strong);
+  outline-offset: -2px;
+}
+
+.day.droppable:hover,
+.week-day.droppable:hover {
+  outline-color: var(--accent);
+  background-color: var(--accent-soft);
+}
+
+/* The chip being carried. Faded rather than hidden, so it is still
+   obvious which one is in the air. */
+.event.dragging {
+  opacity: 0.45;
+}
+
+.event[draggable='true'] {
+  cursor: grab;
+}
+
+.event[draggable='true']:active {
+  cursor: grabbing;
 }
 
 /* A link that does what a button does. Used where the browser must handle

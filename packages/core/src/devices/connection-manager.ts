@@ -111,6 +111,20 @@ const BASE_BACKOFF_MS = 2_000
 const MAX_BACKOFF_MS = 5 * 60_000
 
 /**
+ * Whether a reply is about the device, rather than an answer to what was
+ * asked.
+ *
+ * Every `invoke` comes back shaped as a `NodeState` because the transport
+ * has one shape, but two actions use it as an envelope: `listMedia` puts
+ * a file listing in `raw`, and `formatStorage` puts a one-shot token
+ * there. Neither says anything about what the device is doing, so neither
+ * should replace what it last did say.
+ */
+function saysSomethingAboutTheDevice(state: NodeState): boolean {
+  return Object.keys(state).some((key) => key !== 'raw')
+}
+
+/**
  * Owns exactly one long-lived connection per physical device.
  *
  * Adapters never open sockets themselves: two runs can target the same ATEM,
@@ -258,7 +272,15 @@ export class ConnectionManager {
       // An answer is an answer, however it was asked for. Remembering only
       // what a device volunteers leaves every screen reading "last heard
       // ten minutes ago" while something polls it every fifteen seconds.
-      if (state) this.remember(deviceId, nodeId, state)
+      //
+      // Unless the answer is not state at all. `listMedia` and
+      // `formatStorage` reply with a file listing and a one-shot token,
+      // carried in `raw` because the transport has one shape — and
+      // remembering one of those as the node's state replaced everything
+      // the screens read with it. Opening a deck's Files panel wiped the
+      // slots that panel picks a card from, and the deck showed as doing
+      // nothing until it next said otherwise.
+      if (state && saysSomethingAboutTheDevice(state)) this.remember(deviceId, nodeId, state)
       return state
     } catch (error) {
       // A failed command does not by itself mean the transport is gone: a

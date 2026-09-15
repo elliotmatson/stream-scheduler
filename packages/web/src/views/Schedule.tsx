@@ -5,6 +5,7 @@ import { Card, Empty, ErrorBanner, PageHead, StatusPill, toneFor } from '../comp
 import {
   dateTimeIn,
   dayLabel,
+  inputTimeIn,
   duration,
   isForeignZone,
   localDateKey,
@@ -54,6 +55,8 @@ export function Schedule({ navigate }: { navigate: (path: string) => void }): Re
   const select = (occurrence: Occurrence): void =>
     navigate(occurrence.runId ? `/runs/${occurrence.runId}` : `/occurrences/${occurrence.id}`)
 
+  const move = useMove(reload)
+
   return (
     <>
       <PageHead
@@ -98,7 +101,7 @@ export function Schedule({ navigate }: { navigate: (path: string) => void }): Re
         }
       />
 
-      <ErrorBanner error={error} />
+      <ErrorBanner error={error ?? move.problem} />
 
       {view === 'month' ? (
         <CalendarGrid
@@ -106,14 +109,109 @@ export function Schedule({ navigate }: { navigate: (path: string) => void }): Re
           month={anchor.getMonth()}
           occurrences={data ?? []}
           onSelect={select}
+          move={move}
         />
       ) : view === 'week' ? (
-        <WeekGrid start={weekStart} occurrences={data ?? []} onSelect={select} />
+        <WeekGrid start={weekStart} occurrences={data ?? []} onSelect={select} move={move} />
       ) : (
         <ScheduleList occurrences={data ?? []} navigate={navigate} reload={reload} />
       )}
     </>
   )
+}
+
+/**
+ * Dragging one date of a repeating event to another.
+ *
+ * The obvious gesture, and it writes the same override the occurrence
+ * screen does — the same endpoint, the same rails. What it is not allowed
+ * to be is a shortcut around them: the server still resolves the dropped
+ * wall-clock time in the event's own zone, still refuses a time the clocks
+ * skip over, still refuses the past, and still refuses anything that has
+ * run or is running. A drop that lands on one of those puts the message on
+ * the page rather than silently snapping back.
+ *
+ * Only a pending date moves. A drag that could quietly reschedule a
+ * service already on air is a gesture nobody wants near a Sunday.
+ *
+ * Dragging is the shortcut, not the only way. It is the browser's own
+ * drag and drop, which does not happen on a touch screen at all — so the
+ * occurrence's own page takes a date and a time in boxes, and that is the
+ * path a phone uses.
+ */
+interface Move {
+  /** The occurrence being dragged, if any. */
+  dragging: Occurrence | undefined
+  problem: string | undefined
+  /** Whether this one may be picked up at all. */
+  movable: (occurrence: Occurrence) => boolean
+  start: (occurrence: Occurrence) => void
+  end: () => void
+  /** Drops it on a date, keeping the time of day it already had. */
+  toDay: (date: string) => void
+  /** Drops it on a date and a time, both in the event's own zone. */
+  toDayAndTime: (date: string, minutesOfDay: number) => void
+}
+
+/** Dropping between the lines is fussy; a quarter of an hour is the grid
+ *  everybody already thinks in. */
+const SNAP_MINUTES = 15
+
+function useMove(reload: () => void): Move {
+  const [dragging, setDragging] = useState<Occurrence>()
+  const [problem, setProblem] = useState<string>()
+
+  const send = (occurrence: Occurrence, date: string, time: string): void => {
+    setDragging(undefined)
+    setProblem(undefined)
+    if (
+      date === localDateKey(occurrence.scheduledStart, occurrence.timezone) &&
+      time === inputTimeIn(occurrence.scheduledStart, occurrence.timezone)
+    ) {
+      // Picked up and put back down. Not an edit, so it must not detach it.
+      return
+    }
+    api
+      .editOccurrence(occurrence.id, { startsAt: { date, time } })
+      .then(reload, (err: Error) => setProblem(err.message))
+  }
+
+  return {
+    dragging,
+    problem,
+    movable: (occurrence) => occurrence.status === 'pending' && occurrence.runId === null,
+    start: (occurrence) => {
+      setProblem(undefined)
+      setDragging(occurrence)
+    },
+    end: () => setDragging(undefined),
+    toDay: (date) => {
+      if (dragging) send(dragging, date, inputTimeIn(dragging.scheduledStart, dragging.timezone))
+    },
+    toDayAndTime: (date, minutesOfDay) => {
+      if (!dragging) return
+      const snapped = Math.max(
+        0,
+        Math.min(23 * 60 + 45, Math.round(minutesOfDay / SNAP_MINUTES) * SNAP_MINUTES),
+      )
+      const hh = String(Math.floor(snapped / 60)).padStart(2, '0')
+      const mm = String(snapped % 60).padStart(2, '0')
+      send(dragging, date, `${hh}:${mm}`)
+    },
+  }
+}
+
+/** The props a chip needs to be picked up, or nothing when it cannot be. */
+function dragProps(
+  occurrence: Occurrence,
+  move: Move,
+): { draggable: true; onDragStart: () => void; onDragEnd: () => void } | Record<string, never> {
+  if (!move.movable(occurrence)) return {}
+  return {
+    draggable: true,
+    onDragStart: () => move.start(occurrence),
+    onDragEnd: () => move.end(),
+  }
 }
 
 function startOfWeek(date: Date): Date {
@@ -131,11 +229,13 @@ function CalendarGrid({
   month,
   occurrences,
   onSelect,
+  move,
 }: {
   year: number
   month: number
   occurrences: Occurrence[]
   onSelect: (occurrence: Occurrence) => void
+  move: Move
 }): ReactNode {
   const byDay = useMemo(() => {
     const map = new Map<string, Occurrence[]>()
@@ -173,22 +273,39 @@ function CalendarGrid({
         return (
           <div
             key={key}
-            className={`day${outside ? ' outside' : ''}${key === todayKey ? ' today' : ''}`}
+            className={`day${outside ? ' outside' : ''}${key === todayKey ? ' today' : ''}${
+              move.dragging ? ' droppable' : ''
+            }`}
+            // Only a day being dragged over accepts the drop; preventing the
+            // default is what makes a drop possible at all.
+            onDragOver={move.dragging ? (event) => event.preventDefault() : undefined}
+            onDrop={
+              move.dragging
+                ? (event) => {
+                    event.preventDefault()
+                    move.toDay(key)
+                  }
+                : undefined
+            }
           >
             <span className="daynum">{date.getDate()}</span>
             {events.map((occurrence) => (
               <button
                 key={occurrence.id}
-                className={`event ${occurrence.runState === 'running' ? 'live' : ''} ${occurrence.status}`}
+                className={`event ${occurrence.runState === 'running' ? 'live' : ''} ${occurrence.status}${
+                  move.dragging?.id === occurrence.id ? ' dragging' : ''
+                }`}
                 onClick={() => onSelect(occurrence)}
-                title={`${occurrence.seriesLabel} — ${dateTimeIn(occurrence.scheduledStart, occurrence.timezone)} ${shortZone(occurrence.scheduledStart, occurrence.timezone)}`}
+                title={describeChip(occurrence, move.movable(occurrence))}
+                {...dragProps(occurrence, move)}
               >
                 {/* Two lines: at a glance you want the time, and the name
                     would otherwise be cut off in a narrow cell. */}
                 <span className="event-time">
                   {timeIn(occurrence.scheduledStart, occurrence.timezone)}
+                  {occurrence.detached ? <ChangedMark /> : null}
                 </span>
-                <span className="event-name">{occurrence.seriesLabel}</span>
+                <span className="event-name">{occurrence.label}</span>
               </button>
             ))}
           </div>
@@ -214,14 +331,44 @@ const DEFAULT_WINDOW = { from: 6, to: 22 }
  * Every position is computed in the *event's* timezone, like every other
  * date in this app: an evening service abroad belongs at its own evening.
  */
+/**
+ * A dot on a date somebody has changed by hand.
+ *
+ * The trap this exists for: an occurrence edited away from its series
+ * looks identical to one following it, and later changes to the event
+ * leave it behind. A mark is the difference between "the service moved"
+ * and "the service moved except that one and nobody noticed".
+ */
+function ChangedMark(): ReactNode {
+  return (
+    <span className="event-changed" aria-label="changed on its own">
+      •
+    </span>
+  )
+}
+
+/** The chip's tooltip: what it is, when, and whether it is its own. */
+function describeChip(occurrence: Occurrence, movable = false): string {
+  const when = `${dateTimeIn(occurrence.scheduledStart, occurrence.timezone)} ${shortZone(occurrence.scheduledStart, occurrence.timezone)}`
+  const drag = movable ? ' Drag it to move this date on its own.' : ''
+  if (!occurrence.detached) return `${occurrence.label} — ${when}.${drag}`
+  const moved =
+    occurrence.overrides.movedFrom === undefined
+      ? ''
+      : `, moved from ${dateTimeIn(occurrence.overrides.movedFrom, occurrence.timezone)}`
+  return `${occurrence.label} — ${when}. Changed on its own${moved}, so edits to «${occurrence.seriesLabel}» leave it alone.${drag}`
+}
+
 function WeekGrid({
   start,
   occurrences,
   onSelect,
+  move,
 }: {
   start: Date
   occurrences: Occurrence[]
   onSelect: (occurrence: Occurrence) => void
+  move: Move
 }): ReactNode {
   // Keyed on the week itself, not on the array: a fresh array every render
   // would make every memo below recompute and defeat the point of them.
@@ -301,13 +448,32 @@ function WeekGrid({
           return (
             <div
               key={key}
-              className={`week-day${key === todayKey ? ' today' : ''}`}
+              className={`week-day${key === todayKey ? ' today' : ''}${
+                move.dragging ? ' droppable' : ''
+              }`}
               style={{ height: hours.length * HOUR_PX, backgroundSize: `100% ${HOUR_PX}px` }}
+              onDragOver={move.dragging ? (event) => event.preventDefault() : undefined}
+              onDrop={
+                move.dragging
+                  ? (event) => {
+                      event.preventDefault()
+                      // Where in the column it landed, read as a time of
+                      // day in the event's own zone — the same axis the
+                      // chips were laid out on.
+                      const box = event.currentTarget.getBoundingClientRect()
+                      const minutes = (window.from + (event.clientY - box.top) / HOUR_PX) * 60
+                      move.toDayAndTime(key, minutes)
+                    }
+                  : undefined
+              }
             >
               {(laid.get(key) ?? []).map((placed) => (
                 <button
                   key={placed.occurrence.id}
-                  className={`event ${placed.occurrence.runState === 'running' ? 'live' : ''} ${placed.occurrence.status}`}
+                  className={`event ${placed.occurrence.runState === 'running' ? 'live' : ''} ${placed.occurrence.status}${
+                    move.dragging?.id === placed.occurrence.id ? ' dragging' : ''
+                  }`}
+                  {...dragProps(placed.occurrence, move)}
                   style={{
                     position: 'absolute',
                     top: offset(placed.from),
@@ -318,12 +484,13 @@ function WeekGrid({
                     width: `${(1 / placed.lanes) * 100}%`,
                   }}
                   onClick={() => onSelect(placed.occurrence)}
-                  title={`${placed.occurrence.seriesLabel} — ${dateTimeIn(placed.occurrence.scheduledStart, placed.occurrence.timezone)} ${shortZone(placed.occurrence.scheduledStart, placed.occurrence.timezone)}`}
+                  title={describeChip(placed.occurrence, move.movable(placed.occurrence))}
                 >
                   <span className="event-time">
                     {timeIn(placed.occurrence.scheduledStart, placed.occurrence.timezone)}
+                    {placed.occurrence.detached ? <ChangedMark /> : null}
                   </span>
-                  <span className="event-name">{placed.occurrence.seriesLabel}</span>
+                  <span className="event-name">{placed.occurrence.label}</span>
                 </button>
               ))}
             </div>
@@ -445,13 +612,16 @@ function ScheduleList({
                   <div className="muted">{relative(occurrence.scheduledStart)}</div>
                 </td>
                 <td>
-                  {occurrence.seriesLabel}
+                  {occurrence.label}
                   {occurrence.detached ? (
                     <div
                       className="muted"
-                      title="This date was edited on its own, so later changes to the event leave it alone."
+                      title={`This date was edited on its own, so later changes to «${occurrence.seriesLabel}» leave it alone.`}
                     >
                       edited on its own
+                      {occurrence.label === occurrence.seriesLabel
+                        ? ''
+                        : ` · ${occurrence.seriesLabel}`}
                     </div>
                   ) : null}
                 </td>
@@ -471,6 +641,12 @@ function ScheduleList({
                     ) : null}
                     {occurrence.status === 'pending' ? (
                       <>
+                        <button
+                          title="This one date on its own: what it is called, when it runs, and what goes out."
+                          onClick={() => navigate(`/occurrences/${occurrence.id}`)}
+                        >
+                          Open
+                        </button>
                         {/* Makes the broadcast now, so an unlisted link can
                             go out ahead of the day. The outputs still start
                             at their own times. */}

@@ -32,6 +32,22 @@ export function clockTimeIn(instant: number, timeZone: string): string {
   }).format(instant)
 }
 
+/**
+ * `HH:mm` in a given zone, for an `<input type="time">`.
+ *
+ * Deliberately not the locale's spelling: the control only accepts
+ * 24-hour `HH:mm`, and handing it "4:00 AM" leaves the box empty with no
+ * error anywhere — which reads as a form that lost the value.
+ */
+export function inputTimeIn(instant: number, timeZone: string): string {
+  return new Intl.DateTimeFormat('en-GB', {
+    timeZone,
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).format(instant)
+}
+
 export function dateIn(instant: number, timeZone: string): string {
   return new Intl.DateTimeFormat(undefined, {
     timeZone,
