@@ -939,6 +939,62 @@ describe('credentials', () => {
     expect(list.json[0].key).toBe('••••••••')
     expect(JSON.stringify(list.json)).not.toContain('live_super-secret-key')
   })
+
+  it('offers the services somebody can point an encoder at', async () => {
+    const platforms = await get('/api/platforms')
+    expect(platforms.status).toBe(200)
+    const names = platforms.json.map((entry: { id: string }) => entry.id)
+    expect(names).toContain('facebook')
+    expect(names).toContain('twitch')
+    expect(names).toContain('vimeo')
+    // And every one of them says where to find the key, which is the
+    // whole reason the list exists.
+    for (const entry of platforms.json) expect(entry.whereToFind).toBeTruthy()
+  })
+
+  it('remembers which service a key is for, and names it back', async () => {
+    await post('/api/credentials', {
+      label: 'Main channel',
+      ingestUrl: 'rtmp://live.twitch.tv/app',
+      key: 'live_1_abc',
+      platform: 'twitch',
+    })
+    const saved = (await get('/api/credentials')).json.find(
+      (row: { label: string }) => row.label === 'Main channel',
+    )
+    expect(saved.platform).toBe('twitch')
+    expect(saved.platformName).toBe('Twitch')
+  })
+
+  it('keeps a key saved against a service it no longer knows', async () => {
+    // Services come and go faster than migrations should. A stored id
+    // this version does not recognise has to keep working rather than
+    // fail on somebody's only stream.
+    await post('/api/credentials', {
+      label: 'Something retired',
+      ingestUrl: 'rtmp://example.invalid/live',
+      key: 'k',
+      platform: 'a-service-from-2029',
+    })
+    const saved = (await get('/api/credentials')).json.find(
+      (row: { label: string }) => row.label === 'Something retired',
+    )
+    expect(saved.platform).toBe('a-service-from-2029')
+    expect(saved.platformName).toBe('a-service-from-2029')
+  })
+
+  it('takes a key with no service at all, as it always did', async () => {
+    await post('/api/credentials', {
+      label: 'No service',
+      ingestUrl: 'rtmp://example.invalid/live',
+      key: 'k2',
+    })
+    const saved = (await get('/api/credentials')).json.find(
+      (row: { label: string }) => row.label === 'No service',
+    )
+    expect(saved.platform).toBeNull()
+    expect(saved.platformName).toBeNull()
+  })
 })
 
 describe('schedule preview', () => {
