@@ -326,7 +326,7 @@ export class EventPlanner implements RunPlanner {
         label: `${output.label}: start recording`,
         execute: async (ctx) => {
           const filename = sanitizeFilename(renderTemplateOrThrow(template, context))
-          await this.deps.connections.applyAndVerify(
+          const state = await this.deps.connections.applyAndVerify(
             device.deviceId,
             device.nodeId,
             'startRecording',
@@ -351,6 +351,23 @@ export class EventPlanner implements RunPlanner {
               settleMs: 10_000,
             },
           )
+          // What the device actually called it, where it says so.
+          //
+          // Asking for a name and recording the answer are two different
+          // things, and for a growing number of devices they are different
+          // strings. A switcher appends its own extension; software that
+          // owns its own output — OBS, ProPresenter, an audio console
+          // writing a dated session — ignores the requested name entirely
+          // and tells you afterwards what it used. A ledger holding only
+          // what we asked for can never match the file that appeared, so
+          // that recording could be made and then never swept.
+          //
+          // `readState` has always reported this; nothing here read it.
+          // The requested name is still the fallback, for a deck like the
+          // HyperDeck whose protocol indexes clips by position and has no
+          // name to give back.
+          const recorded = state.recording?.filename ?? filename
+
           // Recorded once the device has confirmed, so the ledger never
           // claims a file the deck refused to make — but before the step
           // returns, so a run that dies mid-service still leaves a record
@@ -361,10 +378,18 @@ export class EventPlanner implements RunPlanner {
             deviceId: device.deviceId,
             nodeId: device.nodeId,
             ...(output.settings.slot === undefined ? {} : { slot: output.settings.slot }),
-            filename,
+            filename: recorded,
             at: this.deps.clock.now(),
           })
-          return { response: { filename } }
+          // Both names on the step, because when they differ the difference
+          // is the whole story: the timeline should say what was asked for
+          // and what the device did with it.
+          return {
+            response: {
+              filename: recorded,
+              ...(recorded === filename ? {} : { requested: filename }),
+            },
+          }
         },
       },
       {

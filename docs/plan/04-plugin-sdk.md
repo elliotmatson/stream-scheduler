@@ -53,7 +53,23 @@ export interface NodeActions {
 }
 ```
 
-Two rules that are load-bearing:
+Three rules that are load-bearing:
+
+**A recording is named by whoever names it.** `startRecording` takes a
+`filename`, and that is a _request_. A HyperDeck indexes clips by position and
+has no name to hand back; an ATEM appends its own extension; software that owns
+its own output — OBS, ProPresenter, an audio console writing a dated session —
+ignores the request entirely and uses its own. All three are correct behaviour
+for the device, so the host does not fight any of them: it reads
+`NodeState.recording.filename` back after the write and records _that_ in the
+ledger, falling back to what it asked for when the device offers nothing.
+
+This matters more than it sounds. Everything downstream keys off the ledger's
+name — retention matches it against what is on the card, and a sweep deletes by
+it — so a host that stored only its own request would make recordings on these
+devices unmatchable, and therefore unsweepable, in a way nothing would report.
+An adapter for a device that names its own files has exactly one obligation:
+say so in `recording.filename`.
 
 **Everything is serializable.** No shared object references, no callbacks, no
 class instances across the boundary. This is what lets plugins move from
