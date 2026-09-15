@@ -158,7 +158,7 @@ The address you publish to still matters, and with no password it _is_ the
 access control:
 
 - `-p 127.0.0.1:8500:8500` — only the machine running it. This is the default
-  above, and the right one unless you have decided otherwise.
+  in `docker-compose.yml`, and the right one unless you have decided otherwise.
 - `-p 8500:8500` — anyone on the network. Set a password.
 - Reaching it from another machine safely: tunnel it, with
   `ssh -L 8500:127.0.0.1:8500 user@thatbox`, or put a reverse proxy in front.
@@ -170,6 +170,33 @@ without you doing anything.
 
 Everything lives in one config directory (`/config` in Docker). A single
 archive of it is the entire backup.
+
+### Reaching it from outside, with Cloudflare Zero Trust
+
+`docker-compose.cloudflare.yml` puts the app behind a Cloudflare tunnel with
+Access in front of it: a hostname you own, whatever sign-in your Access
+policy asks for, and no inbound firewall rule, because the tunnel dials out
+rather than anything dialling in.
+
+```
+docker compose -f docker-compose.yml -f docker-compose.cloudflare.yml up -d
+```
+
+The file itself walks through creating the tunnel and the Access
+application. The step people skip is the Access policy: a tunnel on its own
+publishes the app to the open internet with nothing in front of it. The
+tunnel is the door, Access is the lock.
+
+**Keep the app's password on.** Access authenticates people at Cloudflare's
+edge, which is a real boundary, but it only covers traffic arriving through
+the tunnel. Anything that can reach the container directly — another
+container on the machine, anyone who can reach the loopback port — skips
+Access and finds the app as it is. The overlay therefore refuses to start
+without `SCHEDULER_UI_PASSWORD`.
+
+The app does not verify Access's JWT. If it did, the password could come off
+honestly; until then two sign-ins is the price of not leaving a hole behind
+the one you can see.
 
 ### Backups
 

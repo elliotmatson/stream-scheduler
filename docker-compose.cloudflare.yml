@@ -1,0 +1,60 @@
+# Reaching this from outside the building, through Cloudflare Zero Trust.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.cloudflare.yml up -d
+#
+# You get the app on a hostname you own, behind whatever sign-in your
+# Cloudflare Access policy asks for — Google, a one-time PIN, a device
+# posture check — with no port open on your firewall and no inbound rule to
+# maintain. The tunnel dials out to Cloudflare; nothing dials in.
+#
+# ---------------------------------------------------------------------------
+# Setting it up
+# ---------------------------------------------------------------------------
+#
+#  1. Cloudflare dashboard → Zero Trust → Networks → Tunnels → create a
+#     tunnel, and copy its token.
+#  2. On that tunnel, add a public hostname pointing at
+#     http://scheduler:8500 — the service name below, on the network
+#     compose puts both of these on.
+#  3. Zero Trust → Access → Applications → add a self-hosted application on
+#     that same hostname, with a policy saying who may reach it.
+#  4. Put TUNNEL_TOKEN and SCHEDULER_UI_PASSWORD in a .env file beside this.
+#
+# Step 3 is the one people skip, and skipping it is the whole ball game: a
+# tunnel on its own publishes the app to the open internet with nothing in
+# front of it. The tunnel is the door; Access is the lock.
+#
+# ---------------------------------------------------------------------------
+# Keep the app's own password on
+# ---------------------------------------------------------------------------
+#
+# Access authenticates people at Cloudflare's edge, before a request reaches
+# the container. That is a real boundary and a good one. It is not the only
+# one that matters, because it only covers traffic arriving through the
+# tunnel: anything that can reach the container directly — another container
+# on this machine, anyone who can reach the loopback port the base file
+# publishes — skips Access entirely and finds the app exactly as it is.
+#
+# So this file refuses to start without SCHEDULER_UI_PASSWORD. Turning the
+# app's own password off is safe only when you are certain nothing can reach
+# the container except through Cloudflare, and on a machine that also runs
+# your production gear that is a strong claim to make.
+#
+# This app does not verify Access's JWT. If it did, the password could come
+# off honestly. Until then two sign-ins is the price of not leaving a hole
+# behind the one you can see.
+
+services:
+  scheduler:
+    environment:
+      # Not optional here, for the reason above.
+      SCHEDULER_UI_PASSWORD: '${SCHEDULER_UI_PASSWORD:?Access does not cover traffic that reaches the container directly, so set a password}'
+
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run
+    environment:
+      TUNNEL_TOKEN: '${TUNNEL_TOKEN:?create a tunnel in the Cloudflare dashboard and put its token here}'
+    depends_on:
+      - scheduler
