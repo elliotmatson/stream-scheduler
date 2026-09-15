@@ -10,6 +10,7 @@ import {
 } from '../api.ts'
 import {
   Card,
+  ConfirmButton,
   CopyButton,
   Empty,
   ErrorBanner,
@@ -476,18 +477,22 @@ function Step({ step, timezone }: { step: RunStep; timezone: string }): ReactNod
 export function Runs({ navigate }: { navigate: (path: string) => void }): ReactNode {
   const { data, error, reload } = useResource(() => api.runs(), [])
   useLiveRefresh(reload)
+  const [actionError, setActionError] = useState<string>()
+
+  const remove = async (id: string): Promise<void> => {
+    setActionError(undefined)
+    try {
+      await api.deleteRun(id)
+      reload()
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : String(err))
+    }
+  }
 
   return (
     <>
-      <div className="page-head">
-        <div>
-          <h1>Runs</h1>
-          <p className="muted" style={{ margin: '4px 0 0' }}>
-            Every event the scheduler has taken on, newest first.
-          </p>
-        </div>
-      </div>
-      <ErrorBanner error={error} />
+      <PageHead title="Runs" subtitle="Every event the scheduler has taken on, newest first." />
+      <ErrorBanner error={error ?? actionError} />
       <Card>
         {(data ?? []).length === 0 ? (
           <Empty>Nothing has run yet.</Empty>
@@ -511,12 +516,23 @@ export function Runs({ navigate }: { navigate: (path: string) => void }): ReactN
                       <StatusPill status={run.state} />
                     </td>
                     <td>
-                      <button
-                        onClick={() => navigate(`/runs/${run.id}`)}
-                        title="Every step this run has taken, and what the device said back."
-                      >
-                        Timeline
-                      </button>
+                      <div className="row" style={{ justifyContent: 'flex-end' }}>
+                        <button
+                          onClick={() => navigate(`/runs/${run.id}`)}
+                          title="Every step this run has taken, and what the device said back."
+                        >
+                          Timeline
+                        </button>
+                        {/* Only once it has stopped: a run still driving
+                            devices is not a record to throw away. */}
+                        {['completed', 'failed', 'cancelled'].includes(run.state) ? (
+                          <ConfirmButton
+                            label="Remove"
+                            confirmLabel="Really remove?"
+                            onConfirm={() => void remove(run.id)}
+                          />
+                        ) : null}
+                      </div>
                     </td>
                   </tr>
                 ))}
