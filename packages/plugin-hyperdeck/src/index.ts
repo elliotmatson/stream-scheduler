@@ -17,7 +17,13 @@ import {
   SlotStatus,
   TransportStatus,
 } from 'hyperdeck-connection'
-import { connectFtp as realConnectFtp, ftpPath, type FtpConnect } from '@scheduler/device-ftp'
+import {
+  connectFtp as realConnectFtp,
+  ftpPath,
+  mediaDirectory,
+  type FtpConnect,
+  type FtpSession,
+} from '@scheduler/device-ftp'
 
 /**
  * Blackmagic HyperDeck Studio / Extreme / Shuttle.
@@ -40,16 +46,6 @@ export const DEFAULT_PORT = 9993
  * is how one busy deck stops the whole scheduler.
  */
 export const COMMAND_TIMEOUT_MS = 10_000
-
-/**
- * Where a slot's files live on the deck's file server.
- *
- * Slot 1 is the root and the others are numbered beneath it, which is how
- * the deck's own web page lays them out.
- */
-function directoryFor(slot: number | undefined): string {
-  return slot === undefined || slot === 1 ? '/' : `/${slot}`
-}
 
 /**
  * Codecs to suggest, not a list of what any particular deck has.
@@ -317,10 +313,17 @@ class HyperdeckDevice {
         // protocol does not report at all — `disk list` names a clip and
         // will not say how big it is or when it was made. Those are the
         // two columns anybody managing files actually sorts by.
-        const directory = directoryFor(slotId)
         const session = await this.connectFtp({ host: this.host })
         try {
+          const directory = await this.mediaDirectoryFor(session, slotId)
           const files = await session.list(directory)
+          // Where it looked, not just what it found. An empty card and a
+          // listing of the wrong directory read identically on a screen,
+          // and this is the line that tells them apart.
+          this.ctx.log('debug', 'listed the card over FTP', {
+            directory,
+            files: files.length,
+          })
           return files.map((file) => ({
             name: file.name,
             slot: slotId,
@@ -348,9 +351,9 @@ class HyperdeckDevice {
        * fails loudly.
        */
       deleteMedia: async ({ name, slot }) => {
-        const directory = directoryFor(slot)
         const session = await this.connectFtp({ host: this.host })
         try {
+          const directory = await this.mediaDirectoryFor(session, slot)
           await session.remove(ftpPath(directory, name))
 
           const left = await session.list(directory)
@@ -491,6 +494,35 @@ class HyperdeckDevice {
       this.deck.disconnect().catch(() => {}),
       new Promise<void>((resolve) => setTimeout(resolve, 2_000)),
     ])
+  }
+
+  /**
+   * Where a slot's clips are on the deck's file server.
+   *
+   * Asked rather than assumed. A deck serves each mounted card as a
+   * directory at the FTP root, named after the card — so the clips are
+   * one level down from `/`, and which directory depends on what somebody
+   * called the SD. The deck's own name for the slot is the reliable way
+   * in; the slot number is offered after it for firmware that numbers its
+   * folders instead.
+   */
+  private async mediaDirectoryFor(session: FtpSession, slot: number | undefined): Promise<string> {
+    return mediaDirectory(session, '/', [
+      await this.volumeName(slot),
+      slot === undefined ? undefined : String(slot),
+    ])
+  }
+
+  /** What the deck calls the card in a slot, or in the active one. */
+  private async volumeName(slot: number | undefined): Promise<string | undefined> {
+    try {
+      const info = await this.send(new Commands.SlotInfoCommand(slot))
+      return info.volumeName
+    } catch {
+      // An empty or unmounted slot answers with an error code. The
+      // listing can still go ahead against whatever is there.
+      return undefined
+    }
   }
 
   private async slotInfo(

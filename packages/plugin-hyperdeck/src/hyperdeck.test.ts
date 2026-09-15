@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { HyperdeckServer } from 'hyperdeck-server-connection'
 import type { DeviceContext, DeviceInstance, NodeState } from '@scheduler/plugin-sdk'
 import { withSerializingTransport } from '@scheduler/plugin-sdk'
+import type { RemoteEntry } from '@scheduler/device-ftp'
 import { hyperdeckPlugin } from './index.js'
 
 /**
@@ -192,32 +193,59 @@ function context(): DeviceContext {
  * did-it-actually-go check gets exercised: a server that says "fine" and
  * keeps the file is the failure worth having a test for.
  */
-function fakeFtp(files: string[], options: { ignoresDeletes?: boolean } = {}) {
+function fakeFtp(
+  volumes: Record<string, string[]>,
+  options: { ignoresDeletes?: boolean; flat?: boolean } = {},
+) {
+  let stamp = 0
   // Size and date are the two columns the control protocol cannot answer,
   // so the fake carries both: a listing that only had names would not
   // exercise the reason this path exists.
-  const card = new Map(
-    files
-      .map((name, index) => ({
-        name,
-        size: 360_000_000 + index,
-        modifiedAt: Date.parse('2026-09-06T11:00:00Z') + index * 86_400_000,
-      }))
-      .map((file) => [file.name, file]),
-  )
+  const clip = (name: string): RemoteEntry => ({
+    name,
+    size: 360_000_000 + stamp,
+    modifiedAt: Date.parse('2026-09-06T11:00:00Z') + stamp++ * 86_400_000,
+    isDirectory: false,
+  })
+
+  const tree = new Map<string, Map<string, RemoteEntry>>([['/', new Map()]])
+  const put = (directory: string, entry: RemoteEntry): void => {
+    const here = tree.get(directory) ?? new Map<string, RemoteEntry>()
+    here.set(entry.name, entry)
+    tree.set(directory, here)
+  }
+
+  for (const [volume, names] of Object.entries(volumes)) {
+    if (options.flat) {
+      for (const name of names) put('/', clip(name))
+      continue
+    }
+    put('/', { name: volume, size: 0, isDirectory: true })
+    tree.set(`/${volume}`, new Map())
+    for (const name of names) put(`/${volume}`, clip(name))
+  }
+
   const removed: string[] = []
   let closed = 0
+  const at = (directory: string): Map<string, RemoteEntry> =>
+    tree.get(directory === '' ? '/' : directory) ?? new Map<string, RemoteEntry>()
 
   return {
-    card,
     removed,
     closed: () => closed,
+    /** What is in a directory, for asserting a delete actually took. */
+    names: (directory: string) =>
+      [...at(directory).values()].filter((entry) => !entry.isDirectory).map((entry) => entry.name),
     connect: async () => ({
       remove: async (path: string) => {
         removed.push(path)
-        if (!options.ignoresDeletes) card.delete(path.split('/').pop() ?? path)
+        if (options.ignoresDeletes) return
+        const name = path.split('/').pop() ?? path
+        at(path.slice(0, path.lastIndexOf('/')) || '/').delete(name)
       },
-      list: async () => [...card.values()],
+      entries: async (directory: string) => [...at(directory).values()],
+      list: async (directory: string) =>
+        [...at(directory).values()].filter((entry) => !entry.isDirectory),
       close: async () => {
         closed += 1
       },
@@ -230,7 +258,7 @@ const CLIPS_ON_CARD = ['2026-09-06 Sunday Service.mov', '2026-08-30 Sunday Servi
 
 async function connect(
   config: Record<string, unknown> = {},
-  ftp: ReturnType<typeof fakeFtp> = fakeFtp(CLIPS_ON_CARD),
+  ftp: ReturnType<typeof fakeFtp> = fakeFtp({ Sunday: CLIPS_ON_CARD }),
 ): Promise<DeviceInstance> {
   const plugin = hyperdeckPlugin({
     now: () => 1_700_000_000_000,
@@ -566,32 +594,54 @@ describe('what is on the card', () => {
 
 describe('taking something off the card', () => {
   it('removes the named file over FTP, and hangs up after', async () => {
-    const ftp = fakeFtp(['old.mov', 'keep.mov'])
+    const ftp = fakeFtp({ Sunday: ['old.mov', 'keep.mov'] })
     const hyperdeck = await connect({}, ftp)
 
     await hyperdeck.invoke('record', 'deleteMedia', { name: 'old.mov', slot: 1 })
 
-    // Slot 1 is the card root, the way the deck's own file page lays it out.
-    expect(ftp.removed).toEqual(['/old.mov'])
-    expect([...ftp.card.keys()]).toEqual(['keep.mov'])
+    // Inside the card's own directory, not at the root: the root is a list
+    // of cards, and a delete issued there removes nothing at all.
+    expect(ftp.removed).toEqual(['/Sunday/old.mov'])
+    expect(ftp.names('/Sunday')).toEqual(['keep.mov'])
     // A sweep is several of these; a session left open each time is a deck
     // that stops answering by the fourth file.
     expect(ftp.closed()).toBe(1)
   })
 
-  it('puts a second slot in its own directory', async () => {
-    const ftp = fakeFtp(['old.mov'])
+  it('deletes from the card the slot names, not whichever sorts first', async () => {
+    // Two cards mounted, and the file exists on both. Picking the wrong
+    // one deletes a morning nobody asked about.
+    const ftp = fakeFtp({ Archive: ['service.mov'], Sunday: ['service.mov'] })
+    const hyperdeck = await connect({}, ftp)
+    deck.server.onSlotInfo = async (command) => ({
+      'slot id': String(command.parameters['slot id'] ?? 1),
+      status: 'mounted',
+      'volume name': command.parameters['slot id'] === '2' ? 'Sunday' : 'Archive',
+      'recording time': '3600',
+      'video format': '1080p50',
+    })
+
+    await hyperdeck.invoke('record', 'deleteMedia', { name: 'service.mov', slot: 2 })
+
+    expect(ftp.removed).toEqual(['/Sunday/service.mov'])
+    expect(ftp.names('/Archive')).toEqual(['service.mov'])
+  })
+
+  it('works on firmware that serves the clips at the root', async () => {
+    const ftp = fakeFtp({ Sunday: ['old.mov', 'keep.mov'] }, { flat: true })
     const hyperdeck = await connect({}, ftp)
 
-    await hyperdeck.invoke('record', 'deleteMedia', { name: 'old.mov', slot: 2 })
-    expect(ftp.removed).toEqual(['/2/old.mov'])
+    await hyperdeck.invoke('record', 'deleteMedia', { name: 'old.mov', slot: 1 })
+
+    expect(ftp.removed).toEqual(['/old.mov'])
+    expect(ftp.names('/')).toEqual(['keep.mov'])
   })
 
   it('fails loudly when the deck keeps the file anyway', async () => {
     // FTP servers vary in what they say about a delete that did not
     // happen. Reporting success on a file still sitting on the card is
     // worse than failing, because the ledger would then mark it gone.
-    const ftp = fakeFtp(['stuck.mov'], { ignoresDeletes: true })
+    const ftp = fakeFtp({ Sunday: ['stuck.mov'] }, { ignoresDeletes: true })
     const hyperdeck = await connect({}, ftp)
 
     await expect(
@@ -602,7 +652,7 @@ describe('taking something off the card', () => {
   })
 
   it('refuses a call with no name rather than guessing', async () => {
-    const ftp = fakeFtp(['a.mov'])
+    const ftp = fakeFtp({ Sunday: ['a.mov'] })
     const hyperdeck = await connect({}, ftp)
 
     await expect(hyperdeck.invoke('record', 'deleteMedia', {})).rejects.toThrow(/"name"/)

@@ -230,6 +230,30 @@ describe('ConnectionManager', () => {
     await expect(manager.open(id)).resolves.toBeDefined()
     await manager.closeAll()
   })
+
+  it('does not let a file listing overwrite what the device is doing', async () => {
+    // `listMedia` answers with a list, carried back in `raw` because the
+    // transport has one shape. Remembering that as the node's state
+    // replaced everything the screens read: opening a deck's Files panel
+    // emptied the slot picker on the same panel, and the deck showed as
+    // doing nothing until it next said otherwise.
+    const id = addDevice({ kind: 'recorder' })
+    const manager = managerFor()
+    await manager.open(id)
+    await manager.invoke(id, 'record', 'startRecording', { filename: 'service' })
+    await manager.invoke(id, 'record', 'readState')
+
+    const before = manager.lastStates(id).find((entry) => entry.nodeId === 'record')
+    expect(before?.state.recording?.active).toBe(true)
+
+    const listed = await manager.invoke(id, 'record', 'listMedia')
+    expect(Array.isArray(listed?.raw?.media)).toBe(true)
+
+    const after = manager.lastStates(id).find((entry) => entry.nodeId === 'record')
+    expect(after?.state.recording?.active).toBe(true)
+
+    await manager.closeAll()
+  })
 })
 
 describe('applyAndVerify', () => {
