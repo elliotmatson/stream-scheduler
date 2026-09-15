@@ -200,6 +200,9 @@ class StreamingEncoderDevice {
         bitrateBps: state.bitrate,
         ...(state.duration === undefined ? {} : { durationMs: state.duration * 1000 }),
       },
+      // Reported rather than left in `raw`: a cache filling up is a stream
+      // about to stall, and nothing can chart what it cannot name.
+      ...(state.cache === undefined ? {} : { cache: { percent: state.cache } }),
       raw: {
         status: state.status,
         effectiveVideoFormat: state.effectiveVideoFormat,

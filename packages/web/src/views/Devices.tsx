@@ -26,7 +26,7 @@ import {
 import { bitrateHint, CUSTOM_VALUE, freeformHint, LEAVE_AS_IS, nowOn } from '../copy.ts'
 import { duration, relative } from '../format.ts'
 
-export function Devices(): ReactNode {
+export function Devices({ focusId }: { focusId?: string } = {}): ReactNode {
   const { data, error, reload } = useResource(() => api.devices(), [])
   // Health and what is in use change without anybody pressing anything.
   useLiveRefresh(reload)
@@ -51,6 +51,15 @@ export function Devices(): ReactNode {
 
   const devices = data ?? []
 
+  // Arrived from a link on another screen — the status board, or a run's
+  // own page. Scrolled to and marked rather than filtered down to: the
+  // rest of the rack is context somebody standing at it still wants.
+  useEffect(() => {
+    if (!focusId || devices.length === 0) return
+    const card = document.getElementById(`device-${focusId}`)
+    card?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+  }, [focusId, devices.length])
+
   return (
     <>
       <div className="page-head">
@@ -61,7 +70,6 @@ export function Devices(): ReactNode {
           </p>
         </div>
         <div className="row">
-          <button onClick={reload}>Refresh</button>
           <button className="primary" onClick={() => setAdding((open) => !open)}>
             {adding ? 'Cancel' : 'Add a device'}
           </button>
@@ -104,6 +112,7 @@ export function Devices(): ReactNode {
             <DeviceCard
               key={device.id}
               device={device}
+              focused={device.id === focusId}
               kind={plugins?.find((plugin) => plugin.id === device.pluginId)?.displayName}
               busy={busy === device.id}
               onConnect={() => void act(device.id, () => api.connectDevice(device.id))}
@@ -120,6 +129,7 @@ export function Devices(): ReactNode {
 function DeviceCard({
   device,
   kind,
+  focused,
   busy,
   onConnect,
   onEdit,
@@ -128,13 +138,15 @@ function DeviceCard({
   device: Device
   /** The plugin's own name for this kind of box, e.g. "Blackmagic HyperDeck". */
   kind: string | undefined
+  /** Linked to from elsewhere, so it is worth pointing at. */
+  focused?: boolean
   busy: boolean
   onConnect: () => void
   onEdit: () => void
   onRemove: () => void
 }): ReactNode {
   return (
-    <Card>
+    <section id={`device-${device.id}`} className={`card${focused ? ' focused' : ''}`}>
       <div className="page-head" style={{ marginBottom: 10 }}>
         <div>
           <h2 style={{ marginBottom: 2 }}>{device.label}</h2>
@@ -223,7 +235,7 @@ function DeviceCard({
           Connect, and this fills in with what the device can actually do.
         </p>
       )}
-    </Card>
+    </section>
   )
 }
 

@@ -26,6 +26,8 @@ export interface Series {
   prepareLeadMs: number
   lateStartGraceMs: number
   templates: Record<string, string>
+  /** Bumped by the server whenever the event or its outputs change. */
+  version: number
   enabled: boolean
 }
 
@@ -137,6 +139,8 @@ export interface Run {
   /** Where each prepared stream can be watched. Present once it has
    *  prepared, whether or not it has gone live. */
   links?: { label: string; url: string }[]
+  /** What each output is doing, and the last thing its device said. */
+  outputs?: DashboardOutput[]
   steps?: RunStep[]
 }
 
@@ -146,10 +150,21 @@ export interface ChannelKind {
   configSchema: ConfigField[]
 }
 
+/** When the scheduler decides something is worth telling somebody about. */
+export interface NotificationSettings {
+  /** A device's cache this full, while it is on air, is a warning. */
+  cacheWarningPercent: number
+  /** Recording time left on the slot in use, below which it is a warning. */
+  mediaWarningMinutes: number
+}
+
 export interface NotificationChannel {
   id: string
   kind: string
   label: string
+  /** Secrets arrive as a masked marker; submitting it unchanged keeps the
+   *  stored value. */
+  config: Record<string, unknown>
   events: string[]
   enabled: boolean
   lastError: string | null
@@ -357,6 +372,16 @@ export class ApiError extends Error {
   }
 }
 
+/**
+ * Told when the server stops recognising us — a session that expired, or a
+ * password set from another browser. The app re-reads the session and shows
+ * the login form rather than leaving a screen of stale numbers up.
+ */
+let onUnauthorized: (() => void) | undefined
+export function whenSignedOut(handler: () => void): void {
+  onUnauthorized = handler
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const method = init?.method ?? 'GET'
   const response = await fetch(path, {
@@ -368,6 +393,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   })
   const text = await response.text()
   const body = text ? (JSON.parse(text) as Record<string, unknown>) : {}
+  if (response.status === 401 && path !== '/api/login') onUnauthorized?.()
   if (!response.ok) {
     throw new ApiError(
       response.status,
@@ -378,7 +404,33 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return body as T
 }
 
+export interface SessionState {
+  /** False means no password is set: anyone who can reach the port is in. */
+  required: boolean
+  signedIn: boolean
+  /** Set by SCHEDULER_UI_PASSWORD, so this app cannot change it. */
+  managedByEnvironment: boolean
+  minPasswordLength: number
+}
+
 export const api = {
+  session: () => request<SessionState>('/api/session'),
+
+  login: (password: string) =>
+    request<{ token: string; expiresAt: number }>('/api/login', {
+      method: 'POST',
+      body: JSON.stringify({ password }),
+    }),
+
+  logout: () => request<{ ok: true }>('/api/logout', { method: 'POST' }),
+
+  /** `null` takes the password off again. */
+  setPassword: (password: string | null) =>
+    request<{ required: boolean }>('/api/password', {
+      method: 'POST',
+      body: JSON.stringify({ password }),
+    }),
+
   occurrences: (from: number, to: number) =>
     request<Occurrence[]>(`/api/occurrences?from=${from}&to=${to}`),
   series: () => request<Series[]>('/api/series'),
@@ -422,6 +474,7 @@ export const api = {
   dashboard: () => request<Dashboard>('/api/dashboard'),
   runs: () => request<Run[]>('/api/runs'),
   run: (id: string) => request<Run>(`/api/runs/${id}`),
+  runTelemetry: (id: string) => request<RunTelemetry>(`/api/runs/${id}/telemetry`),
   cancelRun: (id: string, reason: string) =>
     request<{ state: string }>(`/api/runs/${id}/cancel`, {
       method: 'POST',
@@ -441,6 +494,13 @@ export const api = {
   skip: (occurrenceId: string) =>
     request<unknown>(`/api/occurrences/${occurrenceId}/skip`, { method: 'POST' }),
   notificationKinds: () => request<ChannelKind[]>('/api/notifications/kinds'),
+  notificationEvents: () => request<string[]>('/api/notifications/events'),
+  notificationSettings: () => request<NotificationSettings>('/api/notifications/settings'),
+  updateNotificationSettings: (input: Partial<NotificationSettings>) =>
+    request<NotificationSettings>('/api/notifications/settings', {
+      method: 'PATCH',
+      body: JSON.stringify(input),
+    }),
   notificationChannels: () =>
     request<{ channels: NotificationChannel[]; pending: number }>('/api/notifications/channels'),
   createChannel: (input: { kind: string; label: string; config: Record<string, unknown> }) =>
@@ -450,6 +510,19 @@ export const api = {
     }),
   testChannel: (id: string) =>
     request<unknown>(`/api/notifications/channels/${id}/test`, { method: 'POST' }),
+  updateChannel: (
+    id: string,
+    input: {
+      label?: string
+      config?: Record<string, unknown>
+      events?: string[]
+      enabled?: boolean
+    },
+  ) =>
+    request<{ ok: true }>(`/api/notifications/channels/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify(input),
+    }),
   deleteChannel: (id: string) =>
     request<unknown>(`/api/notifications/channels/${id}`, { method: 'DELETE' }),
   unskip: (occurrenceId: string) =>
@@ -603,9 +676,36 @@ export interface DashboardOutput {
   state: 'waiting' | 'live' | 'done' | 'failed'
   startsAt: number
   endsAt: number
+  deviceId: string | null
   deviceLabel: string | null
   watchUrl?: string
-  telemetry?: { at: number; bitrateBps?: number; remainingMs?: number; inputPresent?: boolean }
+  telemetry?: {
+    at: number
+    bitrateBps?: number
+    remainingMs?: number
+    elapsedMs?: number
+    cachePercent?: number
+    cacheBufferedMs?: number
+    cacheStatus?: string
+    inputPresent?: boolean
+  }
+}
+
+/** One reading of what a device was doing, at a moment during a run. */
+export interface TelemetrySample {
+  at: number
+  bitrateBps: number | null
+  remainingMs: number | null
+  elapsedMs: number | null
+  cachePercent: number | null
+  cacheBufferedMs: number | null
+  inputPresent: boolean | null
+  streaming: boolean | null
+  recording: boolean | null
+}
+
+export interface RunTelemetry {
+  outputs: { outputId: string; samples: TelemetrySample[] }[]
 }
 
 export interface Dashboard {
@@ -636,9 +736,12 @@ export interface Dashboard {
   devices: {
     id: string
     label: string
+    /** What it is doing, which is what the screen leads with. */
+    activity: 'streaming' | 'recording' | 'streaming and recording' | 'idle' | 'unreachable'
     health: string
     lastError: string | null
     detail: string | null
+    facts: { label: string; value: string }[]
   }[]
   attention: { kind: string; message: string; href: string }[]
 }

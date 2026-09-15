@@ -21,6 +21,7 @@ const DEVICE_PASSWORD = 'smoke-test-device-password'
 const OAUTH_SECRET = 'smoke-test-oauth-client-secret'
 const CHAT_WEBHOOK =
   'https://chat.googleapis.invalid/v1/spaces/AAA/messages?key=k&token=smoke-chat-token'
+const UI_PASSWORD = 'smoke-test-ui-password'
 
 let child
 let failures = 0
@@ -35,9 +36,13 @@ function check(name, condition, detail = '') {
 }
 
 async function api(method, path, body) {
-  const response = await fetch(`${BASE}${path}`, {
+  return apiAt(BASE, method, path, body)
+}
+
+async function apiAt(base, method, path, body, headers = {}) {
+  const response = await fetch(`${base}${path}`, {
     method,
-    headers: { 'content-type': 'application/json' },
+    headers: { 'content-type': 'application/json', ...headers },
     // Fastify rejects a JSON content-type with an empty body, so bodyless
     // POSTs still send `{}`.
     ...(method === 'GET' ? {} : { body: JSON.stringify(body ?? {}) }),
@@ -48,12 +53,21 @@ async function api(method, path, body) {
   return json
 }
 
-async function waitForHealth(timeoutMs = 20_000) {
+/** Status only, for the routes whose whole point is refusing. */
+async function statusAt(base, path, headers = {}) {
+  const response = await fetch(`${base}${path}`, { headers })
+  return response.status
+}
+
+async function waitForHealth(timeoutMs = 20_000, base = BASE, process_ = () => child) {
   const deadline = Date.now() + timeoutMs
   while (Date.now() < deadline) {
-    if (child.exitCode !== null) throw new Error(`host exited early with code ${child.exitCode}`)
+    const running = process_()
+    if (running?.exitCode !== null && running?.exitCode !== undefined) {
+      throw new Error(`host exited early with code ${running.exitCode}`)
+    }
     try {
-      const response = await fetch(`${BASE}/healthz`)
+      const response = await fetch(`${base}/healthz`)
       if (response.ok) return
     } catch {
       // not up yet
@@ -532,8 +546,67 @@ async function main() {
   await api('DELETE', `/api/series/${uiSeries.id}`)
 }
 
+/**
+ * The lock, against the built artifact.
+ *
+ * A second host with a password on it, because the thing that went wrong
+ * last time was not the checking — it was that nothing outside the unit
+ * suite ever asked the running app for a page.
+ */
+async function passwordChecks() {
+  const port = PORT + 1
+  const base = `http://127.0.0.1:${port}`
+  const dir = mkdtempSync(join(tmpdir(), 'scheduler-smoke-auth-'))
+  const locked = spawn(process.execPath, ['packages/host/dist/main.js'], {
+    env: {
+      ...process.env,
+      SCHEDULER_CONFIG_DIR: dir,
+      SCHEDULER_SECRET: 'smoke-test-master-secret',
+      SCHEDULER_PORT: String(port),
+      SCHEDULER_LOG_LEVEL: 'warn',
+      SCHEDULER_UI_PASSWORD: UI_PASSWORD,
+    },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  })
+  locked.stdout.on('data', () => {})
+  locked.stderr.on('data', () => {})
+
+  try {
+    await waitForHealth(20_000, base, () => locked)
+
+    // The health check has no way to sign in, and a container restarting in
+    // a loop because of that would be worse than the exposure.
+    check('a locked host still answers /healthz', (await statusAt(base, '/healthz')) === 200)
+    check('a locked host refuses the API', (await statusAt(base, '/api/devices')) === 401)
+    check(
+      'a locked host still serves the page, so there is something to log in with',
+      (await statusAt(base, '/')) === 200,
+    )
+
+    const signedIn = await apiAt(base, 'POST', '/api/login', { password: UI_PASSWORD })
+    check('the password is taken and a session comes back', typeof signedIn.token === 'string')
+    check(
+      'the session opens the API',
+      (await statusAt(base, '/api/devices', { authorization: `Bearer ${signedIn.token}` })) === 200,
+    )
+    check('the password is never echoed back', !JSON.stringify(signedIn).includes(UI_PASSWORD))
+
+    let refused = false
+    try {
+      await apiAt(base, 'POST', '/api/login', { password: 'not the password' })
+    } catch (error) {
+      refused = String(error).includes('401')
+    }
+    check('a wrong password is refused', refused)
+  } finally {
+    locked.kill('SIGTERM')
+    rmSync(dir, { recursive: true, force: true })
+  }
+}
+
 try {
   await main()
+  await passwordChecks()
 } catch (error) {
   failures++
   process.stdout.write(`  FAIL ${error instanceof Error ? error.message : String(error)}\n`)

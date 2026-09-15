@@ -44,6 +44,10 @@ export function toneFor(status: string): string {
     // A run is `running` for the whole of its window, with outputs coming
     // and going inside it; that is the state worth shouting about.
     case 'running':
+    // What a device is doing, which the status screen leads with.
+    case 'streaming':
+    case 'recording':
+    case 'streaming and recording':
       return 'live'
     case 'completed':
     case 'done':
@@ -53,6 +57,7 @@ export function toneFor(status: string): string {
       return 'ok'
     case 'failed':
     case 'disconnected':
+    case 'unreachable':
     case 'reauth_required':
       return 'bad'
     case 'preparing':

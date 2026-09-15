@@ -304,6 +304,10 @@ class AtemDevice {
           ...(recording?.status === undefined
             ? {}
             : { remainingMs: recording.status.recordingTimeAvailable * 1000 }),
+          // The switcher counts the recording itself, in timecode.
+          ...(recording?.duration === undefined
+            ? {}
+            : { durationMs: timecodeToMs(recording.duration) }),
           // The media plugged into the switcher. An ATEM calls them disks
           // and a deck calls them slots; they are the same thing to an
           // operator asking whether there is room for this morning.
@@ -342,7 +346,13 @@ class AtemDevice {
         // so the secret does not travel back across the plugin boundary.
         ...(streaming?.service.key ? { keyFingerprint: fingerprint(streaming.service.key) } : {}),
         ...(streaming?.stats === undefined ? {} : { bitrateBps: streaming.stats.encodingBitrate }),
+        ...(streaming?.duration === undefined
+          ? {}
+          : { durationMs: timecodeToMs(streaming.duration) }),
       },
+      // How full the send-ahead cache is. On an ATEM this climbing is the
+      // first sign the uplink is not keeping up with the encoder.
+      ...(streaming?.stats === undefined ? {} : { cache: { percent: streaming.stats.cacheUsed } }),
       ...this.qualityOption(state),
       raw: {
         streamingState: streamingStatusName(streaming?.status?.state),
@@ -587,3 +597,10 @@ export function atemPlugin(options: AtemPluginOptions = {}): PluginDefinition {
 }
 
 export type { AtemClient }
+
+/** An ATEM counts elapsed time in timecode; everything here is milliseconds.
+ *  Frames are dropped rather than guessed at a frame rate the state does not
+ *  carry — a second's precision is what any of this is read at. */
+function timecodeToMs(timecode: { hours: number; minutes: number; seconds: number }): number {
+  return (timecode.hours * 3600 + timecode.minutes * 60 + timecode.seconds) * 1000
+}

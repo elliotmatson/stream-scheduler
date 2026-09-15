@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { ReactNode } from 'react'
-import { api, type SchedulePreview, type Series } from '../api.ts'
+import { api, useResource, type EventOutput, type SchedulePreview, type Series } from '../api.ts'
 import { Outputs } from './Outputs.tsx'
 import { Card, ErrorBanner, Field } from '../components.tsx'
 import { shortZone, timeIn } from '../format.ts'
@@ -46,6 +46,8 @@ export function EventForm({ series, onDone }: { series?: Series; onDone: () => v
   const [draft, setDraft] = useState<Draft>(() => toDraft(series))
   const [error, setError] = useState<string>()
   const [saving, setSaving] = useState(false)
+  /** Hold the outputs at their clock times rather than letting them follow. */
+  const [keepOutputTimes, setKeepOutputTimes] = useState(false)
   // An event has to exist before its outputs can hang off it. Rather than
   // hiding that, a new event saves and then reveals the outputs editor in
   // place, so the flow is one screen either way.
@@ -76,6 +78,27 @@ export function EventForm({ series, onDone }: { series?: Series; onDone: () => v
     [draft, rrule],
   )
 
+  // What moving the start time would do to the outputs sitting inside the
+  // window. They are stored as offsets from it, so they move with it — which
+  // is almost always what somebody wants and is worth saying out loud before
+  // they press Save.
+  const savedTime = saved ? timeInZone(saved.dtstart, saved.timezone) : undefined
+  const shiftMs =
+    savedTime !== undefined && saved?.timezone === draft.timezone
+      ? (minutesOfDay(draft.time) - minutesOfDay(savedTime)) * 60_000
+      : 0
+  // Only asked for once the time has actually changed, and re-asked each time
+  // it starts differing again: the panel below owns these rows and this is a
+  // read for one sentence.
+  const { data: outputsNow } = useResource(
+    () => (saved && shiftMs !== 0 ? api.outputs(saved.id) : Promise.resolve(undefined)),
+    [saved?.id, shiftMs !== 0],
+  )
+  const moving = outputsNow?.outputs ?? []
+  // An output cannot start before the event opens, so holding them still is
+  // only on offer when none of them would have to.
+  const stuck = moving.find((output: EventOutput) => output.offsetMs - shiftMs < 0)
+
   const save = async (): Promise<void> => {
     setSaving(true)
     setError(undefined)
@@ -90,7 +113,14 @@ export function EventForm({ series, onDone }: { series?: Series; onDone: () => v
         templates: templatesOf(draft),
       }
       if (saved) {
+        // Captured before the series moves: re-basing needs the offsets as
+        // they were, not as they will be.
+        const holdStill = keepOutputTimes && shiftMs !== 0 ? [...moving] : []
         await api.updateSeries(saved.id, input)
+        for (const output of holdStill) {
+          await api.updateOutput(output.id, { offsetMs: output.offsetMs - shiftMs })
+        }
+        setKeepOutputTimes(false)
         setSaved({ ...saved, ...input, dtstart: saved.dtstart })
         const fresh = (await api.series()).find((row) => row.id === saved.id)
         if (fresh) setSaved(fresh)
@@ -162,6 +192,35 @@ export function EventForm({ series, onDone }: { series?: Series; onDone: () => v
               />
             </Field>
           </div>
+
+          {/* Said before Save rather than discovered after it. The outputs
+              follow the window because they are stored as offsets into it,
+              which is what keeps a morning's shape when the morning moves. */}
+          {shiftMs !== 0 && moving.length > 0 ? (
+            <div className="banner info">
+              <div>
+                Saving moves this {describeShift(shiftMs)}.{' '}
+                {keepOutputTimes
+                  ? `Its ${countOf(moving.length)} stay where they are now.`
+                  : `Its ${countOf(moving.length)} move with it: ${examplesOf(saved, moving, shiftMs)}`}
+              </div>
+              {stuck ? (
+                <div className="muted" style={{ marginTop: 6 }}>
+                  Holding them at their current times is not possible here: “{stuck.label}” would
+                  have to start before the event opens.
+                </div>
+              ) : (
+                <label className="row" style={{ gap: 8, marginTop: 8 }}>
+                  <input
+                    type="checkbox"
+                    checked={keepOutputTimes}
+                    onChange={(event) => setKeepOutputTimes(event.target.checked)}
+                  />
+                  <span>Keep them at their current times</span>
+                </label>
+              )}
+            </div>
+          ) : null}
 
           <Field label="Repeats">
             <select
@@ -269,7 +328,11 @@ export function EventForm({ series, onDone }: { series?: Series; onDone: () => v
 
       {saved ? (
         <div style={{ marginTop: 16 }}>
-          <Outputs series={saved} />
+          {/* Keyed on the version as well as the event, so saving a change to
+              the window re-reads the outputs rather than rendering the last
+              answer against the new start time. Editing an output from inside
+              the panel does not change this key, so its own work is safe. */}
+          <Outputs key={`${saved.id}:${saved.version}`} series={saved} />
         </div>
       ) : (
         <p className="muted" style={{ marginBottom: 0 }}>
@@ -353,6 +416,44 @@ function PreviewPanel({
       )}
     </aside>
   )
+}
+
+/** `09:30` as minutes since midnight. */
+function minutesOfDay(time: string): number {
+  const [hour, minute] = time.split(':').map(Number)
+  if (hour === undefined || minute === undefined || Number.isNaN(hour) || Number.isNaN(minute)) {
+    return 0
+  }
+  return hour * 60 + minute
+}
+
+function describeShift(ms: number): string {
+  const minutes = Math.abs(Math.round(ms / 60_000))
+  const when = ms > 0 ? 'later' : 'earlier'
+  if (minutes < 60) return `${minutes} minutes ${when}`
+  const hours = Math.floor(minutes / 60)
+  const rest = minutes % 60
+  const span = rest === 0 ? `${hours}h` : `${hours}h ${rest}m`
+  return `${span} ${when}`
+}
+
+function countOf(n: number): string {
+  return n === 1 ? 'one output' : `${n} outputs`
+}
+
+/** `9:30 → 10:30, 11:00 → 12:00`, for the first few. */
+function examplesOf(
+  series: Series | undefined,
+  outputs: { offsetMs: number }[],
+  shiftMs: number,
+): string {
+  if (!series) return ''
+  const at = (offsetMs: number): string => timeInZone(series.dtstart + offsetMs, series.timezone)
+  const shown = outputs
+    .slice(0, 3)
+    .map((output) => `${at(output.offsetMs)} → ${at(output.offsetMs + shiftMs)}`)
+    .join(', ')
+  return outputs.length > 3 ? `${shown}, …` : shown
 }
 
 function toDraft(series: Series | undefined): Draft {

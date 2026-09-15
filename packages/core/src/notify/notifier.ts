@@ -240,6 +240,50 @@ export class Notifier {
     return id
   }
 
+  /**
+   * Changes a channel in place.
+   *
+   * Anything left out is left alone, and a secret sent back as the masked
+   * marker — or blank — keeps the stored one: an edit form has no way to
+   * show a webhook URL it was never given, so it must not be able to wipe
+   * one by being saved.
+   */
+  update(
+    channelId: string,
+    input: {
+      label?: string
+      config?: ConfigValues
+      events?: NotificationEvent[]
+      enabled?: boolean
+    },
+  ): void {
+    const row = this.deps.db
+      .prepare('SELECT * FROM notification_channel WHERE id = ?')
+      .get(channelId) as ChannelRow | undefined
+    if (!row) throw new Error(`No notification with id "${channelId}".`)
+
+    const definition = this.kind(row.kind)
+    const existing = JSON.parse(row.config) as ConfigValues
+    const config =
+      input.config === undefined
+        ? existing
+        : this.storeSecrets(definition, stripMasked(definition, input.config), existing)
+    if (input.config !== undefined) this.assertValidConfig(row.kind, config)
+
+    this.deps.db
+      .prepare(
+        `UPDATE notification_channel SET label = ?, config = ?, events = ?, enabled = ?
+           WHERE id = ?`,
+      )
+      .run(
+        input.label ?? row.label,
+        JSON.stringify(config),
+        JSON.stringify(input.events ?? (JSON.parse(row.events) as string[])),
+        (input.enabled ?? row.enabled === 1) ? 1 : 0,
+        channelId,
+      )
+  }
+
   remove(channelId: string): void {
     this.deps.db.prepare('DELETE FROM notification_channel WHERE id = ?').run(channelId)
   }
@@ -248,6 +292,8 @@ export class Notifier {
     id: string
     kind: string
     label: string
+    /** Secrets as a marker, never a value: there is no read path for them. */
+    config: ConfigValues
     events: string[]
     enabled: boolean
     lastError: string | null
@@ -261,6 +307,7 @@ export class Notifier {
       id: row.id,
       kind: row.kind,
       label: row.label,
+      config: this.maskedConfig(row),
       events: JSON.parse(row.events) as string[],
       enabled: row.enabled === 1,
       lastError: row.last_error,
@@ -310,6 +357,24 @@ export class Notifier {
     }
 
     return { id: row.id, label: row.label, definition, config }
+  }
+
+  /** What an edit form may be shown: everything except the secrets. */
+  private maskedConfig(row: ChannelRow): ConfigValues {
+    const config = JSON.parse(row.config) as ConfigValues
+    let definition: NotificationChannel
+    try {
+      definition = this.kind(row.kind)
+    } catch {
+      // A channel whose plugin is no longer loaded: say nothing rather than
+      // hand back config nothing can reason about.
+      return {}
+    }
+    const out: ConfigValues = { ...config }
+    for (const field of definition.configSchema) {
+      if (field.type === 'secret' && out[field.id] !== undefined) out[field.id] = MASKED_SECRET
+    }
+    return out
   }
 
   private storeSecrets(
@@ -404,4 +469,22 @@ export class Notifier {
       .prepare("UPDATE notification_outbox SET status = 'failed', last_error = ? WHERE id = ?")
       .run(reason, row.id)
   }
+}
+
+/** What a secret looks like on the way out. Matches the device API's marker. */
+export const MASKED_SECRET = '••••••••'
+
+/**
+ * Drops any secret that came back exactly as it left.
+ *
+ * An edit form is given the marker and submits it unchanged when nobody
+ * touched that field. Storing it would encrypt the marker and quietly
+ * replace a working webhook with eight dots.
+ */
+function stripMasked(definition: NotificationChannel, config: ConfigValues): ConfigValues {
+  const out: ConfigValues = { ...config }
+  for (const field of definition.configSchema) {
+    if (field.type === 'secret' && out[field.id] === MASKED_SECRET) delete out[field.id]
+  }
+  return out
 }

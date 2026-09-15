@@ -4,6 +4,7 @@ import Fastify from 'fastify'
 import type { FastifyInstance } from 'fastify'
 import websocket from '@fastify/websocket'
 import fastifyStatic from '@fastify/static'
+import fastifyCookie from '@fastify/cookie'
 import { z } from 'zod'
 import { DeviceError, fingerprint, VerificationError } from '@scheduler/plugin-sdk'
 import type { ConfigValues, JsonObject, NodeDefinition, NodeState } from '@scheduler/plugin-sdk'
@@ -30,7 +31,8 @@ import {
 } from '../events/outputs.js'
 import { describeConflict, overlapsForSeries } from '../events/overlap.js'
 import { assertUnreferenced, ConflictError, NotFoundError } from './errors.js'
-import { buildDashboard } from './dashboard.js'
+import { buildDashboard, outputsOf } from './dashboard.js'
+import { registerAuthGate, registerAuthRoutes } from './auth-routes.js'
 import { registerNotifyRoutes } from './notify-routes.js'
 import { registerOAuthRoutes } from './oauth-routes.js'
 import { originOf } from './origin.js'
@@ -52,20 +54,17 @@ export async function createServer(options: ServerOptions): Promise<FastifyInsta
   const { app } = options
   const host = options.host ?? '127.0.0.1'
 
-  // There is no authentication. There was a bearer-token check here, but no
-  // browser can send that header — it 401'd the HTML page itself, so the UI
-  // was unreachable whenever it was switched on. A lock nobody can open is
-  // not security, and it made the container check look like it proved
-  // something. Removed until there is a login that works; tracked as an
-  // issue.
-  //
-  // What protects the app today is where it listens. Loopback is the
-  // default, and anything else is something the operator chose.
-  if (!isLoopback(host)) {
+  // A password is optional, and where it listens still matters. Loopback
+  // with no password is a fine single-booth install; anything wider without
+  // one is worth saying out loud, once, at startup — and on the status
+  // screen, which is what `setExposed` is for.
+  app.setExposed(!isLoopback(host))
+  if (!isLoopback(host) && !app.auth.required) {
     app.logger.warn(
-      `Listening on ${host} with no authentication. Anyone who can reach this ` +
-        `port can start broadcasts and read stream keys. In Docker, publish to ` +
-        `127.0.0.1 (-p 127.0.0.1:8500:8500) unless you mean to share it.`,
+      `Listening on ${host} with no password. Anyone who can reach this port ` +
+        `can start broadcasts and drive your devices. Set one in the app, or ` +
+        `with SCHEDULER_UI_PASSWORD, or publish to 127.0.0.1 ` +
+        `(-p 127.0.0.1:8500:8500) instead.`,
     )
   }
 
@@ -78,6 +77,12 @@ export async function createServer(options: ServerOptions): Promise<FastifyInsta
   fastify.addHook('onRequest', async (request) => {
     if (request.headers.accept?.includes('text/html')) app.setPublicOrigin(originOf(request))
   })
+
+  // Before every route, including the WebSocket upgrade and the static
+  // assets: a gate registered later would leave whatever came first open.
+  await fastify.register(fastifyCookie)
+  registerAuthGate(fastify, app)
+
   await fastify.register(websocket)
 
   fastify.setErrorHandler(async (raw, _request, reply) => {
@@ -89,6 +94,7 @@ export async function createServer(options: ServerOptions): Promise<FastifyInsta
     await reply.code(status).send({ error: error.message, ...detailsFor(error) })
   })
 
+  registerAuthRoutes(fastify, app)
   registerRoutes(fastify, app)
   registerOAuthRoutes(fastify, app)
   registerNotifyRoutes(fastify, app)
@@ -1029,6 +1035,9 @@ function registerRoutes(fastify: FastifyInstance, app: Application): void {
     // before they were ever written.
     return {
       ...toRunDto(run),
+      // The same view of an output the status screen has. This page is the
+      // detailed one, so it carries the numbers as well as the steps.
+      outputs: outputsOf(app, id, run.occurrence_id),
       // Where each prepared stream can be watched. Pulled out of the step
       // responses because that is where it lands, and buried in a timeline
       // is no use to somebody who needs to send the link round.
@@ -1048,6 +1057,35 @@ function registerRoutes(fastify: FastifyInstance, app: Application): void {
         startedAt: step.started_at,
         endedAt: step.ended_at,
         durationMs: step.started_at && step.ended_at ? step.ended_at - step.started_at : null,
+      })),
+    }
+  })
+
+  /**
+   * What the devices were doing, over the whole run.
+   *
+   * Decimated to at most `points` readings per output: a chart is six
+   * hundred pixels wide and a four-hour service is a thousand samples, so
+   * sending all of them costs bandwidth to draw the same line.
+   */
+  fastify.get('/api/runs/:id/telemetry', async (request) => {
+    const { id } = z.object({ id: z.string() }).parse(request.params)
+    const { points } = z
+      .object({ points: z.coerce.number().int().min(10).max(2000).default(240) })
+      .parse(request.query ?? {})
+
+    const byOutput = new Map<string, ReturnType<typeof app.telemetry.read>>()
+    for (const sample of app.telemetry.read(id)) {
+      const key = sample.outputId ?? `${sample.deviceId}/${sample.nodeId}`
+      const list = byOutput.get(key) ?? []
+      list.push(sample)
+      byOutput.set(key, list)
+    }
+
+    return {
+      outputs: [...byOutput.entries()].map(([outputId, samples]) => ({
+        outputId,
+        samples: decimate(samples, points),
       })),
     }
   })
@@ -1136,6 +1174,20 @@ function watchLinks(app: Application, runId: string): { label: string; url: stri
     })
   }
   return links
+}
+
+/**
+ * Thins a series to at most `limit` readings, keeping the first and the last.
+ *
+ * Every nth rather than an average: an averaged bitrate hides the dip that
+ * is the whole reason somebody opened the chart.
+ */
+function decimate<T>(samples: T[], limit: number): T[] {
+  if (samples.length <= limit) return samples
+  const step = (samples.length - 1) / (limit - 1)
+  const out: T[] = []
+  for (let i = 0; i < limit; i++) out.push(samples[Math.round(i * step)]!)
+  return out
 }
 
 function statusFor(error: Error): number {

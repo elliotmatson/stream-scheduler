@@ -194,7 +194,12 @@ export class ConnectionManager {
   ): Promise<NodeState | null> {
     const connection = await this.open(deviceId)
     try {
-      return await connection.device.invoke(nodeId, action, args)
+      const state = await connection.device.invoke(nodeId, action, args)
+      // An answer is an answer, however it was asked for. Remembering only
+      // what a device volunteers leaves every screen reading "last heard
+      // ten minutes ago" while something polls it every fifteen seconds.
+      if (state) this.remember(deviceId, nodeId, state)
+      return state
     } catch (error) {
       // A failed command does not by itself mean the transport is gone: a
       // device can reject one command and stay perfectly connected. Dropping

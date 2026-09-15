@@ -13,6 +13,10 @@ import {
   type MasterKeySource,
 } from './secrets/master-key.js'
 import { scrubber } from './secrets/scrubber.js'
+import { Auth } from './auth/index.js'
+import { TelemetryRecorder } from './runs/telemetry.js'
+import { cacheHighNotification } from './notify/run-events.js'
+import { Thresholds } from './notify/thresholds.js'
 import { SecretVault } from './secrets/vault.js'
 import { DEFAULT_HORIZON_MS, materializeAll } from './schedule/materialize.js'
 import { EventPlanner } from './runs/event-planner.js'
@@ -39,8 +43,21 @@ export interface AppOptions {
   enforceSerialization?: boolean
   /** How far ahead events are pre-flight checked. */
   preflightLeadMs?: number
+  /** How often a running event's devices are asked what they are doing. */
+  telemetryIntervalMs?: number
+  /** How long those readings are kept. */
+  telemetryRetentionMs?: number
   /** Used in notification links back into the UI. */
   baseUrl?: string
+  /**
+   * Sets the UI password from the environment, which is how Docker does it
+   * — there is no first-run screen in a container somebody started with
+   * `docker run`. Passed in rather than read here so core stays testable
+   * without touching `process.env`, the same way the master key does it.
+   */
+  uiPassword?: string | undefined
+  /** How long a signed-in session lasts. */
+  sessionTtlMs?: number
 }
 
 /**
@@ -61,6 +78,9 @@ export class Application {
   readonly engine: RunEngine
   readonly notifier: Notifier
   readonly preflight: PreflightChecker
+  readonly telemetry: TelemetryRecorder
+  readonly thresholds: Thresholds
+  readonly auth: Auth
   readonly logger: Logger
   readonly clock: Clock
 
@@ -76,6 +96,7 @@ export class Application {
 
   private readonly tickListeners = new Set<() => void>()
   private timer: NodeJS.Timeout | undefined
+  private reachableFromNetwork = false
   private ticking = false
   private lastMaterializedAt = 0
   private lastPreflightAt = 0
@@ -94,6 +115,9 @@ export class Application {
     engine: RunEngine
     notifier: Notifier
     preflight: PreflightChecker
+    telemetry: TelemetryRecorder
+    thresholds: Thresholds
+    auth: Auth
     logger: Logger
     clock: Clock
     tickIntervalMs: number
@@ -111,6 +135,9 @@ export class Application {
     this.engine = init.engine
     this.notifier = init.notifier
     this.preflight = init.preflight
+    this.telemetry = init.telemetry
+    this.thresholds = init.thresholds
+    this.auth = init.auth
     this.logger = init.logger
     this.clock = init.clock
     this.tickIntervalMs = init.tickIntervalMs
@@ -120,6 +147,22 @@ export class Application {
 
   get publicOrigin(): string {
     return this.links.origin
+  }
+
+  /**
+   * Whether this app is listening anywhere but loopback.
+   *
+   * Set by the server as it binds, because the address is its business and
+   * not the application's. What reads it is the status screen: "no password"
+   * is worth saying on a machine other people can reach, and is noise on a
+   * booth machine that only answers itself.
+   */
+  get exposed(): boolean {
+    return this.reachableFromNetwork
+  }
+
+  setExposed(exposed: boolean): void {
+    this.reachableFromNetwork = exposed
   }
 
   /**
@@ -217,6 +260,37 @@ export class Application {
       leadMs: options.preflightLeadMs ?? DEFAULT_PREFLIGHT_LEAD_MS,
     })
 
+    const thresholds = new Thresholds({ db })
+
+    const telemetry = new TelemetryRecorder({
+      db,
+      store,
+      connections,
+      clock,
+      logger,
+      // Read at the moment of the check, not at startup: a threshold
+      // changed on a Sunday morning should take effect on that morning.
+      cacheWarningPercent: () => thresholds.get().cacheWarningPercent,
+      ...(options.telemetryIntervalMs === undefined
+        ? {}
+        : { intervalMs: options.telemetryIntervalMs }),
+      ...(options.telemetryRetentionMs === undefined
+        ? {}
+        : { retentionMs: options.telemetryRetentionMs }),
+      // Queued rather than sent from here, for the same reason a failed run
+      // is: sampling must not wait on a mail server.
+      onCacheHigh: (event) => {
+        notifier.enqueue(cacheHighNotification(db, event, links.origin))
+      },
+    })
+
+    const auth = new Auth({
+      db,
+      clock,
+      envPassword: options.uiPassword,
+      ...(options.sessionTtlMs === undefined ? {} : { ttlMs: options.sessionTtlMs }),
+    })
+
     return new Application({
       paths,
       db,
@@ -229,6 +303,9 @@ export class Application {
       engine,
       notifier,
       preflight,
+      telemetry,
+      thresholds,
+      auth,
       logger,
       clock,
       tickIntervalMs: options.tickIntervalMs ?? 5_000,
@@ -261,6 +338,10 @@ export class Application {
       if (now - this.lastMaterializedAt > 60 * 60_000) {
         this.materialize()
         this.lastMaterializedAt = now
+        // Expired and revoked sessions go with it. Nothing depends on this
+        // happening promptly — `verify` already refuses them — so it rides
+        // along with the other hourly work rather than owning a timer.
+        this.auth.sessions.sweep()
       }
       await this.connections.tick()
       await this.engine.tick()
@@ -271,6 +352,9 @@ export class Application {
         this.lastPreflightAt = now
         await this.preflight.run()
       }
+      // After the engine, so a run that has just gone on air is sampled
+      // rather than waiting a whole interval to appear on its own timeline.
+      await this.telemetry.tick()
       await this.notifier.flush()
     } catch (error) {
       this.logger.error('scheduler tick failed', {

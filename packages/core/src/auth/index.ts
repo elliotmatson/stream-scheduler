@@ -1,0 +1,138 @@
+import type { Clock } from '@scheduler/plugin-sdk'
+import type { Db } from '../db/index.js'
+import { hashPassword, passwordProblem, verifyPassword } from './password.js'
+import { Sessions } from './sessions.js'
+import { LoginThrottle } from './throttle.js'
+
+/**
+ * Who is allowed to drive this app.
+ *
+ * One shared password, because that is what a booth needs: several people
+ * on a rota, one thing to remember, and the real boundary is the network
+ * the port is on. Accounts would be a bigger thing to build and a bigger
+ * thing to run.
+ *
+ * A password is optional and off by default. A machine listening on
+ * loopback with one operator does not need a lock, and making them invent
+ * one is how people end up writing it on the wall. What changes with this
+ * module is that the choice is now available — and that when it is made,
+ * it works in a browser.
+ */
+
+export const PASSWORD_SETTING_KEY = 'ui_password'
+
+export type LoginResult =
+  | { ok: true; token: string; expiresAt: number }
+  | { ok: false; reason: 'no-password' }
+  | { ok: false; reason: 'wrong-password' }
+  | { ok: false; reason: 'too-many-attempts'; retryAfterMs: number }
+
+export class Auth {
+  readonly sessions: Sessions
+  private readonly db: Db
+  private readonly throttle: LoginThrottle
+  /**
+   * Set from the environment, which Docker needs: there is no first-run
+   * screen in a container somebody started with `docker run`. Hashed once
+   * here so there is a single verification path.
+   */
+  private readonly fromEnvironment: string | undefined
+
+  constructor(init: { db: Db; clock: Clock; envPassword?: string | undefined; ttlMs?: number }) {
+    this.db = init.db
+    this.sessions = new Sessions({
+      db: init.db,
+      clock: init.clock,
+      ...(init.ttlMs === undefined ? {} : { ttlMs: init.ttlMs }),
+    })
+    this.throttle = new LoginThrottle({ clock: init.clock })
+    const env = init.envPassword?.trim()
+    this.fromEnvironment = env ? hashPassword(env) : undefined
+  }
+
+  /** True when the password came from the environment, so the UI does not
+   *  offer to change something it cannot change. */
+  get managedByEnvironment(): boolean {
+    return this.fromEnvironment !== undefined
+  }
+
+  /** False means the app is open to anyone who can reach the port. */
+  get required(): boolean {
+    return this.storedHash() !== undefined
+  }
+
+  /**
+   * Sets or replaces the password, and signs everybody out.
+   *
+   * Changing a shared password almost always means somebody should no
+   * longer be able to get in, and leaving their session alive would make
+   * the change cosmetic.
+   */
+  setPassword(next: string): void {
+    if (this.managedByEnvironment) {
+      throw new Error('The password is set by SCHEDULER_UI_PASSWORD and cannot be changed here.')
+    }
+    const problem = passwordProblem(next)
+    if (problem) throw new Error(problem)
+    this.db
+      .prepare(
+        `INSERT INTO setting (key, value) VALUES (?, ?)
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+      )
+      .run(PASSWORD_SETTING_KEY, hashPassword(next))
+    this.sessions.revokeAll()
+  }
+
+  /** Takes the lock off. Every session ends with it. */
+  clearPassword(): void {
+    if (this.managedByEnvironment) {
+      throw new Error('The password is set by SCHEDULER_UI_PASSWORD and cannot be cleared here.')
+    }
+    this.db.prepare('DELETE FROM setting WHERE key = ?').run(PASSWORD_SETTING_KEY)
+    this.sessions.revokeAll()
+  }
+
+  /**
+   * Trades a password for a session token.
+   *
+   * `from` is whatever identifies the caller for rate limiting — an address.
+   * A failure spreads the next attempt out rather than answering faster.
+   */
+  login(input: { password: string; from: string; userAgent?: string }): LoginResult {
+    const stored = this.storedHash()
+    if (stored === undefined) return { ok: false, reason: 'no-password' }
+
+    const retryAfterMs = this.throttle.retryAfterMs(input.from)
+    if (retryAfterMs > 0) return { ok: false, reason: 'too-many-attempts', retryAfterMs }
+
+    if (!verifyPassword(input.password, stored)) {
+      this.throttle.fail(input.from)
+      return { ok: false, reason: 'wrong-password' }
+    }
+
+    this.throttle.succeed(input.from)
+    const { token, expiresAt } = this.sessions.mint(
+      input.userAgent === undefined ? {} : { userAgent: input.userAgent },
+    )
+    return { ok: true, token, expiresAt }
+  }
+
+  /** True when this request may proceed: either nothing is locked, or the
+   *  token names a live session. */
+  allows(token: string | undefined): boolean {
+    if (!this.required) return true
+    return token !== undefined && this.sessions.verify(token) !== undefined
+  }
+
+  private storedHash(): string | undefined {
+    if (this.fromEnvironment !== undefined) return this.fromEnvironment
+    const row = this.db
+      .prepare('SELECT value FROM setting WHERE key = ?')
+      .get(PASSWORD_SETTING_KEY) as { value: string } | undefined
+    return row?.value
+  }
+}
+
+export { hashPassword, MIN_PASSWORD_LENGTH, passwordProblem, verifyPassword } from './password.js'
+export { DEFAULT_SESSION_TTL_MS, Sessions, type Session } from './sessions.js'
+export { LoginThrottle } from './throttle.js'

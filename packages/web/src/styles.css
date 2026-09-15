@@ -192,6 +192,13 @@ td,
   color: var(--accent-contrast);
 }
 
+.nav-links {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
 .nav-link {
   display: flex;
   align-items: center;
@@ -1100,16 +1107,45 @@ ol.preview-list li::marker {
   .app {
     flex-direction: column;
   }
+  /* Stays put as the page scrolls, the way the sidebar does on a desktop:
+     on a phone this is the only way back to another screen. */
   .sidebar {
+    position: sticky;
+    top: 0;
+    z-index: 5;
     width: auto;
     flex: none;
-    flex-direction: row;
-    align-items: center;
-    overflow-x: auto;
     height: auto;
     border-right: 0;
     border-bottom: 1px solid var(--border);
+  }
+  /* The row is this, not `.sidebar`. It is the element with the height and
+     the direction on it, and leaving it a 100vh column is what pushed the
+     whole page below the fold on a phone. */
+  .sidebar-inner {
+    position: static;
+    height: auto;
+    flex-direction: row;
+    align-items: center;
+    gap: 8px;
     padding: 8px 10px;
+  }
+  .nav-links {
+    flex: 1;
+    flex-direction: row;
+    gap: 2px;
+    overflow-x: auto;
+    /* The bar is short; a scrollbar across it would be most of it. */
+    scrollbar-width: none;
+  }
+  .nav-links::-webkit-scrollbar {
+    display: none;
+  }
+  /* Icon-only, so square and big enough to hit with a thumb. */
+  .nav-link {
+    justify-content: center;
+    min-width: 40px;
+    min-height: 40px;
   }
   .brand,
   .nav-link span {
@@ -1117,11 +1153,21 @@ ol.preview-list li::marker {
   }
   .sidebar-foot {
     margin-top: 0;
-    margin-left: auto;
     padding-top: 0;
     border-top: 0;
+    flex: none;
     flex-direction: row;
     align-items: center;
+    gap: 8px;
+  }
+  .sidebar-foot .pill,
+  .sidebar-foot button.link {
+    align-self: center;
+  }
+  /* Room for the nav instead. What is worth the space on a narrow screen is
+     a problem — reconnecting, or a run on air — not the absence of one. */
+  .when-wide {
+    display: none;
   }
   .theme-toggle {
     width: auto;
@@ -1149,4 +1195,173 @@ ol.preview-list li::marker {
     animation-iteration-count: 1 !important;
     transition-duration: 0.001ms !important;
   }
+}
+
+/* signing in -------------------------------------------------------------- */
+
+/* The whole viewport, because when the app is locked this is the app. */
+.signin {
+  min-height: 100vh;
+  /* Mobile browsers count their own chrome into 100vh, which leaves the
+     card scrollable on a phone for no reason. */
+  min-height: 100dvh;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: var(--bg);
+}
+
+.signin-card {
+  width: 100%;
+  max-width: 360px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.signin-card .brand {
+  margin-bottom: 0;
+}
+
+/* A button that reads as a quiet link: for a secondary action sitting among
+   status text rather than among other buttons. */
+button.link {
+  align-self: flex-start;
+  padding: 0;
+  border: none;
+  background: none;
+  box-shadow: none;
+  color: var(--muted);
+  font-size: 12px;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+button.link:hover {
+  color: var(--text);
+  background: none;
+}
+
+/* charts ------------------------------------------------------------------ */
+
+.charts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 14px;
+  margin-top: 14px;
+}
+
+.chart {
+  margin: 0;
+  min-width: 0;
+  color: var(--accent);
+}
+
+.chart.tone-warn {
+  color: var(--warn);
+}
+
+.chart.tone-bad {
+  color: var(--bad);
+}
+
+.chart figcaption {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--muted);
+  margin-bottom: 4px;
+}
+
+.chart-now {
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+  font-weight: 550;
+}
+
+.chart svg {
+  display: block;
+  width: 100%;
+  height: 64px;
+  overflow: visible;
+}
+
+.chart-line {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.5;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+
+.chart-fill {
+  stroke: none;
+}
+
+.chart-dot {
+  fill: currentColor;
+}
+
+/* The level below which a reading is trouble. */
+.chart-floor {
+  stroke: var(--bad);
+  stroke-width: 1;
+  stroke-dasharray: 3 3;
+  opacity: 0.45;
+}
+
+.chart-cursor {
+  stroke: var(--text);
+  stroke-width: 1;
+  opacity: 0.3;
+}
+
+.chart-scale {
+  display: flex;
+  justify-content: space-between;
+  font-size: 11px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  margin-top: 2px;
+}
+
+.chart-empty {
+  height: 64px;
+  display: grid;
+  place-items: center;
+  font-size: 12px;
+  color: var(--muted);
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-sm);
+}
+
+/* A device on the status board: the whole row opens it. */
+.device-row {
+  display: flex;
+  align-items: baseline;
+  /* Buttons centre their contents by default, which for a row of facts
+     reads as a mistake. */
+  justify-content: flex-start;
+  gap: 12px;
+  width: 100%;
+  padding: 6px 8px;
+  border: none;
+  background: none;
+  box-shadow: none;
+  border-radius: var(--radius-sm);
+  text-align: left;
+  font: inherit;
+  color: inherit;
+}
+
+.device-row:hover {
+  background: var(--surface-2);
+}
+
+/* Linked to from another screen: enough to find it, not enough to shout. */
+.card.focused {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }

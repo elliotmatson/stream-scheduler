@@ -49,6 +49,15 @@ const configSchema: ConfigField[] = [
     ],
     default: 'none',
   },
+  {
+    type: 'number',
+    id: 'cachePercent',
+    label: 'Report this cache level',
+    tooltip:
+      'Pins the send cache, for seeing what a device falling behind looks like. Left unset it wanders the way real gear does.',
+    min: 0,
+    max: 100,
+  },
   { type: 'secret', id: 'password', label: 'Password' },
 ]
 
@@ -74,6 +83,9 @@ type Fault =
 class MockDevice {
   private streaming = false
   private recording = false
+  /** When each started, so the fake can age like a real device does. */
+  private streamingSince: number | undefined
+  private recordingSince: number | undefined
   /** The card being written to. A deck records onto one slot at a time and
    *  an event may name which. */
   private recordingSlot = 1
@@ -104,6 +116,8 @@ class MockDevice {
     private readonly kind: string,
     private readonly fault: Fault,
     private readonly now: () => number,
+    /** Pins the cache reading, for exercising the falling-behind warning. */
+    private readonly pinnedCache?: number,
   ) {
     this.connectedAt = now()
   }
@@ -176,12 +190,16 @@ class MockDevice {
               remediation: 'Push the ingest URL and key before starting the stream.',
             })
           }
-          if (this.fault !== 'ignores-writes') this.streaming = true
+          if (this.fault !== 'ignores-writes') {
+            this.streaming = true
+            this.streamingSince ??= this.now()
+          }
           this.emit(nodeId)
         },
         stopStreaming: async () => {
           this.guard()
           this.streaming = false
+          this.streamingSince = undefined
           this.emit(nodeId)
         },
         readState: async () => this.stateOf(nodeId),
@@ -195,6 +213,7 @@ class MockDevice {
           if (this.fault === 'slow-to-settle') this.settleReads = SLOW_READS
           if (this.fault !== 'ignores-writes') {
             this.recording = true
+            this.recordingSince ??= this.now()
             this.filename = filename
             if (slot !== undefined) this.recordingSlot = slot
           }
@@ -203,6 +222,7 @@ class MockDevice {
         stopRecording: async () => {
           this.guard()
           this.recording = false
+          this.recordingSince = undefined
           this.emit(nodeId)
         },
         selectSlot: async ({ slot }) => {
@@ -241,6 +261,8 @@ class MockDevice {
   async dispose(): Promise<void> {
     this.streaming = false
     this.recording = false
+    this.streamingSince = undefined
+    this.recordingSince = undefined
   }
 
   private get canStream(): boolean {
@@ -257,9 +279,17 @@ class MockDevice {
         recording: {
           active: this.settled(this.recording),
           ...(this.filename === undefined ? {} : { filename: this.filename }),
-          remainingMs: 4 * 3_600_000,
+          ...(this.elapsed(this.recordingSince) === undefined
+            ? {}
+            : { durationMs: this.elapsed(this.recordingSince) }),
+          // Falls as the recording runs, which is the point of watching it.
+          remainingMs: Math.max(4 * 3_600_000 - (this.elapsed(this.recordingSince) ?? 0), 0),
           slots: [
-            this.slot(1, 'Sunday A', 4 * 3_600_000),
+            this.slot(
+              1,
+              'Sunday A',
+              Math.max(4 * 3_600_000 - (this.elapsed(this.recordingSince) ?? 0), 0),
+            ),
             // Nearly full, so the low-space warning and rollover have
             // something to be about.
             this.slot(2, 'Sunday B', 40 * 60_000),
@@ -276,10 +306,40 @@ class MockDevice {
         ...(this.target === undefined
           ? {}
           : { targetUrl: this.target.url, keyFingerprint: fingerprint(this.target.key) }),
-        bitrateBps: this.streaming ? 6_000_000 : 0,
+        // Wanders the way a real encoder's does, so a chart of it has a
+        // shape. Deterministic in the clock, so a test that pins the clock
+        // pins the number too.
+        bitrateBps: this.streaming ? 6_000_000 + this.wobble(800_000) : 0,
+        ...(this.elapsed(this.streamingSince) === undefined
+          ? {}
+          : { durationMs: this.elapsed(this.streamingSince) }),
       },
+      // A send cache that mostly sits low and occasionally fills, which is
+      // what an uplink under strain looks like — unless it has been pinned,
+      // which is how the warning gets exercised without waiting for a bad
+      // day.
+      ...(this.streaming
+        ? { cache: { percent: this.pinnedCache ?? Math.max(12 + this.wobble(10) / 1000, 0) } }
+        : {}),
       options: { quality: { current: this.quality, choices: QUALITIES } },
     }
+  }
+
+  /** How long something has been going, or undefined if it is not. */
+  private elapsed(since: number | undefined): number | undefined {
+    return since === undefined ? undefined : Math.max(this.now() - since, 0)
+  }
+
+  /**
+   * A slow wander, zero at the instant a thing starts.
+   *
+   * Zero at the start matters: a test that starts a stream and reads it
+   * straight back gets the round number it asked for, and only a fake left
+   * running long enough to be charted goes anywhere.
+   */
+  private wobble(amplitude: number): number {
+    const seconds = (this.elapsed(this.streamingSince) ?? 0) / 1000
+    return Math.round(Math.sin(seconds / 45) * amplitude)
   }
 
   /** Refuses a profile it does not have, as real gear does: the point of
@@ -368,7 +428,9 @@ export function mockPlugin(options: MockPluginOptions = {}): PluginDefinition {
         })
       }
 
-      const impl = new MockDevice(ctx, kind, fault, now)
+      const pinnedCache =
+        typeof ctx.config.cachePercent === 'number' ? ctx.config.cachePercent : undefined
+      const impl = new MockDevice(ctx, kind, fault, now, pinnedCache)
       return defineDevice({
         probe: async () => impl.capabilities(),
         health: async () => impl.health(),

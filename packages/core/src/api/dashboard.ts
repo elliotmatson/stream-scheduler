@@ -24,6 +24,8 @@ export interface DashboardOutput {
   state: 'waiting' | 'live' | 'done' | 'failed'
   startsAt: number
   endsAt: number
+  /** So a screen can send somebody to the device this runs on. */
+  deviceId: string | null
   deviceLabel: string | null
   watchUrl?: string
   /** What the device last reported. Absent until it has said anything. */
@@ -32,6 +34,13 @@ export interface DashboardOutput {
     bitrateBps?: number
     /** Media left on the card being written to. */
     remainingMs?: number
+    /** How long it has been running, as the device counts it. */
+    elapsedMs?: number
+    /** How full the device's own buffer is, 0–100. */
+    cachePercent?: number
+    /** Recording held in a deck's cache, not yet written to the card. */
+    cacheBufferedMs?: number
+    cacheStatus?: string
     inputPresent?: boolean
   }
 }
@@ -62,14 +71,25 @@ export interface DashboardNext {
 export interface DashboardDevice {
   id: string
   label: string
+  /**
+   * What it is doing, which is the question being asked.
+   *
+   * Whether the socket is open is plumbing: five rows of "connected" tell
+   * an operator nothing about whether the morning is being recorded. The
+   * connection only becomes the headline when it is broken, and then it is
+   * reported as `unreachable`.
+   */
+  activity: 'streaming' | 'recording' | 'streaming and recording' | 'idle' | 'unreachable'
   health: string
   lastError: string | null
   /** One line about what it is doing, in the device's own terms. */
   detail: string | null
+  /** The numbers worth seeing without opening the device. */
+  facts: { label: string; value: string }[]
 }
 
 export interface DashboardAttention {
-  kind: 'run-failed' | 'device' | 'account' | 'media'
+  kind: 'run-failed' | 'device' | 'account' | 'media' | 'security'
   message: string
   /** Where to go to do something about it. */
   href: string
@@ -104,12 +124,8 @@ export function buildDashboard(app: Application, options: { horizonMs?: number }
 }
 
 function onAir(app: Application): DashboardRun[] {
-  const telemetry = telemetryOf(app)
-
   return app.store.listActiveRuns().map((run) => {
     const timeline = timelineFor(app.db, run.occurrence_id)
-    const steps = app.store.steps(run.id)
-
     return {
       runId: run.id,
       occurrenceId: run.occurrence_id,
@@ -118,31 +134,49 @@ function onAir(app: Application): DashboardRun[] {
       windowStart: timeline.windowStart,
       windowEnd: timeline.windowEnd,
       timezone: timeline.timezone,
-      outputs: timeline.outputs.map((entry) => {
-        const mine = steps.filter((step) => step.kind.startsWith(`${entry.output.id}.`))
-        const watchUrl = mine
-          .map((step) =>
-            step.response
-              ? (JSON.parse(step.response) as { watchUrl?: unknown }).watchUrl
-              : undefined,
-          )
-          .find((value): value is string => typeof value === 'string')
-        const device = entry.output.deviceId
-        const node = entry.output.nodeId
-        const reading = device && node ? telemetry.get(device)?.get(node) : undefined
+      outputs: outputsOf(app, run.id, run.occurrence_id),
+    }
+  })
+}
 
-        return {
-          id: entry.output.id,
-          label: entry.output.label,
-          kind: entry.output.kind,
-          state: progressOf(mine),
-          startsAt: entry.startsAt,
-          endsAt: entry.endsAt,
-          deviceLabel: device ? (labelOf(app, device) ?? null) : null,
-          ...(watchUrl === undefined ? {} : { watchUrl }),
-          ...(reading === undefined ? {} : { telemetry: reading }),
-        }
-      }),
+/**
+ * What each of a run's outputs is doing, with the last thing its device
+ * said about itself.
+ *
+ * Shared with the run's own page, which is the detailed view: the two would
+ * otherwise each grow their own idea of what an output is, and disagree
+ * about it in front of somebody trying to work out what went wrong.
+ */
+export function outputsOf(
+  app: Application,
+  runId: string,
+  occurrenceId: string,
+): DashboardOutput[] {
+  const telemetry = telemetryOf(app)
+  const steps = app.store.steps(runId)
+
+  return timelineFor(app.db, occurrenceId).outputs.map((entry) => {
+    const mine = steps.filter((step) => step.kind.startsWith(`${entry.output.id}.`))
+    const watchUrl = mine
+      .map((step) =>
+        step.response ? (JSON.parse(step.response) as { watchUrl?: unknown }).watchUrl : undefined,
+      )
+      .find((value): value is string => typeof value === 'string')
+    const device = entry.output.deviceId
+    const node = entry.output.nodeId
+    const reading = device && node ? telemetry.get(device)?.get(node) : undefined
+
+    return {
+      id: entry.output.id,
+      label: entry.output.label,
+      kind: entry.output.kind,
+      state: progressOf(mine),
+      startsAt: entry.startsAt,
+      endsAt: entry.endsAt,
+      deviceId: device ?? null,
+      deviceLabel: device ? (labelOf(app, device) ?? null) : null,
+      ...(watchUrl === undefined ? {} : { watchUrl }),
+      ...(reading === undefined ? {} : { telemetry: reading }),
     }
   })
 }
@@ -168,6 +202,7 @@ function telemetryOf(app: Application): Map<string, Map<string, DashboardOutput[
   for (const connection of app.connections.list()) {
     const byNode = new Map<string, DashboardOutput['telemetry']>()
     for (const { nodeId, state, at } of app.connections.lastStates(connection.deviceId)) {
+      const elapsedMs = state.recording?.durationMs ?? state.streaming?.durationMs
       byNode.set(nodeId, {
         at,
         ...(state.streaming?.bitrateBps === undefined
@@ -176,6 +211,12 @@ function telemetryOf(app: Application): Map<string, Map<string, DashboardOutput[
         ...(state.recording?.remainingMs === undefined
           ? {}
           : { remainingMs: state.recording.remainingMs }),
+        ...(elapsedMs === undefined ? {} : { elapsedMs }),
+        ...(state.cache?.percent === undefined ? {} : { cachePercent: state.cache.percent }),
+        ...(state.cache?.bufferedMs === undefined
+          ? {}
+          : { cacheBufferedMs: state.cache.bufferedMs }),
+        ...(state.cache?.status === undefined ? {} : { cacheStatus: state.cache.status }),
         ...(state.input?.present === undefined ? {} : { inputPresent: state.input.present }),
       })
     }
@@ -229,8 +270,67 @@ function devices(app: Application): DashboardDevice[] {
     label: connection.label,
     health: connection.health.state,
     lastError: connection.health.message ?? null,
+    activity: activityOf(app, connection.deviceId, connection.health.state),
     detail: describeDevice(app, connection.deviceId),
+    facts: factsOf(app, connection.deviceId),
   }))
+}
+
+function activityOf(
+  app: Application,
+  deviceId: string,
+  health: string,
+): DashboardDevice['activity'] {
+  if (health !== 'connected' && health !== 'degraded') return 'unreachable'
+  let streaming = false
+  let recording = false
+  for (const { state } of app.connections.lastStates(deviceId)) {
+    if (state.streaming?.active) streaming = true
+    if (state.recording?.active) recording = true
+  }
+  if (streaming && recording) return 'streaming and recording'
+  if (streaming) return 'streaming'
+  if (recording) return 'recording'
+  return 'idle'
+}
+
+/**
+ * The few numbers worth showing beside a device without opening it.
+ *
+ * Deliberately short: this is a glance, and the run's own page is where
+ * the full picture and the history live.
+ */
+function factsOf(app: Application, deviceId: string): { label: string; value: string }[] {
+  const facts: { label: string; value: string }[] = []
+  for (const { state } of app.connections.lastStates(deviceId)) {
+    if (state.streaming?.active && state.streaming.bitrateBps !== undefined) {
+      facts.push({
+        label: 'Bitrate',
+        value: `${Math.round(state.streaming.bitrateBps / 1000)} kbps`,
+      })
+    }
+    if (state.cache?.percent !== undefined && state.cache.percent >= 1) {
+      facts.push({ label: 'Cache', value: `cache ${Math.round(state.cache.percent)}%` })
+    }
+    if (state.recording?.remainingMs !== undefined) {
+      facts.push({
+        label: 'Media left',
+        value: `${describeSpan(state.recording.remainingMs)} left`,
+      })
+    }
+    if (state.input?.format !== undefined && state.input.present) {
+      facts.push({ label: 'Input', value: state.input.format })
+    }
+  }
+  return facts
+}
+
+/** `3h 12m`, for a fact that has no room for a sentence. */
+function describeSpan(ms: number): string {
+  const minutes = Math.round(ms / 60_000)
+  if (minutes < 60) return `${minutes}m`
+  const rest = minutes % 60
+  return rest === 0 ? `${Math.floor(minutes / 60)}h` : `${Math.floor(minutes / 60)}h ${rest}m`
 }
 
 /** What the box is doing, in a line, from what it last reported. */
@@ -253,6 +353,8 @@ function describeDevice(app: Application, deviceId: string): string | null {
  */
 function attention(app: Application, now: number): DashboardAttention[] {
   const items: DashboardAttention[] = []
+  const limits = app.thresholds.get()
+  const mediaWarningMs = app.thresholds.mediaWarningMs
 
   // A step that failed inside a run still going: one output is down and the
   // rest are carrying on, which is exactly what the failure isolation is
@@ -295,10 +397,10 @@ function attention(app: Application, now: number): DashboardAttention[] {
   for (const connection of app.connections.list()) {
     for (const { state } of app.connections.lastStates(connection.deviceId)) {
       for (const slot of state.recording?.slots ?? []) {
-        // The card being written to, with less than an hour on it: not
-        // enough for a service, and the sort of thing nobody checks.
+        // The card being written to, with less on it than somebody decided
+        // is enough — an hour by default, which is a service and a bit.
         if (slot.active !== true || slot.remainingMs === undefined) continue
-        if (slot.remainingMs > 3_600_000) continue
+        if (slot.remainingMs > mediaWarningMs) continue
         items.push({
           kind: 'media',
           message: `${connection.label} has ${Math.round(slot.remainingMs / 60_000)} minutes left on slot ${slot.id}`,
@@ -306,6 +408,35 @@ function attention(app: Application, now: number): DashboardAttention[] {
         })
       }
     }
+  }
+
+  // A cache filling up is the one failure that gives warning: an encoder
+  // whose uplink cannot keep up buffers, climbs, and drops the stream some
+  // minutes later. Said here as well as in a notification, because this is
+  // the screen somebody is already looking at.
+  for (const connection of app.connections.list()) {
+    for (const { state } of app.connections.lastStates(connection.deviceId)) {
+      const percent = state.cache?.percent
+      if (percent === undefined || percent < limits.cacheWarningPercent) continue
+      if (state.streaming?.active !== true && state.recording?.active !== true) continue
+      items.push({
+        kind: 'device',
+        message: `${connection.label} has its cache ${Math.round(percent)}% full — it is not keeping up, and the stream will drop if it stays there.`,
+        href: '/devices',
+      })
+    }
+  }
+
+  // Only where it is actually a problem: a booth machine on loopback with
+  // no password is a reasonable way to run this, and nagging about it there
+  // would teach people to ignore this list.
+  if (app.exposed && !app.auth.required) {
+    items.push({
+      kind: 'security',
+      message:
+        'No password is set, and this is reachable from the network. Anyone who can open this page can start a broadcast.',
+      href: '/settings',
+    })
   }
 
   const accounts = app.db

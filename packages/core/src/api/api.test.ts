@@ -1008,6 +1008,57 @@ describe('unpicking a setup', () => {
 })
 
 describe('outputs', () => {
+  it('moves with its event, because it is stored as an offset into the window', async () => {
+    const { seriesId, outputId } = await seedEverything()
+    await patch(`/api/outputs/${outputId}`, { offsetMs: 30 * MINUTE })
+
+    // The event moves an hour later. Nothing touches the output.
+    const moved = await patch(`/api/series/${seriesId}`, {
+      label: 'Sunday Service',
+      timezone: 'America/Chicago',
+      rrule: 'FREQ=WEEKLY;BYDAY=SU',
+      dtstartLocal: { date: '2026-03-08', time: '10:00' },
+      durationMs: 90 * MINUTE,
+    })
+    expect(moved.status).toBe(200)
+
+    const outputs = (await get(`/api/series/${seriesId}/outputs`)).json.outputs
+    expect(outputs[0].offsetMs).toBe(30 * MINUTE)
+
+    // Which is to say: it starts half an hour into the window wherever the
+    // window is, so 09:30 became 10:30 without anybody editing it.
+    const preview = (await get(`/api/series/${seriesId}/preview`)).json
+    const startsAt = preview[0].outputs[0].startsAt
+    expect(
+      new Intl.DateTimeFormat('en-GB', {
+        timeZone: 'America/Chicago',
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: false,
+      }).format(startsAt),
+    ).toBe('10:30')
+  })
+
+  it('takes a new offset on its own, which is how an output is held still', async () => {
+    // What the event form does when somebody asks to keep the outputs at
+    // their clock times: move the event, then re-base each offset by the
+    // same amount in the other direction.
+    const { seriesId, outputId } = await seedEverything()
+    const patched = await patch(`/api/outputs/${outputId}`, { offsetMs: 90 * MINUTE })
+    expect(patched.status).toBe(200)
+
+    const outputs = (await get(`/api/series/${seriesId}/outputs`)).json.outputs
+    expect(outputs[0].offsetMs).toBe(90 * MINUTE)
+    // Nothing else moved with it.
+    expect(outputs[0].label).toBe('Main')
+    expect(outputs[0].durationMs).toBe(90 * MINUTE)
+  })
+
+  it('refuses an output that would start before its event opens', async () => {
+    const { outputId } = await seedEverything()
+    expect((await patch(`/api/outputs/${outputId}`, { offsetMs: -30 * MINUTE })).status).toBe(400)
+  })
+
   it('reports two outputs that would fight over the same encoder', async () => {
     const { seriesId, credentialId, deviceId } = await seedEverything()
     // A second stream on the same source, overlapping the first.

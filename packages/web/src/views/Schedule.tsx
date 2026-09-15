@@ -97,9 +97,6 @@ export function Schedule({ navigate }: { navigate: (path: string) => void }): Re
               <button onClick={() => setAnchor(new Date())}>Today</button>
             </div>
           )}
-          <button onClick={reload} title="This screen updates itself; this asks again now.">
-            Refresh
-          </button>
         </div>
       </div>
 

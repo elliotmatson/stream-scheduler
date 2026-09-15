@@ -362,6 +362,64 @@ ALTER TABLE event_series DROP COLUMN source_node_id;
 ALTER TABLE event_output ADD COLUMN settings TEXT NOT NULL DEFAULT '{}';
 `,
   },
+  {
+    id: 8,
+    name: 'sessions',
+    sql: `
+-- Signed-in sessions. Stored rather than signed so they can be taken away:
+-- a signed cookie needs no table and cannot be revoked, which would make
+-- "sign out everywhere" mean "change the password on everyone".
+--
+-- token_hash is a SHA-256 of a 32-byte random token. The token itself is
+-- never written down, so a copy of this database is not a set of working
+-- logins.
+CREATE TABLE session (
+  id           TEXT PRIMARY KEY,
+  token_hash   TEXT NOT NULL UNIQUE,
+  created_at   INTEGER NOT NULL,
+  expires_at   INTEGER NOT NULL,
+  last_seen_at INTEGER NOT NULL,
+  user_agent   TEXT,
+  revoked_at   INTEGER
+);
+
+CREATE INDEX session_live ON session (token_hash) WHERE revoked_at IS NULL;
+`,
+  },
+  {
+    id: 9,
+    name: 'telemetry',
+    sql: `
+-- What the devices were doing while an event was on air.
+--
+-- The status screen shows the last thing each one said, which answers "is
+-- it working now". This is for the question asked afterwards — why it fell
+-- apart at 09:40 — which is a shape over time and invisible in a single
+-- reading.
+--
+-- Keyed by the instant so a retry or an overlapping tick cannot write the
+-- same reading twice; WITHOUT ROWID because the key is the whole row's
+-- identity and these are written far more often than they are read.
+CREATE TABLE telemetry_sample (
+  run_id            TEXT    NOT NULL,
+  device_id         TEXT    NOT NULL,
+  node_id           TEXT    NOT NULL,
+  output_id         TEXT,
+  at                INTEGER NOT NULL,
+  bitrate_bps       INTEGER,
+  remaining_ms      INTEGER,
+  elapsed_ms        INTEGER,
+  cache_percent     REAL,
+  cache_buffered_ms INTEGER,
+  input_present     INTEGER,
+  streaming         INTEGER,
+  recording         INTEGER,
+  PRIMARY KEY (run_id, device_id, node_id, output_id, at)
+) WITHOUT ROWID;
+
+CREATE INDEX telemetry_age ON telemetry_sample (at);
+`,
+  },
 ]
 
 interface GraphNode {

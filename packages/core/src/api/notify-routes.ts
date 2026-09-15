@@ -15,6 +15,19 @@ export function registerNotifyRoutes(fastify: FastifyInstance, app: Application)
 
   fastify.get('/api/notifications/events', async () => NOTIFICATION_EVENTS)
 
+  /** When the scheduler decides something is worth telling somebody about. */
+  fastify.get('/api/notifications/settings', async () => app.thresholds.get())
+
+  fastify.patch('/api/notifications/settings', async (request) => {
+    const body = z
+      .object({
+        cacheWarningPercent: z.number().optional(),
+        mediaWarningMinutes: z.number().optional(),
+      })
+      .parse(request.body)
+    return app.thresholds.set(body)
+  })
+
   fastify.get('/api/notifications/channels', async () => ({
     channels: app.notifier.list(),
     // Surfaced so a quietly failing channel is visible before it matters.
@@ -38,6 +51,26 @@ export function registerNotifyRoutes(fastify: FastifyInstance, app: Application)
       events: body.events,
     })
     return reply.code(201).send({ id })
+  })
+
+  fastify.patch('/api/notifications/channels/:id', async (request) => {
+    const { id } = z.object({ id: z.string() }).parse(request.params)
+    const body = z
+      .object({
+        label: z.string().min(1).optional(),
+        config: z.record(z.unknown()).optional(),
+        events: z.array(z.enum(NOTIFICATION_EVENTS)).optional(),
+        enabled: z.boolean().optional(),
+      })
+      .parse(request.body)
+
+    app.notifier.update(id, {
+      ...(body.label === undefined ? {} : { label: body.label }),
+      ...(body.config === undefined ? {} : { config: body.config as ConfigValues }),
+      ...(body.events === undefined ? {} : { events: body.events }),
+      ...(body.enabled === undefined ? {} : { enabled: body.enabled }),
+    })
+    return { ok: true }
   })
 
   fastify.delete('/api/notifications/channels/:id', async (request) => {

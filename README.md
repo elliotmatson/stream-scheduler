@@ -128,39 +128,56 @@ SCHEDULER_SECRET="a long random string" docker compose up --build
 It refuses to start without a key source rather than writing secrets to disk
 in the clear.
 
-### There is no login yet
+### Who can get in
 
-Anyone who can reach the port can drive the whole app — start broadcasts,
-read the schedule, add devices. Stream keys and OAuth tokens are never
-returned by the API, so those stay encrypted at rest either way, but
-everything else is wide open.
+A password is optional and off by default. With none set, anyone who can
+reach the port can drive the whole app — start broadcasts, read the
+schedule, add devices. Stream keys and OAuth tokens are never returned by
+the API, so those stay encrypted at rest either way, but everything else is
+open.
 
-So the address you publish to _is_ the access control:
+That is a reasonable way to run a booth machine that only answers itself,
+and the wrong way to run anything else. Two ways to set one:
+
+- **In the app**, under Settings. Best for a desktop or `node` install.
+- **`SCHEDULER_UI_PASSWORD`**, which is what a container wants — there is no
+  first-run screen in something you started with `docker run`. Set this way
+  it cannot be changed from the UI, only from the environment.
+
+One password, shared by everyone who runs it. Signing in sets an `HttpOnly`
+cookie, which is what makes the live status work: browsers do not send an
+`Authorization` header on a WebSocket handshake, so a token-header scheme
+would leave the app unable to watch its own runs. Scripts and `curl` can
+still use `Authorization: Bearer <token>`, with a token from
+`POST /api/login`. Changing the password signs everybody out.
+
+The address you publish to still matters, and with no password it _is_ the
+access control:
 
 - `-p 127.0.0.1:8500:8500` — only the machine running it. This is the default
   above, and the right one unless you have decided otherwise.
-- `-p 8500:8500` — anyone on the network.
+- `-p 8500:8500` — anyone on the network. Set a password.
 - Reaching it from another machine safely: tunnel it, with
-  `ssh -L 8500:127.0.0.1:8500 user@thatbox`, or put a reverse proxy that does
-  authentication in front.
+  `ssh -L 8500:127.0.0.1:8500 user@thatbox`, or put a reverse proxy in front.
+  Behind a proxy terminating TLS, the session cookie is marked `Secure`
+  automatically from `X-Forwarded-Proto`.
 
 Running it directly with `node` binds loopback by default, so the same holds
 without you doing anything.
-
-A real login is [issue #14](https://github.com/elliotmatson/stream-scheduler/issues/14).
 
 Everything lives in one config directory (`/config` in Docker). A single
 archive of it is the entire backup.
 
 ## Configuration
 
-| Variable               | Default      | Meaning                                                                             |
-| ---------------------- | ------------ | ----------------------------------------------------------------------------------- |
-| `SCHEDULER_CONFIG_DIR` | per-platform | Database, logs, master key                                                          |
-| `SCHEDULER_SECRET`     | —            | Derives the master key when no keychain or key file is available                    |
-| `SCHEDULER_HOST`       | `127.0.0.1`  | Listen address. Anything but loopback logs a warning, because there is no login yet |
-| `SCHEDULER_PORT`       | `8500`       | Listen port                                                                         |
-| `SCHEDULER_LOG_LEVEL`  | `info`       | `debug`, `info`, `warn`, `error`                                                    |
+| Variable                | Default      | Meaning                                                                             |
+| ----------------------- | ------------ | ----------------------------------------------------------------------------------- |
+| `SCHEDULER_CONFIG_DIR`  | per-platform | Database, logs, master key                                                          |
+| `SCHEDULER_SECRET`      | —            | Derives the master key when no keychain or key file is available                    |
+| `SCHEDULER_HOST`        | `127.0.0.1`  | Listen address. Anything but loopback with no password set logs a warning           |
+| `SCHEDULER_PORT`        | `8500`       | Listen port                                                                         |
+| `SCHEDULER_UI_PASSWORD` | —            | Locks the UI and API behind one password. Set here, it cannot be changed in the app |
+| `SCHEDULER_LOG_LEVEL`   | `info`       | `debug`, `info`, `warn`, `error`                                                    |
 
 ## Connecting YouTube
 
@@ -261,7 +278,8 @@ The Blackmagic control interfaces are all unauthenticated and unencrypted —
 the ATEM protocol, HyperDeck on TCP 9993, and the Streaming Encoder and Web
 Presenter REST API on port 80. Anyone who can reach the device can take it
 over, regardless of what this app does. Put the gear and this app on a
-trusted control VLAN.
+trusted control VLAN. The app's own password protects the app, not the
+devices behind it.
 
 ## License
 

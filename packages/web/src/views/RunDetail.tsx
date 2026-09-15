@@ -1,8 +1,16 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import type { ReactNode } from 'react'
-import { api, useLiveRefresh, useResource, type RunStep } from '../api.ts'
-import { Card, CopyButton, Empty, ErrorBanner, StatusPill } from '../components.tsx'
-import { relative } from '../format.ts'
+import {
+  api,
+  useLiveRefresh,
+  useResource,
+  type DashboardOutput,
+  type RunStep,
+  type TelemetrySample,
+} from '../api.ts'
+import { Card, CopyButton, Empty, ErrorBanner, Fact, StatusPill } from '../components.tsx'
+import { Chart, type Point } from '../chart.tsx'
+import { duration, relative } from '../format.ts'
 
 /**
  * The run timeline.
@@ -28,6 +36,19 @@ export function RunDetail({
   // again, so it stops asking.
   const finished = run !== undefined && ['completed', 'failed', 'cancelled'].includes(run.state)
   useLiveRefresh(reload, !finished)
+
+  // On its own clock, and slower: the readings themselves are only taken
+  // every fifteen seconds, so re-fetching the whole history on every pulse
+  // would be the same picture at four times the bandwidth.
+  const { data: telemetry, reload: reloadTelemetry } = useResource(
+    () => api.runTelemetry(runId),
+    [runId],
+  )
+  useEffect(() => {
+    if (finished) return
+    const timer = setInterval(reloadTelemetry, 15_000)
+    return () => clearInterval(timer)
+  }, [finished, reloadTelemetry])
 
   const cancel = async (): Promise<void> => {
     setBusy(true)
@@ -62,12 +83,6 @@ export function RunDetail({
         </div>
         <div className="row">
           <StatusPill status={run.state} />
-          <button
-            onClick={reload}
-            title="This screen updates itself while a run is going; this asks again now."
-          >
-            Refresh
-          </button>
           {/* The scheduler must never be the only way to stop a stream. */}
           {stoppable ? (
             <button
@@ -96,6 +111,19 @@ export function RunDetail({
           </div>
         ) : null}
 
+        {/* What this page is for once the event is on: every number the
+            devices report, and the shape each of them made over the run. */}
+        {(run.outputs ?? []).map((output) => (
+          <OutputDetail
+            key={output.id}
+            output={output}
+            samples={
+              telemetry?.outputs.find((entry) => entry.outputId === output.id)?.samples ?? []
+            }
+            navigate={navigate}
+          />
+        ))}
+
         {/* The reason somebody opens this page before the day: an unlisted
             broadcast's link, ready to send round, as soon as it exists. */}
         {(run.links ?? []).length > 0 ? (
@@ -123,6 +151,187 @@ export function RunDetail({
         </Card>
       </div>
     </>
+  )
+}
+
+/**
+ * One output, in full: what it is doing now and what it has been doing.
+ *
+ * The status screen answers "is it working"; this answers "what happened".
+ * A bitrate that sagged for two minutes at 09:40 is a shape, and no single
+ * reading has a shape.
+ */
+function OutputDetail({
+  output,
+  samples,
+  navigate,
+}: {
+  output: DashboardOutput
+  samples: TelemetrySample[]
+  navigate: (path: string) => void
+}): ReactNode {
+  // The newest reading wins, and the sampler's is newer than the last one
+  // the device pushed of its own accord. Without this the figure above a
+  // chart disagrees with the end of the chart, which is the sort of thing
+  // that makes somebody stop trusting the screen.
+  const last = samples[samples.length - 1]
+  const now: DashboardOutput['telemetry'] =
+    output.telemetry === undefined && last === undefined
+      ? undefined
+      : {
+          at: last?.at ?? output.telemetry!.at,
+          ...output.telemetry,
+          ...(last?.bitrateBps === null || last?.bitrateBps === undefined
+            ? {}
+            : { bitrateBps: last.bitrateBps }),
+          ...(last?.remainingMs === null || last?.remainingMs === undefined
+            ? {}
+            : { remainingMs: last.remainingMs }),
+          ...(last?.elapsedMs === null || last?.elapsedMs === undefined
+            ? {}
+            : { elapsedMs: last.elapsedMs }),
+          ...(last?.cachePercent === null || last?.cachePercent === undefined
+            ? {}
+            : { cachePercent: last.cachePercent }),
+          ...(last?.cacheBufferedMs === null || last?.cacheBufferedMs === undefined
+            ? {}
+            : { cacheBufferedMs: last.cacheBufferedMs }),
+          ...(last?.inputPresent === null || last?.inputPresent === undefined
+            ? {}
+            : { inputPresent: last.inputPresent }),
+        }
+
+  const series = (pick: (sample: TelemetrySample) => number | null): Point[] =>
+    samples.map((sample) => ({ at: sample.at, value: pick(sample) }))
+
+  const has = (pick: (sample: TelemetrySample) => number | null): boolean =>
+    samples.some((sample) => pick(sample) !== null)
+
+  return (
+    <Card>
+      <div className="page-head" style={{ marginBottom: 10 }}>
+        <div>
+          <h2 style={{ marginBottom: 2 }}>{output.label}</h2>
+          <span className="muted">
+            {output.kind === 'stream' ? 'stream' : 'recording'}
+            {output.deviceLabel ? ' · ' : ''}
+            {output.deviceId ? (
+              <button className="link" onClick={() => navigate(`/devices/${output.deviceId}`)}>
+                {output.deviceLabel}
+              </button>
+            ) : (
+              output.deviceLabel
+            )}
+          </span>
+        </div>
+        <div className="row">
+          <StatusPill status={output.state === 'live' ? 'running' : output.state} />
+          {output.watchUrl ? (
+            <a href={output.watchUrl} target="_blank" rel="noreferrer" title={output.watchUrl}>
+              Watch
+            </a>
+          ) : null}
+        </div>
+      </div>
+
+      {now === undefined ? (
+        <p className="muted" style={{ margin: 0 }}>
+          The device has not reported anything for this one.
+        </p>
+      ) : (
+        <div className="row" style={{ gap: 18, flexWrap: 'wrap' }}>
+          {now.bitrateBps !== undefined ? (
+            <Fact
+              label="Bitrate"
+              value={`${Math.round(now.bitrateBps / 1000)} kbps`}
+              tip="What the encoder says it is sending."
+            />
+          ) : null}
+          {now.elapsedMs !== undefined ? (
+            <Fact
+              label={output.kind === 'stream' ? 'On air for' : 'Recorded'}
+              value={duration(now.elapsedMs)}
+              tip="As the device counts it, not as the schedule does."
+            />
+          ) : null}
+          {now.remainingMs !== undefined ? (
+            <Fact
+              label="Media left"
+              value={duration(now.remainingMs)}
+              tip="Recording time left on the slot being written to."
+            />
+          ) : null}
+          {now.cachePercent !== undefined ? (
+            <Fact
+              label="Cache"
+              value={`${Math.round(now.cachePercent)}%`}
+              tip="How full the device's own buffer is. Climbing and staying up means it is not keeping up."
+            />
+          ) : null}
+          {now.cacheBufferedMs !== undefined ? (
+            <Fact
+              label="Cached"
+              value={duration(now.cacheBufferedMs)}
+              tip="Recording held in the deck's cache, not yet written to the card."
+            />
+          ) : null}
+          {now.cacheStatus !== undefined ? (
+            <Fact label="Cache state" value={now.cacheStatus} tip="As the deck names it." />
+          ) : null}
+          {now.inputPresent === false ? (
+            <Fact
+              label="Input"
+              value="no signal"
+              tip="Nothing is arriving at the device's input."
+            />
+          ) : null}
+        </div>
+      )}
+
+      {samples.length > 1 ? (
+        <div className="charts">
+          {has((sample) => sample.bitrateBps) ? (
+            <Chart
+              label="Bitrate"
+              points={series((sample) => sample.bitrateBps)}
+              format={(value) => `${Math.round(value / 1000)} kbps`}
+            />
+          ) : null}
+          {has((sample) => sample.remainingMs) ? (
+            <Chart
+              label="Media left"
+              points={series((sample) => sample.remainingMs)}
+              format={(value) => duration(value)}
+              floor={3_600_000}
+              tone="warn"
+            />
+          ) : null}
+          {has((sample) => sample.cachePercent) ? (
+            <Chart
+              label="Cache"
+              points={series((sample) => sample.cachePercent)}
+              format={(value) => `${Math.round(value)}%`}
+              max={100}
+              floor={80}
+              tone="warn"
+            />
+          ) : null}
+          {has((sample) => sample.cacheBufferedMs) ? (
+            <Chart
+              label="Held in cache"
+              points={series((sample) => sample.cacheBufferedMs)}
+              format={(value) => duration(value)}
+              tone="warn"
+            />
+          ) : null}
+        </div>
+      ) : samples.length === 0 && output.state !== 'waiting' ? (
+        <p className="muted" style={{ margin: '10px 0 0', fontSize: 12 }}>
+          No readings were recorded. Devices are asked every fifteen seconds while an event is on
+          air, so a short output may finish before the first one.
+        </p>
+      ) : null}
+    </Card>
   )
 }
 
@@ -188,9 +397,6 @@ export function Runs({ navigate }: { navigate: (path: string) => void }): ReactN
             Every event the scheduler has taken on, newest first.
           </p>
         </div>
-        <button onClick={reload} title="This screen updates itself; this asks again now.">
-          Refresh
-        </button>
       </div>
       <ErrorBanner error={error} />
       <Card>

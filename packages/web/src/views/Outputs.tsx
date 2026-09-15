@@ -102,7 +102,11 @@ export function Outputs({ series }: { series: Series }): ReactNode {
       <div className="stack">
         {(current?.outputs ?? []).map((output) => (
           <OutputRow
-            key={output.id}
+            // Keyed on the window's start as well as the output: a row shows a
+            // clock time worked out from both, and it is worked out once when
+            // the row mounts. Without the start in the key, moving the event
+            // leaves every row showing the time it used to be at.
+            key={`${output.id}:${series.dtstart}`}
             output={output}
             kind={output.kind}
             series={series}
