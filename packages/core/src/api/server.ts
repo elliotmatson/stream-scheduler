@@ -53,6 +53,7 @@ import { registerAuthGate, registerAuthRoutes } from './auth-routes.js'
 import { registerNotifyRoutes } from './notify-routes.js'
 import { registerBackupRoutes } from './backup-routes.js'
 import { registerOAuthRoutes } from './oauth-routes.js'
+import { registerPlanRoutes } from './plan-routes.js'
 import { originOf } from './origin.js'
 
 export interface ServerOptions {
@@ -135,6 +136,7 @@ export async function createServer(options: ServerOptions): Promise<FastifyInsta
   registerOAuthRoutes(fastify, app)
   registerNotifyRoutes(fastify, app)
   registerBackupRoutes(fastify, app)
+  registerPlanRoutes(fastify, app)
   registerWebsocket(fastify, app)
 
   if (options.webRoot && existsSync(options.webRoot)) {

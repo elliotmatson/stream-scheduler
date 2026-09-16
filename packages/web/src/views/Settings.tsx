@@ -9,14 +9,21 @@ import {
   type SessionState,
 } from '../api.ts'
 import { Card, ConfirmButton, ErrorBanner, Field, PageHead } from '../components.tsx'
+import { PlanSourceCard } from './PlanSource.tsx'
 import { dateTimeIn, relative } from '../format.ts'
 
 /**
  * The things that belong to the install rather than to an event.
  *
  * A password with nowhere to set it is the same as no password, and a
- * backup nobody can make is the same as no backup. Both live here.
+ * backup nobody can make is the same as no backup. Both live here, and so
+ * does the Planning Center token — it belongs to the install rather than to
+ * any one event, even though what it changes is what the events are.
  */
+
+/** Times are shown in the reader's own zone here: this page has no series
+ *  to borrow one from. */
+const browserZone = Intl.DateTimeFormat().resolvedOptions().timeZone
 export function Settings({ onSessionChanged }: { onSessionChanged: () => void }): ReactNode {
   const { data, error, reload } = useResource(() => api.session(), [])
   // Asked for once here and handed to both cards below: backing up and
@@ -39,6 +46,8 @@ export function Settings({ onSessionChanged }: { onSessionChanged: () => void })
             }}
           />
         ) : null}
+
+        <PlanSourceCard timezone={browserZone} />
 
         <Backup data={backup.data} error={backup.error} onChanged={backup.reload} />
         <Restore

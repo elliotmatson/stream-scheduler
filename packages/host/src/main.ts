@@ -2,7 +2,7 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { Application, createServer } from '@scheduler/core'
 import type { LogLevel } from '@scheduler/core'
-import { bundledDestinations, bundledPlugins } from './plugins.js'
+import { bundledDestinations, bundledPlanSources, bundledPlugins } from './plugins.js'
 
 /**
  * The headless entrypoint: what Docker runs, and what a Mac or PC user can
@@ -39,6 +39,12 @@ export async function startHost(): Promise<{ stop: () => Promise<void>; url: str
     },
   )) {
     app.destinations.register(provider)
+  }
+
+  for (const source of bundledPlanSources(async (sourceId) =>
+    app.planSources.credentials(sourceId),
+  )) {
+    app.planSources.register(source)
   }
 
   const server = await createServer({
