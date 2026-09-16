@@ -104,7 +104,14 @@ export function timelineFor(
     .map((output) => ({
       output,
       startsAt: windowStart + output.offsetMs,
-      endsAt: windowStart + output.offsetMs + output.durationMs,
+      // An output that follows the window ends when the window does, which
+      // is the only way a stream tracks a service whose length is not the
+      // same two weeks running. Never before it starts: an offset past the
+      // end of the window would otherwise give a negative length rather
+      // than an output that simply does not fit.
+      endsAt: output.followsWindow
+        ? Math.max(windowStart + output.offsetMs, row.scheduled_end + shift)
+        : windowStart + output.offsetMs + output.durationMs,
     }))
 
   return {

@@ -348,6 +348,13 @@ does:
 - **An unreachable Planning Center changes nothing.** The schedule already on
   the books stays; the event says when it was last read and what went wrong.
 
+Each service time becomes its own occurrence, so an event paired to a
+service type should carry **one set of outputs starting at offset 0**, not
+one output per service the way a rule-based morning does. Tick **Run until
+the event ends** on each of them: the window is now a service, and its
+length is whatever the plan says that week. A fixed number of minutes is
+wrong the moment a service runs long.
+
 A plan gives the service's own times — 9:00 to 10:15 — which is rarely when
 you want to be on air. **Start early** and **Keep going after** pad that
 window on the event: five minutes before for a countdown, fifteen after so

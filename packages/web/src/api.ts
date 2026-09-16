@@ -457,6 +457,8 @@ export interface EventOutput {
   /** From the start of the event's window. */
   offsetMs: number
   durationMs: number
+  /** Run until the window closes rather than for `durationMs`. */
+  followsWindow?: boolean
   destinationId: string | null
   credentialId: string | null
   /** Where it runs. Required in practice; null only on rows written before

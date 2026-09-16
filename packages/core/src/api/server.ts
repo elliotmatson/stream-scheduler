@@ -943,6 +943,10 @@ function registerRoutes(fastify: FastifyInstance, app: Application): void {
     label: z.string().min(1),
     offsetMs: z.number().int().nonnegative().default(0),
     durationMs: z.number().int().positive(),
+    /** Run until the window closes instead of for `durationMs`. What a
+     *  stream wants when the schedule comes from a plan whose services are
+     *  not the same length two weeks running. */
+    followsWindow: z.boolean().default(false),
     destinationId: z.string().nullable().default(null),
     credentialId: z.string().nullable().default(null),
     /** Where it runs. Required: an output with no hardware is an event that
@@ -1004,9 +1008,10 @@ function registerRoutes(fastify: FastifyInstance, app: Application): void {
     const outputId = randomUUID()
     db.prepare(
       `INSERT INTO event_output
-         (id, series_id, kind, label, position, offset_ms, duration_ms, destination_id, credential_id,
+         (id, series_id, kind, label, position, offset_ms, duration_ms, follows_window,
+          destination_id, credential_id,
           device_id, node_id, templates, settings, enabled, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).run(
       outputId,
       id,
@@ -1015,6 +1020,7 @@ function registerRoutes(fastify: FastifyInstance, app: Application): void {
       next,
       body.offsetMs,
       body.durationMs,
+      body.followsWindow ? 1 : 0,
       body.destinationId,
       body.credentialId,
       body.deviceId,
@@ -1045,6 +1051,7 @@ function registerRoutes(fastify: FastifyInstance, app: Application): void {
 
     db.prepare(
       `UPDATE event_output SET kind = ?, label = ?, position = ?, offset_ms = ?, duration_ms = ?,
+         follows_window = ?,
          destination_id = ?, credential_id = ?, device_id = ?, node_id = ?, templates = ?, settings = ?,
          enabled = ?
        WHERE id = ?`,
@@ -1054,6 +1061,7 @@ function registerRoutes(fastify: FastifyInstance, app: Application): void {
       merged.position,
       merged.offsetMs,
       merged.durationMs,
+      merged.followsWindow ? 1 : 0,
       merged.destinationId,
       merged.credentialId,
       merged.deviceId,

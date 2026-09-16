@@ -19,6 +19,15 @@ export interface EventOutput {
   /** From the start of the event's window. */
   offsetMs: number
   durationMs: number
+  /**
+   * Run until the window closes, rather than for `durationMs`.
+   *
+   * What a stream wants when the schedule comes from a plan: the service is
+   * 75 minutes one Sunday and 60 the next, and a fixed length would keep
+   * going a quarter of an hour past the end. `durationMs` is still stored
+   * and is what it goes back to when this is turned off.
+   */
+  followsWindow: boolean
   /** A service that issues a key for each run. */
   destinationId: string | null
   /** A key entered by hand, used instead of a service. */
@@ -73,6 +82,7 @@ interface OutputRow {
   position: number
   offset_ms: number
   duration_ms: number
+  follows_window: number
   destination_id: string | null
   credential_id: string | null
   device_id: string | null
@@ -111,6 +121,7 @@ export function toOutput(row: OutputRow): EventOutput {
     position: row.position,
     offsetMs: row.offset_ms,
     durationMs: row.duration_ms,
+    followsWindow: row.follows_window === 1,
     destinationId: row.destination_id,
     credentialId: row.credential_id,
     deviceId: row.device_id,

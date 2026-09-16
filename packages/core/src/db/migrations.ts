@@ -550,6 +550,25 @@ ALTER TABLE occurrence ADD COLUMN external_detail TEXT;
 CREATE INDEX occurrence_external ON occurrence (series_id, external_ref);
 `,
   },
+  {
+    id: 14,
+    name: 'outputs-that-follow-the-window',
+    sql: `
+-- An output that runs for as long as the event does, rather than for a
+-- fixed number of minutes.
+--
+-- It did not matter while every occurrence of a series was the same length:
+-- a duration set once stayed right. A schedule that comes from a plan
+-- source breaks that. One Sunday the service is 75 minutes and the next it
+-- is 60, and a stream told to run 75 keeps going a quarter of an hour past
+-- the end of the service.
+--
+-- Default 0, so nothing that exists changes behaviour. duration_ms is kept
+-- rather than cleared when this is on, so turning it off restores the
+-- length that was there before.
+ALTER TABLE event_output ADD COLUMN follows_window INTEGER NOT NULL DEFAULT 0;
+`,
+  },
 ]
 
 interface GraphNode {
