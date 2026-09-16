@@ -54,6 +54,7 @@ import { registerNotifyRoutes } from './notify-routes.js'
 import { registerBackupRoutes } from './backup-routes.js'
 import { registerOAuthRoutes } from './oauth-routes.js'
 import { registerPlanRoutes } from './plan-routes.js'
+import { clearPlanOccurrences, syncSeries } from '../plans/sync.js'
 import { originOf } from './origin.js'
 
 export interface ServerOptions {
@@ -678,8 +679,17 @@ function registerRoutes(fastify: FastifyInstance, app: Application): void {
         durationMs: z.number().int().positive(),
         templates: z.record(z.string()).default({}),
         count: z.number().int().positive().max(20).default(5),
+        // When these are set the rule is not consulted at all: a paired
+        // series takes its schedule from the source, so previewing the rule
+        // would show times that are never going to happen.
+        planSourceId: z.string().optional(),
+        planGroupId: z.string().optional(),
       })
       .parse(request.body)
+
+    if (body.planSourceId && body.planGroupId) {
+      return previewFromPlan(app, body)
+    }
 
     const dtstart = resolveDtstart(body)
     assertSchedulable({ ...body, dtstart })
@@ -746,6 +756,16 @@ function registerRoutes(fastify: FastifyInstance, app: Application): void {
     templates: z.record(z.string()).default({}),
     exdates: z.array(z.number().int()).default([]),
     enabled: z.boolean().default(true),
+    /**
+     * Where this series' schedule comes from, when it is not the rule.
+     *
+     * Both or neither. Null clears the pairing and hands the series back to
+     * its recurrence rule, which is why these are nullable rather than
+     * merely optional: "leave it alone" and "unpair it" are different
+     * requests and a PATCH has to be able to say both.
+     */
+    planSourceId: z.string().nullable().optional(),
+    planGroupId: z.string().nullable().optional(),
   })
 
   fastify.get('/api/series', async () => {
@@ -762,16 +782,23 @@ function registerRoutes(fastify: FastifyInstance, app: Application): void {
       // the rule rather than the occurrence table: the table only reaches
       // the materialization horizon, and an event beyond it has not
       // stopped, it just has not been written down yet.
-      nextAt: nextOccurrenceAfter(
-        {
-          timezone: row.timezone,
-          rrule: row.rrule,
-          dtstart: row.dtstart,
-          durationMs: row.duration_ms,
-          exdates: JSON.parse(row.exdates) as number[],
-        },
-        now,
-      ),
+      // A paired series has no rule to ask: its next service is whatever
+      // the plan says, so this comes from the occurrence table instead.
+      // Answering from the rule would show a 9:00 next Sunday for a week
+      // whose plan says 10:00, or that has no plan at all.
+      nextAt:
+        row.plan_source_id && row.plan_group_id
+          ? nextPlannedOccurrence(db, row.id, now)
+          : nextOccurrenceAfter(
+              {
+                timezone: row.timezone,
+                rrule: row.rrule,
+                dtstart: row.dtstart,
+                durationMs: row.duration_ms,
+                exdates: JSON.parse(row.exdates) as number[],
+              },
+              now,
+            ),
     }))
   })
 
@@ -786,8 +813,8 @@ function registerRoutes(fastify: FastifyInstance, app: Application): void {
       `INSERT INTO event_series
          (id, label, timezone, rrule, dtstart, duration_ms, exdates,
           prepare_lead_ms, preroll_ms, postroll_ms, late_start_grace_ms, templates, version, enabled,
-          created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)`,
+          plan_source_id, plan_group_id, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?)`,
     ).run(
       id,
       body.label,
@@ -802,10 +829,15 @@ function registerRoutes(fastify: FastifyInstance, app: Application): void {
       body.lateStartGraceMs,
       JSON.stringify(body.templates),
       body.enabled ? 1 : 0,
+      pairingColumns(app, body).sourceId,
+      pairingColumns(app, body).groupId,
       now,
       now,
     )
     materializeSeries(db, id, { clock: app.clock })
+    // Fetched now rather than at the next hourly tick: a paired series with
+    // an empty calendar for an hour reads as broken.
+    await syncNewPairing(app, id)
     return reply.code(201).send({ id })
   })
 
@@ -826,7 +858,8 @@ function registerRoutes(fastify: FastifyInstance, app: Application): void {
     db.prepare(
       `UPDATE event_series SET label = ?, timezone = ?, rrule = ?,
          dtstart = ?, duration_ms = ?, exdates = ?, prepare_lead_ms = ?, preroll_ms = ?, postroll_ms = ?,
-         late_start_grace_ms = ?, templates = ?, enabled = ? WHERE id = ?`,
+         late_start_grace_ms = ?, templates = ?, enabled = ?,
+         plan_source_id = ?, plan_group_id = ? WHERE id = ?`,
     ).run(
       merged.label,
       merged.timezone,
@@ -840,11 +873,25 @@ function registerRoutes(fastify: FastifyInstance, app: Application): void {
       merged.lateStartGraceMs,
       JSON.stringify(merged.templates),
       merged.enabled ? 1 : 0,
+      pairingColumns(app, merged).sourceId,
+      pairingColumns(app, merged).groupId,
       id,
     )
     bumpSeriesVersion(db, id, app.clock)
-    // Reconciles future occurrences while leaving edited ones detached.
-    return materializeSeries(db, id, { clock: app.clock })
+
+    // Unpairing hands the series back to its rule, so what the source put
+    // on the calendar has to go first. Left behind, those occurrences keep
+    // a reference to a service they are no longer about — stale as soon as
+    // the plan moves, and quietly wrong if the series is paired again.
+    const wasPaired = row.plan_source_id !== null && row.plan_group_id !== null
+    const nowPaired = pairingColumns(app, merged).sourceId !== null
+    if (wasPaired && !nowPaired) clearPlanOccurrences(db, id, app.clock.now())
+
+    // Reconciles future occurrences while leaving edited ones detached. For
+    // a newly paired series this is what clears the rule's guesses.
+    const result = materializeSeries(db, id, { clock: app.clock })
+    await syncNewPairing(app, id)
+    return result
   })
 
   fastify.delete('/api/series/:id', async (request) => {
@@ -1722,6 +1769,120 @@ function renderNames(
   return out
 }
 
+/**
+ * The preview for a series whose schedule comes from a plan source.
+ *
+ * Reads the real upcoming services rather than expanding a rule, because
+ * that is the whole point of pairing: the source decides how many services
+ * there are and when. A rule-based preview here would show two every Sunday
+ * and be wrong on exactly the weeks somebody most wants to check.
+ *
+ * It is also the honest answer to "will this work" — the names it shows are
+ * rendered against the same plan detail the run will use.
+ */
+async function previewFromPlan(
+  app: Application,
+  body: {
+    label: string
+    timezone: string
+    durationMs: number
+    templates: Record<string, string>
+    count: number
+    planSourceId?: string | undefined
+    planGroupId?: string | undefined
+  },
+): Promise<unknown> {
+  const source = app.planSources.get(body.planSourceId!)
+  let services
+  try {
+    services = await source.listServices(body.planGroupId!)
+  } catch (error) {
+    return {
+      describes: 'Could not read the plan.',
+      occurrences: [],
+      error: error instanceof Error ? error.message : String(error),
+    }
+  }
+
+  const now = app.clock.now()
+  const upcoming = services.filter((service) => service.startsAt > now).slice(0, body.count)
+
+  return {
+    describes:
+      upcoming.length === 0
+        ? 'Nothing is planned in this service type yet, so nothing would be scheduled.'
+        : `${upcoming.length} service${upcoming.length === 1 ? '' : 's'} from ${source.displayName}.`,
+    occurrences: upcoming.map((service, offset) => ({
+      start: service.startsAt,
+      end: service.endsAt ?? service.startsAt + body.durationMs,
+      localDate: localDateAt(service.startsAt, body.timezone),
+      resolution: 'exact' as const,
+      ...renderNames(body.templates, {
+        occurrenceStart: service.startsAt,
+        timezone: body.timezone,
+        event: { name: body.label },
+        series: { name: body.label },
+        occurrence: { index: offset + 1 },
+        ...(service.detail === undefined ? {} : { plan: service.detail }),
+      }),
+    })),
+  }
+}
+
+/**
+ * The two pairing columns, validated together.
+ *
+ * Both or neither, and an unknown source is refused here rather than
+ * silently stored: a series pointing at a plugin this build does not have
+ * would show an empty calendar with nothing to explain it.
+ */
+function pairingColumns(
+  app: Application,
+  body: { planSourceId?: string | null; planGroupId?: string | null },
+): { sourceId: string | null; groupId: string | null } {
+  const sourceId = body.planSourceId?.trim() || null
+  const groupId = body.planGroupId?.trim() || null
+  if (!sourceId || !groupId) return { sourceId: null, groupId: null }
+  // Throws UnknownPluginError, which the error handler already maps.
+  app.planSources.get(sourceId)
+  return { sourceId, groupId }
+}
+
+/**
+ * Reads the plan straight after a pairing is saved.
+ *
+ * Without this the calendar stays empty until the next hourly tick, which
+ * from the outside is indistinguishable from the pairing not working. A
+ * failure here is deliberately swallowed: the pairing is saved either way
+ * and `plan_error` on the series carries the reason.
+ */
+async function syncNewPairing(app: Application, seriesId: string): Promise<void> {
+  const row = app.db
+    .prepare('SELECT plan_source_id, plan_group_id FROM event_series WHERE id = ?')
+    .get(seriesId) as { plan_source_id: string | null; plan_group_id: string | null } | undefined
+  if (!row?.plan_source_id || !row.plan_group_id) return
+  try {
+    await syncSeries(
+      { db: app.db, clock: app.clock, sources: app.planSources, logger: app.logger },
+      seriesId,
+    )
+  } catch {
+    // Recorded on the series by syncSeries itself; the save stands.
+  }
+}
+
+/** The next pending occurrence, for a series whose rule is not the truth. */
+function nextPlannedOccurrence(db: Db, seriesId: string, now: number): number | null {
+  const row = db
+    .prepare(
+      `SELECT scheduled_start FROM occurrence
+        WHERE series_id = ? AND status = 'pending' AND scheduled_start > ?
+        ORDER BY scheduled_start LIMIT 1`,
+    )
+    .get(seriesId, now) as { scheduled_start: number } | undefined
+  return row?.scheduled_start ?? null
+}
+
 function isLoopback(host: string): boolean {
   return host === '127.0.0.1' || host === 'localhost' || host === '::1'
 }
@@ -1825,6 +1986,10 @@ interface SeriesRowShape {
   templates: string
   version: number
   enabled: number
+  plan_source_id: string | null
+  plan_group_id: string | null
+  plan_synced_at: number | null
+  plan_error: string | null
 }
 
 interface OccurrenceRowShape {
@@ -1877,6 +2042,13 @@ function toSeriesDto(row: SeriesRowShape) {
     templates: JSON.parse(row.templates) as Record<string, string>,
     version: row.version,
     enabled: row.enabled === 1,
+    planSourceId: row.plan_source_id,
+    planGroupId: row.plan_group_id,
+    // So the UI can say "last read nine minutes ago" and show what went
+    // wrong, which is the difference between a pairing you can trust and
+    // one you have to go and check in Planning Center.
+    planSyncedAt: row.plan_synced_at,
+    planError: row.plan_error,
   }
 }
 

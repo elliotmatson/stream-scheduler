@@ -15,7 +15,7 @@ const WEEKDAYS = [
   { code: 'SA', label: 'Sat' },
 ]
 
-type Repeat = 'once' | 'daily' | 'weekly' | 'monthly' | 'custom'
+type Repeat = 'once' | 'daily' | 'weekly' | 'monthly' | 'custom' | 'plan'
 
 interface Draft {
   label: string
@@ -29,6 +29,17 @@ interface Draft {
   /** True once the operator has clicked a day chip themselves. */
   bydayTouched: boolean
   customRrule: string
+  /** Set when the schedule comes from a plan source rather than a rule. */
+  planSourceId: string
+  planGroupId: string
+  /**
+   * The rule this series had before it was paired.
+   *
+   * Kept so unpairing gives back the weekly it used to be rather than
+   * dropping it to "does not repeat" — which is what happens if the rule is
+   * simply not sent while the pairing is in place.
+   */
+  priorRrule: string | null
   title: string
   description: string
   filename: string
@@ -74,6 +85,7 @@ export function EventForm({ series, onDone }: { series?: Series; onDone: () => v
       durationMs: draft.durationMinutes * 60_000,
       templates: templatesOf(draft),
       count: 5,
+      ...pairingOf(draft),
     }),
     [draft, rrule],
   )
@@ -111,6 +123,11 @@ export function EventForm({ series, onDone }: { series?: Series; onDone: () => v
         durationMs: draft.durationMinutes * 60_000,
         prepareLeadMs: draft.prepareLeadMinutes * 60_000,
         templates: templatesOf(draft),
+        // Always sent, and null when there is no pairing: "leave it alone"
+        // and "unpair it" are different requests and the form has to be
+        // able to say the second one.
+        planSourceId: draft.repeat === 'plan' ? draft.planSourceId || null : null,
+        planGroupId: draft.repeat === 'plan' ? draft.planGroupId || null : null,
       }
       if (saved) {
         // Captured before the series moves: re-basing needs the offsets as
@@ -232,8 +249,23 @@ export function EventForm({ series, onDone }: { series?: Series; onDone: () => v
               <option value="weekly">Every week</option>
               <option value="monthly">Every month, on the same weekday</option>
               <option value="custom">Custom rule</option>
+              <option value="plan">Whenever Planning Center says</option>
             </select>
           </Field>
+
+          {draft.repeat === 'plan' ? (
+            <PlanPairing
+              sourceId={draft.planSourceId}
+              groupId={draft.planGroupId}
+              onChange={(next) =>
+                setDraft((current) => ({
+                  ...current,
+                  planSourceId: next.sourceId,
+                  planGroupId: next.groupId,
+                }))
+              }
+            />
+          ) : null}
 
           {draft.repeat === 'weekly' ? (
             <div className="row" role="group" aria-label="Days of the week">
@@ -353,6 +385,9 @@ function PreviewPanel({
 }): ReactNode {
   const [preview, setPreview] = useState<SchedulePreview>()
   const [problem, setProblem] = useState<string>()
+  // A paired event has no rule to produce anything, so the "this rule
+  // produces nothing" line below would be nonsense for it.
+  const isPaired = request.planSourceId !== undefined && request.planGroupId !== undefined
 
   useEffect(() => {
     let cancelled = false
@@ -383,7 +418,11 @@ function PreviewPanel({
       {preview ? (
         <>
           <p className="muted">{preview.describes}</p>
-          {preview.occurrences.length === 0 ? (
+          {/* A source that will not answer is its own message: falling back
+              to "this rule produces nothing" would blame the rule for a
+              network problem. */}
+          {preview.error ? <div className="banner error">{preview.error}</div> : null}
+          {preview.occurrences.length === 0 && !preview.error && !isPaired ? (
             <p className="muted">This rule produces nothing in the next two years.</p>
           ) : null}
           <ol className="preview-list">
@@ -468,16 +507,107 @@ function toDraft(series: Series | undefined): Draft {
     time: timeInZone(start, zone),
     durationMinutes: Math.round((series?.durationMs ?? 90 * 60_000) / 60_000),
     prepareLeadMinutes: Math.round((series?.prepareLeadMs ?? 30 * 60_000) / 60_000),
-    repeat: parsed.repeat,
+    // A pairing wins over whatever rule is stored: the rule is kept so
+    // unpairing has something to fall back to, but it is not what runs.
+    repeat: series?.planSourceId && series.planGroupId ? 'plan' : parsed.repeat,
     byday: parsed.byday,
     // An existing series already says which days it runs; a new one follows
     // the first date until told otherwise.
     bydayTouched: parsed.byday.length > 0,
     customRrule: parsed.repeat === 'custom' ? (series?.rrule ?? '') : '',
+    planSourceId: series?.planSourceId ?? '',
+    planGroupId: series?.planGroupId ?? '',
+    priorRrule: series?.rrule ?? null,
     title: series?.templates.title ?? '',
     description: series?.templates.description ?? '',
     filename: series?.templates.filename ?? '',
   }
+}
+
+/** The pairing, as the preview and save endpoints want it. */
+function pairingOf(draft: Draft): { planSourceId?: string; planGroupId?: string } {
+  if (draft.repeat !== 'plan' || !draft.planSourceId || !draft.planGroupId) return {}
+  return { planSourceId: draft.planSourceId, planGroupId: draft.planGroupId }
+}
+
+/**
+ * Choosing which service type this event follows.
+ *
+ * Deliberately says what changes rather than only offering a dropdown: an
+ * event scheduled this way stops having a repeating rule, which is a bigger
+ * change than a form field usually makes, and the weeks past the last
+ * published plan go empty on purpose.
+ */
+function PlanPairing({
+  sourceId,
+  groupId,
+  onChange,
+}: {
+  sourceId: string
+  groupId: string
+  onChange: (next: { sourceId: string; groupId: string }) => void
+}): ReactNode {
+  const sources = useResource(() => api.planSources(), [])
+  const connected = (sources.data?.sources ?? []).filter(
+    (source) => source.status.state !== 'not_configured',
+  )
+  // One source is the normal case, so it is chosen rather than asked about.
+  const chosenSource = sourceId || connected[0]?.id || ''
+
+  const groups = useResource(
+    () => (chosenSource ? api.planGroups(chosenSource) : Promise.resolve({ groups: [] })),
+    [chosenSource],
+  )
+
+  if (sources.data && connected.length === 0) {
+    return (
+      <div className="banner error">
+        No schedule source is connected yet. Add a Planning Center token under Settings first.
+      </div>
+    )
+  }
+
+  return (
+    <div className="stack">
+      <ErrorBanner error={sources.error ?? groups.error} />
+      {connected.length > 1 ? (
+        <Field label="Source">
+          <select
+            value={chosenSource}
+            onChange={(event) => onChange({ sourceId: event.target.value, groupId: '' })}
+          >
+            {connected.map((source) => (
+              <option key={source.id} value={source.id}>
+                {source.displayName}
+              </option>
+            ))}
+          </select>
+        </Field>
+      ) : null}
+
+      <Field
+        label="Service type"
+        hint="Every service time in this service type becomes an occurrence — one week, two, or five."
+      >
+        <select
+          value={groupId}
+          onChange={(event) => onChange({ sourceId: chosenSource, groupId: event.target.value })}
+        >
+          <option value="">Choose a service type…</option>
+          {(groups.data?.groups ?? []).map((group) => (
+            <option key={group.id} value={group.id}>
+              {group.name}
+            </option>
+          ))}
+        </select>
+      </Field>
+
+      <p className="muted" style={{ margin: 0 }}>
+        The repeating rule stops being used. Weeks with no plan published yet show nothing, rather
+        than a guess — and a plan edited after this event starts preparing is not acted on.
+      </p>
+    </div>
+  )
 }
 
 function templatesOf(draft: Draft): Record<string, string> {
@@ -502,6 +632,11 @@ function toRrule(draft: Draft, byday: string[]): string | null {
       return 'FREQ=MONTHLY;BYDAY=' + nthWeekdayOf(draft)
     case 'custom':
       return draft.customRrule.trim() || null
+    case 'plan':
+      // Stored but not consulted while the pairing is in place. Kept as it
+      // was so unpairing gives back the weekly this used to be, rather than
+      // silently dropping it to "does not repeat".
+      return draft.priorRrule
   }
 }
 

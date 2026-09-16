@@ -17,6 +17,9 @@ export interface SeriesRow {
   exdates: string
   version: number
   enabled: number
+  /** Set when the schedule comes from a plan source instead of the rule. */
+  plan_source_id?: string | null
+  plan_group_id?: string | null
 }
 
 export interface OccurrenceRow {
@@ -28,6 +31,8 @@ export interface OccurrenceRow {
   status: string
   overrides: string | null
   series_version: number
+  /** Set when this occurrence came from a plan source, not from the rule. */
+  external_ref?: string | null
 }
 
 export interface MaterializeResult {
@@ -68,6 +73,15 @@ export function materializeSeries(
   const existing = db
     .prepare('SELECT * FROM occurrence WHERE series_id = ? AND scheduled_start >= ?')
     .all(seriesId, now) as OccurrenceRow[]
+
+  // A paired series has no rule to expand: the plan source says how many
+  // services there are and when, and inventing occurrences from a rule
+  // beside them would put guesses on the calendar next to real ones with
+  // nothing to tell them apart. Past the last published plan the calendar
+  // is deliberately empty — which is honest, and is what was asked for.
+  if (series.plan_source_id && series.plan_group_id) {
+    return clearRuleOccurrences(db, existing)
+  }
   const byStart = new Map(existing.map((row) => [row.scheduled_start, row]))
   const detached = existing.filter((row) => row.overrides !== null)
 
@@ -121,6 +135,34 @@ export function materializeSeries(
       if (wantedStarts.has(row.scheduled_start)) continue
       if (row.overrides !== null) continue // never delete an occurrence a user edited
       if (row.status !== 'pending') continue // something already ran or is running
+      remove.run(row.id)
+      result.removed++
+    }
+  })()
+
+  return result
+}
+
+/**
+ * Removes what the rule left behind when a series is paired to a plan.
+ *
+ * Pairing changes where the schedule comes from, so occurrences the rule
+ * made are now guesses about weeks the source will answer for. Anything
+ * that has run, or that somebody edited, stays: history is history and an
+ * edit is a decision.
+ */
+function clearRuleOccurrences(db: Db, existing: OccurrenceRow[]): MaterializeResult {
+  const remove = db.prepare('DELETE FROM occurrence WHERE id = ?')
+  const result: MaterializeResult = { created: 0, updated: 0, removed: 0, detached: 0 }
+
+  db.transaction(() => {
+    for (const row of existing) {
+      if (row.external_ref) continue // the plan owns this one
+      if (row.overrides !== null) {
+        result.detached++
+        continue
+      }
+      if (row.status !== 'pending') continue
       remove.run(row.id)
       result.removed++
     }

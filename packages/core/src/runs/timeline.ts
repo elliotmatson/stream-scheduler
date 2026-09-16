@@ -37,6 +37,23 @@ export interface EventTimeline {
   /** True when this one was edited away from its series: a different name,
    *  different templates, or moved. */
   detached: boolean
+  /**
+   * What the schedule source said about this service, where the occurrence
+   * came from one.
+   *
+   * Read from the occurrence rather than fetched, so a name template still
+   * resolves at T-30 when Planning Center is unreachable — which is exactly
+   * when nobody can do anything about it.
+   */
+  plan?: PlanDetail
+}
+
+export interface PlanDetail {
+  planTitle?: string
+  seriesTitle?: string
+  timeName?: string
+  planDate?: string
+  planUrl?: string
 }
 
 interface TimelineRow {
@@ -51,6 +68,7 @@ interface TimelineRow {
   preroll_ms: number
   postroll_ms: number
   late_start_grace_ms: number
+  external_detail: string | null
 }
 
 export function timelineFor(
@@ -60,7 +78,7 @@ export function timelineFor(
 ): EventTimeline {
   const row = db
     .prepare(
-      `SELECT o.scheduled_start, o.scheduled_end, o.series_id, o.overrides,
+      `SELECT o.scheduled_start, o.scheduled_end, o.series_id, o.overrides, o.external_detail,
               s.label, s.timezone, s.templates,
               s.prepare_lead_ms, s.preroll_ms, s.postroll_ms, s.late_start_grace_ms
          FROM occurrence o JOIN event_series s ON s.id = o.series_id
@@ -106,6 +124,9 @@ export function timelineFor(
     lateStartGraceMs: row.late_start_grace_ms,
     outputs,
     detached: row.overrides !== null,
+    ...(planDetailOf(row.external_detail) === undefined
+      ? {}
+      : { plan: planDetailOf(row.external_detail)! }),
     ...(options.forcedAt === undefined ? {} : { forcedAt: options.forcedAt }),
   }
 }
@@ -131,5 +152,29 @@ function parseTemplates(raw: string): OutputTemplates {
     return out
   } catch {
     return {}
+  }
+}
+
+/**
+ * The stored plan detail, treating anything unreadable as absent.
+ *
+ * Forgiving because the alternative is worse: a row somebody's backup
+ * restore half-wrote should make `{{plan.title}}` fail with "no plan title
+ * yet", not crash the run that was about to prepare.
+ */
+function planDetailOf(raw: string | null): PlanDetail | undefined {
+  if (!raw) return undefined
+  try {
+    const parsed: unknown = JSON.parse(raw)
+    if (!parsed || typeof parsed !== 'object') return undefined
+    const value = parsed as Record<string, unknown>
+    const out: PlanDetail = {}
+    for (const key of ['planTitle', 'seriesTitle', 'timeName', 'planDate', 'planUrl'] as const) {
+      const entry = value[key]
+      if (typeof entry === 'string' && entry !== '') out[key] = entry
+    }
+    return Object.keys(out).length === 0 ? undefined : out
+  } catch {
+    return undefined
   }
 }

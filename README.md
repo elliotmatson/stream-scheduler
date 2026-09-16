@@ -71,6 +71,12 @@ records, stops and tidies up — without anyone touching it.
   Twitch rather than pasted, so a reset key fixes itself. Twitch has no
   per-broadcast object, so there is no video made in advance — that
   difference is stated in the app rather than left to be discovered
+- **Planning Center** as the schedule itself, not just a nudge: pair an event
+  with a Service Type and every published service time becomes an occurrence.
+  A normal Sunday makes two, Christmas Eve makes one, Easter makes three —
+  which a repeating rule cannot express, because shifting a time can never
+  add or remove a service. The sermon title and teaching series are then
+  usable in name templates
 - Alerts to **Google Chat**, Slack, a generic webhook or email, grouped by
   how bad a thing is: problems are sent by default and "it worked" messages
   only if you ask. Plus a pre-flight check the evening before that catches an
@@ -307,6 +313,59 @@ to paste. Three of them catch people out:
 Only two scopes are asked for: `channel:manage:broadcast` to set the title
 and category, and `channel:read:stream_key` to read the key.
 
+## Following Planning Center
+
+An event normally repeats on a rule. Paired with a Planning Center Service
+Type it does not: **the plan decides how many services there are and when.**
+
+That distinction is the whole reason this is not a "shift the time by what
+Planning Center says" feature. A rule that says _two every Sunday_ cannot
+become one 4:00 on Christmas Eve, or three on Easter — shifting a time can
+never add or remove a service. So for a paired event the rule is not
+consulted at all, and one occurrence is made per service time.
+
+Connect a token under **Settings**, then set an event's _Repeats_ to
+"Whenever Planning Center says" and pick the service type.
+
+What that changes, spelled out because it is more than a form field usually
+does:
+
+- **Rehearsals are ignored.** Only times Planning Center marks as services
+  are scheduled.
+- **Weeks past the last published plan show nothing**, rather than a guess.
+  An empty calendar two months out is honest; a fabricated 9:00 is not.
+- **A service that moves keeps its history.** Occurrences are matched on
+  Planning Center's id for the _time_, so a move is a move rather than a
+  delete and a create.
+- **Changes stop being followed once a run starts preparing**, about half an
+  hour before. Somebody tidying plan times at 08:55 cannot cancel a
+  broadcast that is already getting ready.
+- **An occurrence you edited by hand stays yours**, exactly as it does with
+  a repeating rule.
+- **An unreachable Planning Center changes nothing.** The schedule already on
+  the books stays; the event says when it was last read and what went wrong.
+
+Five extra tokens work in name templates for a paired event:
+
+| Token                  | What it is                                         |
+| ---------------------- | -------------------------------------------------- |
+| `{{plan.title}}`       | The plan's title — usually the sermon              |
+| `{{plan.seriesTitle}}` | The teaching series                                |
+| `{{plan.timeName}}`    | What the time is called: "9:00 Service", "Español" |
+| `{{plan.date}}`        | Planning Center's own date string for the plan     |
+| `{{plan.url}}`         | A link back to the plan                            |
+
+A token whose value Planning Center does not have yet fails the template
+rather than rendering an empty string — at T-30, which is early enough to
+fix, and better than a broadcast called "Sunday Service — ".
+
+Authentication is a **Personal Access Token**, made at
+[api.planningcenteronline.com/personal_access_tokens](https://api.planningcenteronline.com/personal_access_tokens),
+not OAuth: there is no app to register and nothing to rotate. The token
+carries its creator's permissions and stops working if their account is
+deactivated, so make it from an account that will outlast whoever set this
+up.
+
 ## Layout
 
 ```
@@ -318,6 +377,7 @@ packages/
   plugin-streaming-encoder/  Blackmagic Streaming Encoder HD / 4K, Web Presenter
   plugin-youtube/   YouTube broadcasts, OAuth and quota
   plugin-twitch/    Twitch channel title, category and stream key
+  plugin-planning-center/  service times and plan details from Planning Center
   plugin-mock/      a fake encoder and recorder, for tests and evaluation
   host/             the composition root: the only place that names plugins
   web/              the React UI

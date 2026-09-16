@@ -11,6 +11,23 @@ export interface TemplateContext {
   occurrence: { index: number }
   encoder?: { label: string }
   counters?: Record<string, number>
+  /**
+   * What the schedule source said about this service.
+   *
+   * Present only for an occurrence that came from a plan source, and every
+   * field inside it is optional, because Planning Center lets a plan have no
+   * title and a time have no name. A template asking for one that is not
+   * there fails with a message naming the field rather than rendering an
+   * empty string — a YouTube broadcast called "Sunday Service — " is worse
+   * than a template error at T-30, which is early enough to fix.
+   */
+  plan?: {
+    planTitle?: string
+    seriesTitle?: string
+    timeName?: string
+    planDate?: string
+    planUrl?: string
+  }
 }
 
 export interface TemplateIssue {
@@ -136,6 +153,16 @@ function resolve(token: ParsedToken, ctx: TemplateContext): string {
     case 'encoder.label':
       if (!ctx.encoder) throw new Error('no encoder is attached to this event')
       return ctx.encoder.label
+    case 'plan.title':
+      return planField(ctx, 'planTitle', 'plan title')
+    case 'plan.seriesTitle':
+      return planField(ctx, 'seriesTitle', 'teaching series')
+    case 'plan.timeName':
+      return planField(ctx, 'timeName', 'name for this service time')
+    case 'plan.date':
+      return planField(ctx, 'planDate', 'date')
+    case 'plan.url':
+      return planField(ctx, 'planUrl', 'link')
     case 'counter': {
       const name = token.positional
       if (!name) throw new Error('counter needs a name, e.g. {{counter "sermons"}}')
@@ -149,6 +176,29 @@ function resolve(token: ParsedToken, ctx: TemplateContext): string {
     default:
       throw new Error(`unknown token "${token.name}"`)
   }
+}
+
+/**
+ * One field from the schedule source.
+ *
+ * Two different failures, said differently on purpose. "This event is not
+ * paired" is a setup mistake; "the plan has no title yet" is somebody
+ * upstream not having filled it in, which is a Saturday-afternoon problem
+ * with a different owner and a different fix.
+ */
+function planField(
+  ctx: TemplateContext,
+  field: 'planTitle' | 'seriesTitle' | 'timeName' | 'planDate' | 'planUrl',
+  described: string,
+): string {
+  if (!ctx.plan) {
+    throw new Error('this event does not take its schedule from Planning Center')
+  }
+  const value = ctx.plan[field]
+  if (value === undefined || value === '') {
+    throw new Error(`the plan for this service has no ${described} yet`)
+  }
+  return value
 }
 
 function formatInZone(token: ParsedToken, ctx: TemplateContext, fallbackFormat: string): string {

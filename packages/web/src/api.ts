@@ -70,6 +70,12 @@ export interface Series {
    * so the same way for both.
    */
   nextAt?: number | null
+  /** Set when this event's schedule comes from a plan source, not a rule. */
+  planSourceId?: string | null
+  planGroupId?: string | null
+  /** When the plan was last read cleanly, and what went wrong if not. */
+  planSyncedAt?: number | null
+  planError?: string | null
   /** Labels somebody put on it, alphabetical. */
   tags?: string[]
 }
@@ -553,9 +559,25 @@ export interface PreviewOccurrence {
   error?: string
 }
 
+export interface SchedulePreviewRequest {
+  label: string
+  timezone: string
+  rrule: string | null
+  dtstartLocal: { date: string; time: string }
+  durationMs: number
+  templates: Record<string, string>
+  count?: number
+  planSourceId?: string
+  planGroupId?: string
+}
+
 export interface SchedulePreview {
   describes: string
   occurrences: PreviewOccurrence[]
+  /** Set when the schedule source could not be read. The occurrences are
+   *  empty rather than falling back to the rule, because a rule-based
+   *  preview of a paired event would show times that never happen. */
+  error?: string
 }
 
 export interface SeriesInput {
@@ -568,6 +590,9 @@ export interface SeriesInput {
   prepareLeadMs?: number
   templates: Record<string, string>
   enabled?: boolean
+  /** Null unpairs; both together pair. See the schedule-source routes. */
+  planSourceId?: string | null
+  planGroupId?: string | null
 }
 
 export class ApiError extends Error {
@@ -932,15 +957,7 @@ export const api = {
       body: JSON.stringify({ order }),
     }),
 
-  schedulePreview: (input: {
-    label: string
-    timezone: string
-    rrule: string | null
-    dtstartLocal: { date: string; time: string }
-    durationMs: number
-    templates: Record<string, string>
-    count?: number
-  }) =>
+  schedulePreview: (input: SchedulePreviewRequest) =>
     request<SchedulePreview>('/api/schedule/preview', {
       method: 'POST',
       body: JSON.stringify(input),
