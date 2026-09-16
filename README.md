@@ -348,8 +348,12 @@ does:
 - **An unreachable Planning Center changes nothing.** The schedule already on
   the books stays; the event says when it was last read and what went wrong.
 
-Each service time becomes its own occurrence, so an event paired to a
-service type should carry **one set of outputs starting at offset 0**, not
+Each service time becomes its own occurrence of **one** event, so pair a
+single event with the service type rather than making one event per
+service — two events on the same service type would each pick up every
+service time in it, and everything would run twice.
+
+That event should carry **one set of outputs starting at offset 0**, not
 one output per service the way a rule-based morning does. Tick **Run until
 the event ends** on each of them: the window is now a service, and its
 length is whatever the plan says that week. A fixed number of minutes is

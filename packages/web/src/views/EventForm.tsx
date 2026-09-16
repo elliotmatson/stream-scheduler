@@ -80,6 +80,9 @@ export function EventForm({ series, onDone }: { series?: Series; onDone: () => v
     [draft.bydayTouched, draft.byday, draft.date],
   )
   const rrule = useMemo(() => toRrule(draft, byday), [draft, byday])
+  /** True when the schedule comes from a plan, so the fields the plan
+   *  supplies can say so rather than sitting there looking editable. */
+  const fromPlan = draft.repeat === 'plan'
   const request = useMemo(
     () => ({
       label: draft.label || 'Untitled event',
@@ -189,23 +192,42 @@ export function EventForm({ series, onDone }: { series?: Series; onDone: () => v
           </Field>
 
           <div className="row">
-            <Field label="First date">
+            {/* A paired event does not run at a time this form decides:
+                Planning Center supplies the date and the start, and one of
+                them is not even the same week to week. Left editable these
+                read as settings that do nothing, which is worse than being
+                greyed out with a reason. */}
+            <Field
+              label="First date"
+              hint={fromPlan ? 'Planning Center supplies this.' : undefined}
+            >
               <input
                 type="date"
                 value={draft.date}
+                disabled={fromPlan}
                 onChange={(event) => set('date', event.target.value)}
               />
             </Field>
-            <Field label="Start time">
+            <Field
+              label="Start time"
+              hint={fromPlan ? 'Planning Center supplies this.' : undefined}
+            >
               <input
                 type="time"
                 value={draft.time}
+                disabled={fromPlan}
                 onChange={(event) => set('time', event.target.value)}
               />
             </Field>
             <Field
               label="Length (min)"
-              hint="Doors open to doors shut. Streams and recordings sit inside it."
+              // Not dead on a paired event, unlike the two beside it: a plan
+              // time is allowed to have no end, and this is what fills in.
+              hint={
+                fromPlan
+                  ? 'Only used for a service time with no end time in the plan.'
+                  : 'Doors open to doors shut. Streams and recordings sit inside it.'
+              }
             >
               <input
                 type="number"
