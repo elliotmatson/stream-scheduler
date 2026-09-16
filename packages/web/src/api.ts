@@ -35,6 +35,9 @@ export interface OccurrenceDetail extends Occurrence {
   /** What the series' templates say, so the form can show what changing
    *  every one of them would mean. */
   seriesTemplates: { title?: string; description?: string; filename?: string }
+  /** Whether this one came from a plan source, and so can use the
+   *  {{plan.*}} tokens. */
+  fromPlan?: boolean
   outputs: OutputPreview[]
 }
 

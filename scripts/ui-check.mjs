@@ -281,6 +281,27 @@ async function discoveryAndPreview(browser, base) {
     (await sunday.getAttribute('aria-pressed')) === 'true',
   )
 
+  // The tokens are offered rather than described, so they have to be there
+  // and they have to carry the real text: a chip that reads one thing and
+  // copies another puts a broken template on a broadcast.
+  const tokens = page.locator('.token')
+  await tokens.first().waitFor({ timeout: TIMEOUT })
+  const offered = await tokens.allInnerTexts()
+  check(
+    'the template tokens are offered, not just described',
+    offered.length >= 7,
+    String(offered.length),
+  )
+  check(
+    'each one carries the text it shows',
+    offered.every((text) => /^\{\{.+\}\}$/.test(text)),
+    offered.find((text) => !/^\{\{.+\}\}$/.test(text)) ?? '',
+  )
+  check(
+    'a plan token is not offered on an event with no plan',
+    !offered.some((text) => text.startsWith('{{plan.')),
+  )
+
   await field('Broadcast title').locator('input').fill('{{event.name}} — {{date "MMMM d"}}')
   await page.locator('.preview-list li').first().waitFor({ timeout: TIMEOUT })
   check(

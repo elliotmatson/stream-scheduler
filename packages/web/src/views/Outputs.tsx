@@ -13,7 +13,7 @@ import {
   type NodeState,
   type Series,
 } from '../api.ts'
-import { ConfirmButton, Empty, ErrorBanner, Field } from '../components.tsx'
+import { ConfirmButton, Empty, ErrorBanner, Field, TemplateTokens } from '../components.tsx'
 import {
   bitrateHint,
   CUSTOM_VALUE,
@@ -307,6 +307,7 @@ function OutputRow(props: RowProps): ReactNode {
             Left blank, this uses the event's default. Two services on one morning usually want
             different titles.
           </p>
+          <TemplateTokens plan={Boolean(series.planSourceId && series.planGroupId)} />
           {kind === 'stream' ? (
             <>
               <Field label="Broadcast title">
