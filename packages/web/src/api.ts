@@ -57,6 +57,8 @@ export interface Series {
   dtstart: number
   durationMs: number
   prepareLeadMs: number
+  prerollMs: number
+  postrollMs: number
   lateStartGraceMs: number
   templates: Record<string, string>
   /** Bumped by the server whenever the event or its outputs change. */
@@ -590,6 +592,9 @@ export interface SeriesInput {
   dtstartLocal: { date: string; time: string }
   durationMs: number
   prepareLeadMs?: number
+  /** Air before the window opens, and after it closes. */
+  prerollMs?: number
+  postrollMs?: number
   templates: Record<string, string>
   enabled?: boolean
   /** Null unpairs; both together pair. See the schedule-source routes. */

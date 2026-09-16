@@ -348,6 +348,12 @@ does:
 - **An unreachable Planning Center changes nothing.** The schedule already on
   the books stays; the event says when it was last read and what went wrong.
 
+A plan gives the service's own times — 9:00 to 10:15 — which is rarely when
+you want to be on air. **Start early** and **Keep going after** pad that
+window on the event: five minutes before for a countdown, fifteen after so
+an overrun does not cut the stream off mid-sentence. The preview shows the
+padded window, so it is visible before Sunday rather than after.
+
 Five extra tokens work in name templates for a paired event:
 
 | Token                  | What it is                                         |
