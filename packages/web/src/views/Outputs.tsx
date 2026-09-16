@@ -165,6 +165,7 @@ function OutputRow(props: RowProps): ReactNode {
       label: draft.label,
       offsetMs: offsetFrom(series, draft.startsAt),
       durationMs: draft.minutes * 60_000,
+      followsWindow: draft.followsWindow,
       destinationId: draft.destinationId,
       credentialId: draft.credentialId,
       deviceId: draft.deviceId,
@@ -201,25 +202,52 @@ function OutputRow(props: RowProps): ReactNode {
             onChange={(event) => set('startsAt', event.target.value)}
           />
         </Field>
-        <Field label="Runs for (min)">
+        <Field label="Runs for (min)" hint={draft.followsWindow ? 'Set by the event.' : undefined}>
           <input
             type="number"
             min={1}
             value={draft.minutes}
+            disabled={draft.followsWindow}
             onChange={(event) => set('minutes', Number(event.target.value))}
           />
         </Field>
       </div>
+
+      <label className="row" style={{ gap: 8 }}>
+        <input
+          type="checkbox"
+          checked={draft.followsWindow}
+          onChange={(event) => set('followsWindow', event.target.checked)}
+        />
+        <span>
+          Run until the event ends
+          <span className="muted">
+            {' '}
+            — rather than for a set number of minutes. What you want when the length is not the same
+            every week.
+          </span>
+        </span>
+      </label>
 
       {offset < 0 ? (
         <div className="banner warn">
           That is before the event opens at {timeOf(series)}. Move the event's start, or this one.
         </div>
       ) : null}
-      {offset + draft.minutes * 60_000 > series.durationMs ? (
+      {/* An output that follows the window cannot run past it, so the
+          warning below would be nonsense for one. */}
+      {!draft.followsWindow && offset + draft.minutes * 60_000 > series.durationMs ? (
         <div className="banner warn">
           This runs past the end of the event's window. It will still run; the event just stays open
           for it.
+        </div>
+      ) : null}
+      {/* The trap a paired event walks into: the window is a service now,
+          and its length is whatever the plan says that week. */}
+      {!draft.followsWindow && series.planSourceId && series.planGroupId ? (
+        <div className="banner warn">
+          This event follows Planning Center, so its length changes with each plan. A set number of
+          minutes will be wrong whenever a service runs long or short — tick the box above instead.
         </div>
       ) : null}
 
@@ -575,6 +603,8 @@ interface RowDraft {
   /** A wall clock time, in the event's zone. Stored as an offset. */
   startsAt: string
   minutes: number
+  /** Run to the end of the window rather than for `minutes`. */
+  followsWindow: boolean
   destinationId: string | null
   credentialId: string | null
   deviceId: string | null
@@ -602,6 +632,11 @@ function toDraft(
     label: output?.label ?? '',
     startsAt: clockAt(series, output?.offsetMs ?? 0),
     minutes: Math.round((output?.durationMs ?? series.durationMs) / 60_000),
+    // A new output on a paired event follows the window by default: its
+    // length is whatever Planning Center says that week, so a fixed one is
+    // wrong as soon as a service runs long. An existing output keeps
+    // whatever it was set to.
+    followsWindow: output?.followsWindow ?? Boolean(series.planSourceId && series.planGroupId),
     destinationId: output?.destinationId ?? null,
     credentialId: output?.credentialId ?? null,
     deviceId: output?.deviceId ?? null,

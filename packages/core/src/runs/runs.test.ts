@@ -39,6 +39,8 @@ interface OutputSpec {
   /** From the window's start. */
   offsetMs?: number
   durationMs?: number
+  /** Run to the end of the window rather than for `durationMs`. */
+  followsWindow?: boolean
   /** Whether it goes to a service that has to issue a key first. */
   destination?: boolean
   deviceId?: string
@@ -89,8 +91,9 @@ function seedOccurrence(over: SeedOptions = {}): string {
 
   const insert = db.prepare(
     `INSERT INTO event_output
-       (id, series_id, kind, label, position, offset_ms, duration_ms, destination_id, device_id, node_id, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)`,
+       (id, series_id, kind, label, position, offset_ms, duration_ms, follows_window,
+        destination_id, device_id, node_id, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)`,
   )
   ;(over.outputs ?? SUNDAY).forEach((spec, index) => {
     insert.run(
@@ -101,6 +104,7 @@ function seedOccurrence(over: SeedOptions = {}): string {
       index,
       spec.offsetMs ?? 0,
       spec.durationMs ?? WINDOW,
+      spec.followsWindow ? 1 : 0,
       spec.destination ? 'svc' : null,
       // Every output names its own hardware now; a stream defaults to the
       // encoder and a recording to the deck.
@@ -538,6 +542,84 @@ describe('RunEngine', () => {
     await engine.tick()
     await engine.tick()
     expect(store.getRun(runId).state).toBe('completed')
+  })
+
+  /**
+   * An output whose length is the window's, not its own.
+   *
+   * It did not matter while every occurrence of a series was the same
+   * length. A schedule that comes from a plan breaks that: the service is
+   * 75 minutes one Sunday and 60 the next, and a stream told to run 75
+   * keeps going a quarter of an hour past the end.
+   */
+  it('ends with the window rather than after a set number of minutes', async () => {
+    seedOccurrence({
+      // A duration that disagrees with the window on purpose: it must be
+      // ignored, not added to.
+      outputs: [{ label: 'Service', offsetMs: 0, durationMs: 10 * HOUR, followsWindow: true }],
+    })
+    const world = new FakeBroadcastService()
+    const engine = engineFor(plannerFor(world))
+
+    clock.set(START - 30 * MINUTE)
+    const runId = (await engine.tick()).created[0]!
+    clock.set(START)
+    await engine.tick()
+    expect(world.log).toEqual(['start Service'])
+
+    clock.set(START + WINDOW)
+    await engine.tick()
+    expect(world.log).toContain('stop Service')
+
+    await engine.tick()
+    expect(store.getRun(runId).state).toBe('completed')
+  })
+
+  it('keeps its offset while following the window', async () => {
+    // Starting late and ending with the window is the shape of a service
+    // inside a longer morning, and the offset must survive the change.
+    seedOccurrence({
+      outputs: [{ label: 'Service', offsetMs: 2 * HOUR, durationMs: MINUTE, followsWindow: true }],
+    })
+    const world = new FakeBroadcastService()
+    const engine = engineFor(plannerFor(world))
+
+    clock.set(START - 30 * MINUTE)
+    await engine.tick()
+    clock.set(START + 2 * HOUR - MINUTE)
+    await engine.tick()
+    expect(world.log).toEqual([])
+
+    clock.set(START + 2 * HOUR)
+    await engine.tick()
+    expect(world.log).toEqual(['start Service'])
+
+    // Its own duration of one minute is ignored; it runs to the window.
+    clock.set(START + 3 * HOUR)
+    await engine.tick()
+    expect(world.log).not.toContain('stop Service')
+
+    clock.set(START + WINDOW)
+    await engine.tick()
+    expect(world.log).toContain('stop Service')
+  })
+
+  it('leaves a fixed-length output alone', async () => {
+    // The default, and what every output that exists today does.
+    seedOccurrence({
+      outputs: [{ label: 'Service', offsetMs: 0, durationMs: 30 * MINUTE }],
+    })
+    const world = new FakeBroadcastService()
+    const engine = engineFor(plannerFor(world))
+
+    clock.set(START - 30 * MINUTE)
+    await engine.tick()
+    clock.set(START)
+    await engine.tick()
+
+    clock.set(START + 30 * MINUTE)
+    await engine.tick()
+    expect(world.log).toContain('stop Service')
   })
 
   it('starts and stops each output on its own clock inside the window', async () => {
