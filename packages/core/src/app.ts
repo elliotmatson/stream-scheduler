@@ -7,6 +7,7 @@ import { ConnectionManager } from './devices/connection-manager.js'
 import { PluginRegistry } from './plugins/registry.js'
 import { DestinationRegistry } from './destinations/registry.js'
 import { PlanSourceRegistry } from './plans/registry.js'
+import { syncAll } from './plans/sync.js'
 import {
   envSecretSource,
   keyFileSource,
@@ -475,6 +476,12 @@ export class Application {
       if (now - this.lastMaterializedAt > 60 * 60_000) {
         this.materialize()
         this.lastMaterializedAt = now
+        // Paired series get their occurrences from the source rather than
+        // from a rule, so reading the plans belongs with the same hourly
+        // work. Hourly is right for a schedule people publish days ahead —
+        // and the freeze at prepare time means a change arriving in the
+        // last hour would not have been acted on anyway.
+        await this.syncPlans()
         // Expired and revoked sessions go with it. Nothing depends on this
         // happening promptly — `verify` already refuses them — so it rides
         // along with the other hourly work rather than owning a timer.
@@ -603,6 +610,32 @@ export class Application {
 
   materialize(): void {
     materializeAll(this.db, { clock: this.clock, horizonMs: this.horizonMs })
+  }
+
+  /**
+   * Brings every paired series in line with its plan source.
+   *
+   * Never throws: this runs inside the scheduler tick, and a Planning
+   * Center outage must not stop devices being polled or runs being driven.
+   * Each series records its own error, which is where the UI reads it from.
+   */
+  async syncPlans(): Promise<void> {
+    try {
+      const results = await syncAll({
+        db: this.db,
+        clock: this.clock,
+        sources: this.planSources,
+        logger: this.logger,
+      })
+      for (const [seriesId, result] of results) {
+        const touched = result.created + result.updated + result.removed
+        if (touched > 0) this.logger.info('plan sync changed a schedule', { seriesId, ...result })
+      }
+    } catch (error) {
+      this.logger.error('the plan sync failed', {
+        error: error instanceof Error ? error.message : String(error),
+      })
+    }
   }
 
   async stop(): Promise<void> {

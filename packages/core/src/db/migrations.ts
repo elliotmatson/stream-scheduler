@@ -509,6 +509,47 @@ CREATE INDEX tag_by_name ON tag (tag COLLATE NOCASE, resource_kind);
 ALTER TABLE stream_credential ADD COLUMN platform TEXT;
 `,
   },
+  {
+    id: 13,
+    name: 'plan-sourced-occurrences',
+    sql: `
+-- A series whose schedule comes from somewhere else.
+--
+-- The reason this is not "a recurrence rule with adjustments": the number
+-- of services is not fixed. A normal Sunday has a 9:00 and an 11:00,
+-- Christmas Eve is a single 4:00, Easter is three. Shifting a time can
+-- never add or remove a service, so for a paired series the plan generates
+-- the occurrences and the rule is not consulted at all.
+--
+-- Both columns or neither. A source with no group is not a pairing, and is
+-- read as unpaired rather than as half-configured.
+ALTER TABLE event_series ADD COLUMN plan_source_id TEXT;
+ALTER TABLE event_series ADD COLUMN plan_group_id TEXT;
+
+-- When the pairing last read cleanly, and what went wrong if it did not.
+-- Kept on the series rather than derived, so the UI can say "last read nine
+-- minutes ago" without asking the source and waiting for it.
+ALTER TABLE event_series ADD COLUMN plan_synced_at INTEGER;
+ALTER TABLE event_series ADD COLUMN plan_error TEXT;
+
+-- Which service at the source this occurrence is.
+--
+-- The match key across syncs, and it has to be the id of the *time* rather
+-- than of the day: two services on one Sunday are two occurrences, and
+-- matching on the date would merge them. Matching on the start time would
+-- be worse still, because a service that moves would read as one deleted
+-- and one created -- losing its run history and any edit somebody made.
+ALTER TABLE occurrence ADD COLUMN external_ref TEXT;
+
+-- What the source said about this service, for the name templates: the plan
+-- title, the teaching series, what the time is called. Frozen at sync
+-- rather than fetched at render, so a template still resolves when the
+-- source is unreachable at T-30.
+ALTER TABLE occurrence ADD COLUMN external_detail TEXT;
+
+CREATE INDEX occurrence_external ON occurrence (series_id, external_ref);
+`,
+  },
 ]
 
 interface GraphNode {

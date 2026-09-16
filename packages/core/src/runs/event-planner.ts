@@ -574,6 +574,7 @@ export class EventPlanner implements RunPlanner {
       event: { name: timeline.label },
       series: { name: timeline.label },
       occurrence: { index },
+      ...(timeline.plan === undefined ? {} : { plan: timeline.plan }),
     }
   }
 }
