@@ -32,10 +32,31 @@ export class FakePlanningCenter {
   applicationId = 'app-id'
   secret = 'app-secret'
 
-  serviceTypes = [
-    { id: '1024', name: 'Sunday Morning' },
+  /**
+   * Service types, some of them in folders.
+   *
+   * `parentId` is expressed as a JSON:API relationship below, and
+   * `parentAsAttribute` switches it to a plain `parent_id` attribute —
+   * because which of those Planning Center actually uses is documented
+   * rather than guessable, and the adapter has to survive either.
+   */
+  serviceTypes: { id: string; name: string; parentId?: string }[] = [
+    { id: '1024', name: 'Sunday Morning', parentId: 'f-sunday' },
+    { id: '4096', name: 'Sunday Evening', parentId: 'f-sunday' },
+    { id: '8192', name: 'Students', parentId: 'f-midweek-youth' },
     { id: '2048', name: 'Midweek' },
   ]
+
+  folders: { id: string; name: string; parentId?: string }[] = [
+    { id: 'f-sunday', name: 'Sunday' },
+    { id: 'f-midweek', name: 'Midweek' },
+    { id: 'f-midweek-youth', name: 'Youth', parentId: 'f-midweek' },
+  ]
+
+  /** Spell the parent link as an attribute rather than a relationship. */
+  parentAsAttribute = false
+  /** Make the folders endpoint fail, leaving only the service types. */
+  foldersFail = false
 
   /** Plans by service type id. */
   plans = new Map<string, FakePlan[]>([
@@ -109,14 +130,26 @@ export class FakePlanningCenter {
       }
     }
 
-    const path = new URL(url).pathname.replace('/services/v2', '')
+    const parsed = new URL(url)
+    const path = parsed.pathname.replace('/services/v2', '')
 
     if (path === '/service_types') {
       return json(200, {
-        data: this.serviceTypes.map((type) => ({
+        data: this.page(parsed, this.serviceTypes).map((type) => ({
           type: 'ServiceType',
           id: type.id,
-          attributes: { name: type.name },
+          ...this.parent(type.parentId, 'Folder', { name: type.name }),
+        })),
+      })
+    }
+
+    if (path === '/folders') {
+      if (this.foldersFail) return json(500, { errors: [{ detail: 'Folders are having a day.' }] })
+      return json(200, {
+        data: this.page(parsed, this.folders).map((folder) => ({
+          type: 'Folder',
+          id: folder.id,
+          ...this.parent(folder.parentId, 'Folder', { name: folder.name }),
         })),
       })
     }
@@ -159,6 +192,24 @@ export class FakePlanningCenter {
     }
 
     return json(404, { errors: [{ detail: `no route ${path}` }] })
+  }
+
+  /** One page of a list, the way Planning Center pages. */
+  private page<T>(url: URL, all: T[]): T[] {
+    const perPage = Number(url.searchParams.get('per_page') ?? '100')
+    const offset = Number(url.searchParams.get('offset') ?? '0')
+    return all.slice(offset, offset + (Number.isFinite(perPage) ? perPage : 100))
+  }
+
+  /** The parent link, spelled whichever way this fake is set to. */
+  private parent(
+    parentId: string | undefined,
+    type: string,
+    attributes: Record<string, unknown>,
+  ): Record<string, unknown> {
+    if (parentId === undefined) return { attributes }
+    if (this.parentAsAttribute) return { attributes: { ...attributes, parent_id: parentId } }
+    return { attributes, relationships: { parent: { data: { type, id: parentId } } } }
   }
 }
 

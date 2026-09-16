@@ -365,6 +365,8 @@ export interface PlanSourceSummary {
 export interface PlanGroup {
   id: string
   name: string
+  /** Where it sits in the source's own folders, outermost first. */
+  path?: string[]
 }
 
 export interface PlannedService {

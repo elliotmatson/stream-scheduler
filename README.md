@@ -332,6 +332,9 @@ does:
 
 - **Rehearsals are ignored.** Only times Planning Center marks as services
   are scheduled.
+- **Service types are shown in their folders.** A church with thirty of them
+  has them organised for a reason — often because three are called "9:00" —
+  so the picker groups them by folder path rather than flattening the lot.
 - **Weeks past the last published plan show nothing**, rather than a guess.
   An empty calendar two months out is honest; a fabricated 9:00 is not.
 - **A service that moves keeps its history.** Occurrences are matched on

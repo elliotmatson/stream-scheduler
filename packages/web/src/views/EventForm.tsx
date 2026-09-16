@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import type { ReactNode } from 'react'
 import { api, useResource, type EventOutput, type SchedulePreview, type Series } from '../api.ts'
 import { Outputs } from './Outputs.tsx'
+import { GroupOptions } from './PlanSource.tsx'
 import { Card, ErrorBanner, Field } from '../components.tsx'
 import { shortZone, timeIn } from '../format.ts'
 
@@ -594,11 +595,7 @@ function PlanPairing({
           onChange={(event) => onChange({ sourceId: chosenSource, groupId: event.target.value })}
         >
           <option value="">Choose a service type…</option>
-          {(groups.data?.groups ?? []).map((group) => (
-            <option key={group.id} value={group.id}>
-              {group.name}
-            </option>
-          ))}
+          <GroupOptions groups={groups.data?.groups ?? []} />
         </select>
       </Field>
 

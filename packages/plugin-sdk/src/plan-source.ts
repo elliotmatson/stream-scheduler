@@ -18,6 +18,17 @@
 export interface PlanGroup {
   id: string
   name: string
+  /**
+   * Where this group sits in the source's own organisation, outermost
+   * first. Empty or absent for one at the top level.
+   *
+   * Names rather than ids, because the only thing that reads this is a
+   * person choosing from a list. A church with thirty service types has
+   * them in folders and three of them are called "9:00" — flattened, that
+   * list cannot be picked from correctly, which is the whole reason this
+   * exists.
+   */
+  path?: string[]
 }
 
 /**
