@@ -47,6 +47,7 @@ interface OutputSpec {
 interface SeedOptions {
   prepareLeadMs?: number
   graceMs?: number
+  prerollMs?: number
   postrollMs?: number
   outputs?: OutputSpec[]
 }
@@ -75,12 +76,13 @@ function seedOccurrence(over: SeedOptions = {}): string {
     `INSERT INTO event_series
        (id, label, timezone, rrule, dtstart, duration_ms, prepare_lead_ms,
         preroll_ms, postroll_ms, late_start_grace_ms, created_at, updated_at)
-     VALUES (?, 'Sunday // AND', 'America/Chicago', NULL, ?, ?, ?, 0, ?, ?, 0, 0)`,
+     VALUES (?, 'Sunday // AND', 'America/Chicago', NULL, ?, ?, ?, ?, ?, ?, 0, 0)`,
   ).run(
     seriesId,
     START,
     WINDOW,
     over.prepareLeadMs ?? 30 * MINUTE,
+    over.prerollMs ?? 0,
     over.postrollMs ?? 0,
     over.graceMs ?? 5 * MINUTE,
   )
@@ -456,6 +458,86 @@ describe('RunEngine', () => {
     // the 11:00 one cannot be created is worth something at 06:30.
     expect(world.liveCount).toBe(2)
     expect(world.log).toEqual([])
+  })
+
+  /**
+   * Padding around an output's window.
+   *
+   * The setting people reach for when the schedule comes from somewhere
+   * else: a Planning Center plan says 9:00 to 10:15, and the stream wants
+   * to be up before the first word and stay up through the last song. It
+   * has been in the schema and the engine from the start and had no test,
+   * which is worth fixing now that there is a field for it on the form.
+   */
+  it('puts an output on air early when a preroll is set', async () => {
+    seedOccurrence({
+      prerollMs: 5 * MINUTE,
+      outputs: [{ label: 'Service', offsetMs: 2 * HOUR, durationMs: 75 * MINUTE }],
+    })
+    const world = new FakeBroadcastService()
+    const engine = engineFor(plannerFor(world))
+
+    clock.set(START - 30 * MINUTE)
+    await engine.tick()
+
+    // 08:54 — a minute before the preroll opens, still nothing.
+    clock.set(START + 2 * HOUR - 6 * MINUTE)
+    await engine.tick()
+    expect(world.log).toEqual([])
+
+    // 08:55 — five minutes before the nominal 09:00.
+    clock.set(START + 2 * HOUR - 5 * MINUTE)
+    await engine.tick()
+    expect(world.log).toEqual(['start Service'])
+  })
+
+  it('keeps an output on past its end when a postroll is set', async () => {
+    seedOccurrence({
+      postrollMs: 15 * MINUTE,
+      outputs: [{ label: 'Service', offsetMs: 2 * HOUR, durationMs: 75 * MINUTE }],
+    })
+    const world = new FakeBroadcastService()
+    const engine = engineFor(plannerFor(world))
+
+    clock.set(START - 30 * MINUTE)
+    const runId = (await engine.tick()).created[0]!
+    clock.set(START + 2 * HOUR)
+    await engine.tick()
+
+    // 10:15 — the nominal end. An overrun must not cut it off here.
+    clock.set(START + 3 * HOUR + 15 * MINUTE)
+    await engine.tick()
+    expect(world.log).not.toContain('stop Service')
+    expect(store.getRun(runId).state).toBe('running')
+
+    // 10:30.
+    clock.set(START + 3 * HOUR + 30 * MINUTE)
+    await engine.tick()
+    expect(world.log).toContain('stop Service')
+  })
+
+  it('does not finish the run until the postroll has run out', async () => {
+    // Completing at the nominal end would end the run while an output is
+    // still on air, which is the whole thing postroll exists to prevent.
+    seedOccurrence({
+      postrollMs: 15 * MINUTE,
+      outputs: [{ label: 'Service', offsetMs: 0, durationMs: WINDOW }],
+    })
+    const engine = engineFor(plannerFor(new FakeBroadcastService()))
+
+    clock.set(START - 30 * MINUTE)
+    const runId = (await engine.tick()).created[0]!
+    clock.set(START)
+    await engine.tick()
+
+    clock.set(START + WINDOW)
+    await engine.tick()
+    expect(store.getRun(runId).state).toBe('running')
+
+    clock.set(START + WINDOW + 15 * MINUTE)
+    await engine.tick()
+    await engine.tick()
+    expect(store.getRun(runId).state).toBe('completed')
   })
 
   it('starts and stops each output on its own clock inside the window', async () => {

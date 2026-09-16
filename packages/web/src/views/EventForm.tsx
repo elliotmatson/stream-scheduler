@@ -25,6 +25,9 @@ interface Draft {
   time: string
   durationMinutes: number
   prepareLeadMinutes: number
+  /** Minutes of air before the window opens, and after it closes. */
+  prerollMinutes: number
+  postrollMinutes: number
   repeat: Repeat
   byday: string[]
   /** True once the operator has clicked a day chip themselves. */
@@ -123,6 +126,8 @@ export function EventForm({ series, onDone }: { series?: Series; onDone: () => v
         dtstartLocal: { date: draft.date, time: draft.time },
         durationMs: draft.durationMinutes * 60_000,
         prepareLeadMs: draft.prepareLeadMinutes * 60_000,
+        prerollMs: draft.prerollMinutes * 60_000,
+        postrollMs: draft.postrollMinutes * 60_000,
         templates: templatesOf(draft),
         // Always sent, and null when there is no pairing: "leave it alone"
         // and "unpair it" are different requests and the form has to be
@@ -303,6 +308,35 @@ export function EventForm({ series, onDone }: { series?: Series; onDone: () => v
             </Field>
           ) : null}
 
+          {/* Padding around the window, which is the setting people reach
+              for when the schedule comes from somewhere else: a Planning
+              Center plan says 9:00 to 10:15, and the stream wants to be up
+              before the first word and stay up through the last song. */}
+          <div className="row">
+            <Field
+              label="Start early (min)"
+              hint="Air before the event opens, for a countdown or a settling shot."
+            >
+              <input
+                type="number"
+                min={0}
+                value={draft.prerollMinutes}
+                onChange={(event) => set('prerollMinutes', Number(event.target.value))}
+              />
+            </Field>
+            <Field
+              label="Keep going after (min)"
+              hint="Air past the end, so an overrun does not cut the stream off mid-sentence."
+            >
+              <input
+                type="number"
+                min={0}
+                value={draft.postrollMinutes}
+                onChange={(event) => set('postrollMinutes', Number(event.target.value))}
+              />
+            </Field>
+          </div>
+
           <Field
             label="Prepare early (min)"
             hint="How far ahead the broadcast is created and the encoders are pointed at it. Not when it goes on air."
@@ -356,7 +390,14 @@ export function EventForm({ series, onDone }: { series?: Series; onDone: () => v
           </div>
         </div>
 
-        <PreviewPanel request={request} timezone={draft.timezone} />
+        <PreviewPanel
+          request={request}
+          timezone={draft.timezone}
+          padding={{
+            prerollMs: draft.prerollMinutes * 60_000,
+            postrollMs: draft.postrollMinutes * 60_000,
+          }}
+        />
       </div>
 
       {saved ? (
@@ -380,9 +421,13 @@ export function EventForm({ series, onDone }: { series?: Series; onDone: () => v
 function PreviewPanel({
   request,
   timezone,
+  padding,
 }: {
   request: Parameters<typeof api.schedulePreview>[0]
   timezone: string
+  /** Air either side of each occurrence's window, so the preview can show
+   *  what actually goes out rather than only what is scheduled. */
+  padding: { prerollMs: number; postrollMs: number }
 }): ReactNode {
   const [preview, setPreview] = useState<SchedulePreview>()
   const [problem, setProblem] = useState<string>()
@@ -433,6 +478,16 @@ function PreviewPanel({
                   <strong>{occurrence.localDate}</strong> {timeIn(occurrence.start, timezone)}{' '}
                   <span className="muted">{shortZone(occurrence.start, timezone)}</span>
                 </div>
+                {/* Padding is invisible otherwise until Sunday: the times
+                    above are the event's window, and what actually goes out
+                    is wider. Said here, where the rest of the checking
+                    happens. */}
+                {padding.prerollMs > 0 || padding.postrollMs > 0 ? (
+                  <div className="muted">
+                    On air {timeIn(occurrence.start - padding.prerollMs, timezone)} –{' '}
+                    {timeIn(occurrence.end + padding.postrollMs, timezone)}
+                  </div>
+                ) : null}
                 {/* A clock change landing on this occurrence is worth saying
                     out loud rather than resolving quietly. */}
                 {occurrence.resolution !== 'exact' ? (
@@ -508,6 +563,8 @@ function toDraft(series: Series | undefined): Draft {
     time: timeInZone(start, zone),
     durationMinutes: Math.round((series?.durationMs ?? 90 * 60_000) / 60_000),
     prepareLeadMinutes: Math.round((series?.prepareLeadMs ?? 30 * 60_000) / 60_000),
+    prerollMinutes: Math.round((series?.prerollMs ?? 0) / 60_000),
+    postrollMinutes: Math.round((series?.postrollMs ?? 0) / 60_000),
     // A pairing wins over whatever rule is stored: the rule is kept so
     // unpairing has something to fall back to, but it is not what runs.
     repeat: series?.planSourceId && series.planGroupId ? 'plan' : parsed.repeat,
