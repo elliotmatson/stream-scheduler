@@ -24,9 +24,11 @@ beforeEach(() => {
 describe('credentials', () => {
   it('reads the service types this account can see', async () => {
     const types = await api().serviceTypes()
-    expect(types).toEqual([
-      { id: '1024', name: 'Sunday Morning' },
-      { id: '2048', name: 'Midweek' },
+    expect(types.map((type) => type.name)).toEqual([
+      'Sunday Morning',
+      'Sunday Evening',
+      'Students',
+      'Midweek',
     ])
   })
 
@@ -213,12 +215,14 @@ describe('as a plan source', () => {
   it('says what the token can actually see', async () => {
     const status = await source(good).check()
     expect(status.state).toBe('ok')
-    expect(status.message).toContain('2 service types')
+    expect(status.message).toContain('4 service types')
   })
 
   it('offers the service types to pair with', async () => {
     expect(await source(good).listGroups()).toEqual([
-      { id: '1024', name: 'Sunday Morning' },
+      { id: '1024', name: 'Sunday Morning', path: ['Sunday'] },
+      { id: '4096', name: 'Sunday Evening', path: ['Sunday'] },
+      { id: '8192', name: 'Students', path: ['Midweek', 'Youth'] },
       { id: '2048', name: 'Midweek' },
     ])
   })
@@ -254,5 +258,72 @@ describe('as a plan source', () => {
     // An unconfigured source and a church with no services look identical
     // from a list of zero, and only one of them is a problem to fix.
     await expect(source().listServices('1024')).rejects.toThrow(/token/i)
+  })
+})
+
+describe('folders', () => {
+  const source = () =>
+    planningCenterSource({
+      resolveCredentials: async () => ({ applicationId: 'app-id', secret: 'app-secret' }),
+      fetchImpl: pco.fetch,
+    })
+
+  it('reports where each service type sits, outermost folder first', async () => {
+    // A church with thirty service types has them in folders, and three of
+    // them are called "9:00". Flattened, that list cannot be picked from.
+    const groups = await source().listGroups()
+    expect(groups.find((g) => g.id === '8192')?.path).toEqual(['Midweek', 'Youth'])
+  })
+
+  it('leaves a top-level service type with no path at all', async () => {
+    const groups = await source().listGroups()
+    expect(groups.find((g) => g.id === '2048')?.path).toBeUndefined()
+  })
+
+  it('reads the parent whether it is a relationship or an attribute', async () => {
+    // Which one Planning Center uses is documented rather than guessable,
+    // and the documentation is not reachable from here. The wrong guess
+    // would silently flatten everybody's folders.
+    const asRelationship = await source().listGroups()
+    pco.parentAsAttribute = true
+    const asAttribute = await source().listGroups()
+    expect(asAttribute).toEqual(asRelationship)
+  })
+
+  it('still lists the service types when the folders cannot be read', async () => {
+    // An unfoldered list is what this did before folders existed at all,
+    // and it is far better than no list.
+    pco.foldersFail = true
+    const groups = await source().listGroups()
+    expect(groups).toHaveLength(4)
+    expect(groups.every((group) => group.path === undefined)).toBe(true)
+  })
+
+  it('does not hang on a folder that is its own ancestor', async () => {
+    // A wrong path is a much smaller problem than a wedged scheduler tick.
+    pco.folders = [
+      { id: 'a', name: 'A', parentId: 'b' },
+      { id: 'b', name: 'B', parentId: 'a' },
+    ]
+    pco.serviceTypes = [{ id: '1', name: 'Odd', parentId: 'a' }]
+    const groups = await source().listGroups()
+    expect(groups[0]?.path).toEqual(['B', 'A'])
+  })
+
+  it('names a folder Planning Center did not return rather than inventing one', async () => {
+    pco.serviceTypes = [{ id: '1', name: 'Orphan', parentId: 'missing' }]
+    const groups = await source().listGroups()
+    expect(groups[0]?.path).toBeUndefined()
+  })
+
+  it('reads every page, so a big church does not lose half its list', async () => {
+    // Planning Center pages at 100. A church with more would silently lose
+    // the ones past the first page — a bug that only appears at the one
+    // place big enough to hit it.
+    pco.serviceTypes = Array.from({ length: 150 }, (_, index) => ({
+      id: String(index),
+      name: `Service ${index}`,
+    }))
+    expect(await source().listGroups()).toHaveLength(150)
   })
 })

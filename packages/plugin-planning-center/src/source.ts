@@ -79,7 +79,12 @@ export function planningCenterSource(options: PlanningCenterOptions): PlanSource
     },
 
     async listGroups(): Promise<PlanGroup[]> {
-      return (await required()).serviceTypes()
+      const types = await (await required()).serviceTypeTree()
+      return types.map((type) => ({
+        id: type.id,
+        name: type.name,
+        ...(type.path.length === 0 ? {} : { path: type.path }),
+      }))
     },
 
     async listServices(groupId: string): Promise<PlannedService[]> {

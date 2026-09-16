@@ -84,6 +84,22 @@ export interface Credentials {
 export interface ServiceType {
   id: string
   name: string
+  /**
+   * The folder this service type sits in, where it sits in one.
+   *
+   * Churches with more than a handful organise them — "Sunday / Main
+   * Auditorium", "Sunday / Chapel", "Midweek / Students" — and a flat list
+   * of thirty names with three called "9:00" is not a list anybody can pick
+   * from correctly.
+   */
+  folderId: string | undefined
+}
+
+/** A folder of service types. Folders nest, so this carries its own parent. */
+export interface Folder {
+  id: string
+  name: string
+  parentId: string | undefined
 }
 
 /**
@@ -134,11 +150,52 @@ export class PlanningCenterApi {
 
   /** The service types this account can see, for the pairing dropdown. */
   async serviceTypes(): Promise<ServiceType[]> {
-    const body = await this.get('/service_types?per_page=100')
-    return resources(body).map((entry) => ({
+    const entries = await this.getAll('/service_types')
+    return entries.map((entry) => ({
       id: entry.id,
       name: string(entry.attributes?.name) ?? 'Untitled',
+      folderId: parentIdOf(entry),
     }))
+  }
+
+  /**
+   * The folders service types are organised into.
+   *
+   * Fetched whole rather than per service type: a church has a few folders
+   * and many service types, so one list beats a request each. They nest, so
+   * the caller walks `parentId` to build a path.
+   */
+  async folders(): Promise<Folder[]> {
+    const entries = await this.getAll('/folders')
+    return entries.map((entry) => ({
+      id: entry.id,
+      name: string(entry.attributes?.name) ?? 'Untitled',
+      parentId: parentIdOf(entry),
+    }))
+  }
+
+  /**
+   * Service types with the folder path they sit under.
+   *
+   * The path is names, outermost first, and empty for one at the top level.
+   * Built here rather than in the UI because it is the source that knows
+   * how its own things are organised.
+   *
+   * A folder listing that fails is not allowed to take the service types
+   * with it: an unfoldered list is the behaviour this had before folders
+   * were read at all, and it is far better than no list.
+   */
+  async serviceTypeTree(): Promise<(ServiceType & { path: string[] })[]> {
+    const types = await this.serviceTypes()
+    let folders: Folder[] = []
+    try {
+      folders = await this.folders()
+    } catch {
+      return types.map((type) => ({ ...type, path: [] }))
+    }
+
+    const byId = new Map(folders.map((folder) => [folder.id, folder]))
+    return types.map((type) => ({ ...type, path: pathOf(type.folderId, byId) }))
   }
 
   /**
@@ -209,6 +266,26 @@ export class PlanningCenterApi {
       .sort((a, b) => a.time.startsAt - b.time.startsAt)
   }
 
+  /**
+   * Every page of a collection.
+   *
+   * Planning Center pages at 100, and a church with more service types than
+   * that would silently lose the ones past the first page — which is the
+   * kind of bug that only appears at the one place big enough to hit it.
+   * The page count is bounded so a paging bug cannot spin forever.
+   */
+  private async getAll(path: string): Promise<Resource[]> {
+    const out: Resource[] = []
+    for (let offset = 0; offset < 2_000; offset += PAGE) {
+      const join = path.includes('?') ? '&' : '?'
+      const body = await this.get(`${path}${join}per_page=${PAGE}&offset=${offset}`)
+      const page = resources(body)
+      out.push(...page)
+      if (page.length < PAGE) break
+    }
+    return out
+  }
+
   private async get(path: string): Promise<unknown> {
     const response = await this.fetchImpl(`${BASE}${path}`, {
       method: 'GET',
@@ -242,6 +319,52 @@ export class PlanningCenterApi {
   }
 }
 
+/** Planning Center's own page size, and its maximum. */
+const PAGE = 100
+
+/**
+ * The id of a resource's parent, however this endpoint spells it.
+ *
+ * Read two ways on purpose. JSON:API puts a link under `relationships`, and
+ * Planning Center also exposes ids as plain attributes on some vertices;
+ * which one a given endpoint uses is documented rather than guessable, and
+ * the documentation is not reachable from here. Reading both costs nothing
+ * and the wrong guess would silently flatten everybody's folders.
+ */
+function parentIdOf(entry: Resource): string | undefined {
+  const link = entry.relationships?.parent
+  const data = link && typeof link === 'object' ? (link as { data?: unknown }).data : undefined
+  if (data && typeof data === 'object') {
+    const id = (data as { id?: unknown }).id
+    if (typeof id === 'string' && id !== '') return id
+  }
+  const attribute = entry.attributes?.parent_id
+  if (typeof attribute === 'string' && attribute !== '') return attribute
+  if (typeof attribute === 'number') return String(attribute)
+  return undefined
+}
+
+/**
+ * Folder names from the outside in.
+ *
+ * Guards against a cycle rather than trusting the data: a folder that is
+ * somehow its own ancestor would otherwise hang the scheduler loop, and a
+ * wrong path is a far smaller problem than a wedged tick.
+ */
+function pathOf(folderId: string | undefined, byId: Map<string, Folder>): string[] {
+  const path: string[] = []
+  const seen = new Set<string>()
+  let current = folderId
+  while (current && !seen.has(current)) {
+    seen.add(current)
+    const folder = byId.get(current)
+    if (!folder) break
+    path.unshift(folder.name)
+    current = folder.parentId
+  }
+  return path
+}
+
 /** HTTP basic, which is how a Personal Access Token is presented. */
 export function basic(credentials: Credentials): string {
   return Buffer.from(`${credentials.applicationId}:${credentials.secret}`).toString('base64')
@@ -250,6 +373,7 @@ export function basic(credentials: Credentials): string {
 interface Resource {
   id: string
   attributes?: Record<string, unknown>
+  relationships?: Record<string, unknown>
 }
 
 /**
@@ -271,10 +395,14 @@ function resources(body: unknown): Resource[] {
     const id = (entry as { id?: unknown }).id
     if (typeof id !== 'string') continue
     const attributes = (entry as { attributes?: unknown }).attributes
+    const relationships = (entry as { relationships?: unknown }).relationships
     out.push({
       id,
       ...(attributes && typeof attributes === 'object'
         ? { attributes: attributes as Record<string, unknown> }
+        : {}),
+      ...(relationships && typeof relationships === 'object'
+        ? { relationships: relationships as Record<string, unknown> }
         : {}),
     })
   }

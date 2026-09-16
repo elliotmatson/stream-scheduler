@@ -9,6 +9,7 @@ import {
 } from '../api.ts'
 import { Card, ConfirmButton, Empty, ErrorBanner, Field, StatusPill } from '../components.tsx'
 import { dateTimeIn } from '../format.ts'
+import { byFolder } from '../plan-groups.ts'
 
 /**
  * Where the schedule comes from.
@@ -212,11 +213,7 @@ function Preview({ sourceId, timezone }: { sourceId: string; timezone: string })
       <ErrorBanner error={groups.error ?? services.error} />
       {(groups.data?.groups.length ?? 0) > 1 ? (
         <select value={chosen ?? ''} onChange={(event) => setGroupId(event.target.value)}>
-          {(groups.data?.groups ?? []).map((group: PlanGroup) => (
-            <option key={group.id} value={group.id}>
-              {group.name}
-            </option>
-          ))}
+          <GroupOptions groups={groups.data?.groups ?? []} />
         </select>
       ) : null}
 
@@ -256,4 +253,31 @@ function pillFor(state: PlanSourceSummary['status']['state']): string {
   if (state === 'not_configured') return 'unknown'
   if (state === 'credentials_rejected') return 'reauth_required'
   return 'error'
+}
+
+/** The options of a service-type picker, foldered where the source says so. */
+export function GroupOptions({ groups }: { groups: PlanGroup[] }): ReactNode {
+  return (
+    <>
+      {byFolder(groups).map((bucket) =>
+        // A service type at the top level is not put under a heading called
+        // nothing; it sits loose, which is where it is.
+        bucket.label === '' ? (
+          bucket.groups.map((group) => (
+            <option key={group.id} value={group.id}>
+              {group.name}
+            </option>
+          ))
+        ) : (
+          <optgroup key={bucket.label} label={bucket.label}>
+            {bucket.groups.map((group) => (
+              <option key={group.id} value={group.id}>
+                {group.name}
+              </option>
+            ))}
+          </optgroup>
+        ),
+      )}
+    </>
+  )
 }
