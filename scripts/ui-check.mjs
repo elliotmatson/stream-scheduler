@@ -313,6 +313,18 @@ async function discoveryAndPreview(browser, base) {
   await page.locator('.preview-list li', { hasText: 'dat' }).first().waitFor({ timeout: TIMEOUT })
   check('a bad token is flagged while typing', true)
 
+  // A paired event does not run at a time this form decides. Left
+  // editable, the date and start read as settings that do nothing.
+  await field('Repeats').locator('select').selectOption('plan')
+  const firstDate = field('First date').locator('input')
+  await firstDate.waitFor({ timeout: TIMEOUT })
+  check('a plan supplies the date, and the field says so', await firstDate.isDisabled())
+  check('and the start time with it', await field('Start time').locator('input').isDisabled())
+  // Length is not dead: a plan time is allowed to have no end, and this is
+  // what fills in. Disabling it would take away the only thing that covers
+  // that case.
+  check('but the length stays editable', await field('Length (min)').locator('input').isEnabled())
+
   check('forms: no console errors', problems.length === 0, problems.slice(0, 3).join(' | '))
   await context.close()
 }
