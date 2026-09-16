@@ -1942,3 +1942,29 @@ button.link:hover {
 .ok-text {
   color: var(--ok);
 }
+
+/* template tokens --------------------------------------------------------- */
+
+/* Picked up rather than retyped: a mistyped token renders literally, so
+   "{{even.name}}" goes out on a broadcast. */
+.token-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.token {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12.5px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xs);
+  padding: 3px 7px;
+  cursor: grab;
+  /* Long enough that "Copied" does not make the row jump about. */
+  min-width: 0;
+}
+
+.token:active {
+  cursor: grabbing;
+}

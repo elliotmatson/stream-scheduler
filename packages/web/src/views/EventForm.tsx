@@ -3,7 +3,7 @@ import type { ReactNode } from 'react'
 import { api, useResource, type EventOutput, type SchedulePreview, type Series } from '../api.ts'
 import { Outputs } from './Outputs.tsx'
 import { GroupOptions } from './PlanSource.tsx'
-import { Card, ErrorBanner, Field } from '../components.tsx'
+import { Card, ErrorBanner, Field, TemplateTokens } from '../components.tsx'
 import { shortZone, timeIn } from '../format.ts'
 
 const WEEKDAYS = [
@@ -351,11 +351,9 @@ export function EventForm({ series, onDone }: { series?: Series; onDone: () => v
 
           <h3>Default names</h3>
           <p className="muted" style={{ margin: 0 }}>
-            What every stream and recording is called unless it says otherwise. Tokens:{' '}
-            <code>{'{{date "MMMM d, yyyy"}}'}</code>, <code>{'{{event.name}}'}</code>,{' '}
-            <code>{'{{time}}'}</code>, <code>{'{{occurrence.index}}'}</code>. Dates resolve against
-            the occurrence, in the zone above.
+            What every stream and recording is called unless it says otherwise.
           </p>
+          <TemplateTokens plan={draft.repeat === 'plan'} />
           <Field label="Broadcast title">
             <input
               value={draft.title}

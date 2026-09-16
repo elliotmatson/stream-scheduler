@@ -1151,7 +1151,8 @@ function registerRoutes(fastify: FastifyInstance, app: Application): void {
            FROM occurrence o JOIN event_series s ON s.id = o.series_id
           WHERE o.id = ?`,
       )
-      .get(id) as (OccurrenceRowShape & { series_templates: string }) | undefined
+      .get(id) as
+      (OccurrenceRowShape & { series_templates: string; external_ref: string | null }) | undefined
     if (!row) throw new NotFoundError(`No occurrence with id "${id}".`)
 
     const overrides = parseOverrides(row.overrides)
@@ -1170,6 +1171,10 @@ function registerRoutes(fastify: FastifyInstance, app: Application): void {
       // What the series says, so the form can show what changing every one
       // of them would mean.
       seriesTemplates: JSON.parse(row.series_templates || '{}'),
+      // Whether this one came from a plan source. The editor offers the
+      // {{plan.*}} tokens only where they will actually resolve; on any
+      // other occurrence they fail rather than render.
+      fromPlan: row.external_ref !== null,
       runId: row.run_id,
       runState: row.run_state,
       // Best effort: a device that has gone away is a reason for the

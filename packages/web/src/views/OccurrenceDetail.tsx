@@ -1,7 +1,16 @@
 import { useEffect, useState } from 'react'
 import type { ReactNode } from 'react'
 import { api, useResource, type OccurrenceDetail as Detail, type OccurrenceEdit } from '../api.ts'
-import { Card, ConfirmButton, Empty, ErrorBanner, Fact, Field, PageHead } from '../components.tsx'
+import {
+  Card,
+  ConfirmButton,
+  Empty,
+  ErrorBanner,
+  Fact,
+  Field,
+  PageHead,
+  TemplateTokens,
+} from '../components.tsx'
 import { dateTimeIn, duration, inputTimeIn, localDateKey, shortZone, timeIn } from '../format.ts'
 
 /**
@@ -281,6 +290,8 @@ function EditOne({
             />
           </Field>
         </div>
+
+        <TemplateTokens plan={detail.fromPlan === true} />
 
         <Field label="Stream title" hint="Left blank, the outputs use the event's own template.">
           <input value={draft.title} onChange={(event) => set('title', event.target.value)} />

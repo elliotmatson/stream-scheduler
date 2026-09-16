@@ -262,30 +262,32 @@ export function ConfigFields({
  * routinely reached over plain HTTP on a LAN, so there is a fallback and —
  * when even that is refused — the text stays selectable for copying by hand.
  */
-export function CopyButton({
-  value,
-  label = 'Copy',
-  icon = false,
-}: {
-  value: string
-  label?: string
-  /** Glyph only, for a row of actions that are already icons. */
-  icon?: boolean
-}): ReactNode {
-  const [done, setDone] = useState(false)
+/**
+ * Copying text to the clipboard, and saying so briefly.
+ *
+ * The modern API needs a secure context, which a LAN address reached over
+ * plain http is not — so the older selection trick is kept as a fallback
+ * rather than leaving the button silently doing nothing on exactly the
+ * installs least likely to have HTTPS.
+ *
+ * `copied` is the value that landed, so a row of buttons can show the
+ * acknowledgement on the one that was pressed rather than on all of them.
+ */
+export function useCopy(): { copied: string | undefined; copy: (value: string) => void } {
+  const [copied, setCopied] = useState<string>()
 
   useEffect(() => {
-    if (!done) return
-    const timer = setTimeout(() => setDone(false), 1500)
+    if (copied === undefined) return
+    const timer = setTimeout(() => setCopied(undefined), 1500)
     return () => clearTimeout(timer)
-  }, [done])
+  }, [copied])
 
-  const copy = (): void => {
+  const copy = (value: string): void => {
     void (async () => {
       try {
         if (navigator.clipboard?.writeText) {
           await navigator.clipboard.writeText(value)
-          setDone(true)
+          setCopied(value)
           return
         }
       } catch {
@@ -299,13 +301,30 @@ export function CopyButton({
         field.style.opacity = '0'
         document.body.appendChild(field)
         field.select()
-        setDone(document.execCommand('copy'))
+        setCopied(document.execCommand('copy') ? value : undefined)
         document.body.removeChild(field)
       } catch {
-        setDone(false)
+        setCopied(undefined)
       }
     })()
   }
+
+  return { copied, copy }
+}
+
+export function CopyButton({
+  value,
+  label = 'Copy',
+  icon = false,
+}: {
+  value: string
+  label?: string
+  /** Glyph only, for a row of actions that are already icons. */
+  icon?: boolean
+}): ReactNode {
+  const { copied, copy: copyValue } = useCopy()
+  const done = copied === value
+  const copy = (): void => copyValue(value)
 
   if (icon) {
     return (
@@ -505,5 +524,111 @@ export function IconButton({
     >
       {icon}
     </button>
+  )
+}
+
+interface TemplateToken {
+  token: string
+  describes: string
+}
+
+/**
+ * What a name template can say, as things you can pick up rather than a
+ * sentence you have to retype.
+ *
+ * These were a prose list of four, which had two problems: it was missing
+ * most of them, and the only way to use one was to read it and type it out
+ * again, brackets and all. A mistyped token is not a small mistake here —
+ * it renders literally, so `{{even.name}}` puts "{{even.name}}" on a
+ * YouTube broadcast.
+ *
+ * Each one copies on click and drags into any of the boxes below, because
+ * those are the two things people reach for and neither costs anything.
+ */
+const EVENT_TOKENS: TemplateToken[] = [
+  {
+    token: '{{date "MMMM d, yyyy"}}',
+    describes: 'The date, in whatever format you put in the quotes',
+  },
+  { token: '{{time}}', describes: 'The start time' },
+  { token: '{{event.name}}', describes: "The event's name" },
+  { token: '{{series.name}}', describes: 'The series name — the same as the event name today' },
+  {
+    token: '{{occurrence.index}}',
+    describes: 'How many of this event have happened, counting this one',
+  },
+  { token: '{{encoder.label}}', describes: "The source encoder's name" },
+  { token: '{{counter "sermons"}}', describes: 'A counter you name. Add pad=3 for 001' },
+]
+
+const PLAN_TOKENS: TemplateToken[] = [
+  { token: '{{plan.title}}', describes: "The plan's title — usually the sermon" },
+  { token: '{{plan.seriesTitle}}', describes: 'The teaching series' },
+  { token: '{{plan.timeName}}', describes: 'What this service time is called — "9:00 Service"' },
+  { token: '{{plan.date}}', describes: "Planning Center's own date for the plan" },
+  { token: '{{plan.url}}', describes: 'A link back to the plan' },
+]
+
+export function TemplateTokens({
+  /** True when this event takes its schedule from a plan source. The plan
+   *  tokens are only offered then, because on any other event they fail
+   *  rather than render — and a list that offers something which cannot
+   *  work is worse than a shorter one. */
+  plan = false,
+}: {
+  plan?: boolean
+}): ReactNode {
+  const { copied, copy } = useCopy()
+
+  return (
+    <div className="stack" style={{ gap: 6 }}>
+      <TokenRow tokens={EVENT_TOKENS} copied={copied} onCopy={copy} />
+      {plan ? (
+        <>
+          <div className="muted" style={{ fontSize: 12.5 }}>
+            From the Planning Center plan:
+          </div>
+          <TokenRow tokens={PLAN_TOKENS} copied={copied} onCopy={copy} />
+        </>
+      ) : null}
+      <div className="muted" style={{ fontSize: 12.5 }}>
+        Click to copy, or drag into a box below. Dates resolve against the occurrence, in the zone
+        above.
+      </div>
+    </div>
+  )
+}
+
+function TokenRow({
+  tokens,
+  copied,
+  onCopy,
+}: {
+  tokens: TemplateToken[]
+  copied: string | undefined
+  onCopy: (value: string) => void
+}): ReactNode {
+  return (
+    <div className="token-row">
+      {tokens.map(({ token, describes }) => (
+        <button
+          key={token}
+          type="button"
+          className="token"
+          draggable
+          // A text/plain drag is what a text input already knows how to
+          // accept, so dropping one in needs no handler on the other end.
+          onDragStart={(event) => {
+            event.dataTransfer.setData('text/plain', token)
+            event.dataTransfer.effectAllowed = 'copy'
+          }}
+          onClick={() => onCopy(token)}
+          title={describes}
+          aria-label={`${token} — ${describes}. Click to copy.`}
+        >
+          {copied === token ? 'Copied' : token}
+        </button>
+      ))}
+    </div>
   )
 }
