@@ -32,7 +32,9 @@ export function backupFailed(event: {
     ],
     remediation:
       'Check the backup volume is mounted, writable and not full. In Docker that is the ' +
-      'volume mapped to SCHEDULER_BACKUP_DIR.',
+      'volume mapped to SCHEDULER_BACKUP_DIR — and if it is mounted and the disk has room, ' +
+      'check who owns it: a volume created before the image made the directory is owned by ' +
+      'root, which the scheduler is not.',
     dedupeKey: `backup.failed:${new Date(event.at).toISOString().slice(0, 10)}`,
   }
 }

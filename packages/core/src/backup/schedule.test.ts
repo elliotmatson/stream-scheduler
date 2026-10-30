@@ -1,5 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { mkdtempSync, mkdirSync, readdirSync, rmSync, writeFileSync, utimesSync } from 'node:fs'
+import {
+  chmodSync,
+  mkdtempSync,
+  mkdirSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+  utimesSync,
+} from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { openDatabase, type Db } from '../db/index.js'
@@ -137,6 +145,22 @@ describe('taking one', () => {
   it('creates the directory, because on a fresh install nothing has', () => {
     expect(() => takeScheduledBackup(db, paths, join(backupDir(), 'nested'), NOW)).not.toThrow()
   })
+
+  // Root is allowed to write into a directory whose mode forbids it, so
+  // there is no way to make this directory unwritable to the test itself.
+  // CI runs as an ordinary user and does run it.
+  it.skipIf(process.getuid?.() === 0)(
+    'blames the permissions rather than the database when the directory is read-only',
+    () => {
+      const locked = join(dir, 'locked')
+      mkdirSync(locked)
+      chmodSync(locked, 0o500)
+
+      // The message SQLite would have given is `unable to open database`,
+      // which sends whoever reads the alert looking for a corrupt file.
+      expect(() => takeScheduledBackup(db, paths, locked, NOW)).toThrow(/not writable/)
+    },
+  )
 
   it('keeps only as many as the schedule says, oldest first', () => {
     writeSchedule(db, { keep: 2 })
