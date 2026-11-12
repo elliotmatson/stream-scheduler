@@ -361,15 +361,37 @@ export class ConnectionManager {
     const now = this.deps.clock.now()
 
     for (const connection of this.list()) {
+      let health: HealthReport
       try {
-        const health = await connection.device.health()
-        connection.health = health
-        this.recordHealth(connection.deviceId, health)
-        this.emit({ type: 'health', deviceId: connection.deviceId, report: health })
+        health = await connection.device.health()
       } catch (error) {
         await this.close(connection.deviceId)
         this.noteFailure(connection.deviceId, error)
+        continue
       }
+
+      // A device that *answers* "disconnected" has said the same thing as
+      // one that throws, and for a while only the thrown version was heard.
+      // Adapters over a persistent socket report a dropped connection this
+      // way rather than by failing the call — a HyperDeck whose deck closed
+      // the socket answers every health check politely, saying it is not
+      // connected. The connection stayed in the map, the loop below skipped
+      // it as already open, and the deck sat there dead until somebody
+      // reconnected it by hand. `invoke` had this right all along, which is
+      // what made the hole easy to miss: a command on a dropped device
+      // reconnected, a device nobody commanded did not.
+      if (health.state === 'disconnected') {
+        await this.close(connection.deviceId)
+        this.noteFailure(
+          connection.deviceId,
+          new Error(health.message ?? 'The device reported that it is no longer connected.'),
+        )
+        continue
+      }
+
+      connection.health = health
+      this.recordHealth(connection.deviceId, health)
+      this.emit({ type: 'health', deviceId: connection.deviceId, report: health })
     }
 
     for (const row of this.enabledDevices()) {

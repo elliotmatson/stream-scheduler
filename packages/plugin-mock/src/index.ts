@@ -47,6 +47,7 @@ const configSchema: ConfigField[] = [
       { id: 'slow-to-settle', label: 'Takes a few reads to report a change' },
       { id: 'ignores-quality', label: 'Takes a quality profile and stays where it was' },
       { id: 'never-answers', label: 'Accepts commands and never answers' },
+      { id: 'drops-the-connection', label: 'Connects, then drops the connection' },
       { id: 'names-its-own-files', label: 'Records under a name of its own choosing' },
     ],
     default: 'none',
@@ -74,6 +75,15 @@ const QUALITIES = ['low', 'standard', 'high']
 type Fault =
   | 'none'
   | 'unreachable'
+  /**
+   * Connects, answers once, and then says it is not connected.
+   *
+   * What a deck on a persistent socket does when the far end goes
+   * away: nothing throws, every health check is answered, and the
+   * answer is that there is no connection. Reported politely enough
+   * that the host once went on believing it had one.
+   */
+  | 'drops-the-connection'
   | 'ignores-writes'
   | 'flaky'
   | 'slow-to-settle'
@@ -162,8 +172,20 @@ class MockDevice {
   }
 
   health(): HealthReport {
+    // The first report is the one `open` takes, so the connection is
+    // allowed to succeed; the transport goes away afterwards, which is the
+    // order the real failure happens in.
+    if (this.fault === 'drops-the-connection' && this.healthChecks++ > 0) {
+      return {
+        state: 'disconnected',
+        message: 'The deck closed the connection.',
+        since: this.connectedAt,
+      }
+    }
     return { state: 'connected', since: this.connectedAt }
   }
+
+  private healthChecks = 0
 
   nodes(): NodeDefinition[] {
     const nodes: NodeDefinition[] = []
