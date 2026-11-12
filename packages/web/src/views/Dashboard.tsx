@@ -467,6 +467,9 @@ function Output({ output, now }: { output: DashboardOutput; now: number }): Reac
       <span
         className={`state-dot ${toneFor(state)}`}
         title={describeStatus(state)}
+        // A label on a bare span is ignored by screen readers and flagged
+        // by axe; as an image it is read out.
+        role="img"
         aria-label={state}
       />
 

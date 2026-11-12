@@ -16,16 +16,20 @@
 
   --text: #11141a;
   --text-2: #3d4551;
-  --muted: #6b7382;
+  --muted: #636b7a;
 
   --accent: #4460e0;
   --accent-hover: #3a53c9;
   --accent-contrast: #ffffff;
 
-  --ok: #0b8a5b;
+  --ok: #087249;
   --warn: #b4650a;
-  --bad: #cf3535;
+  --bad: #bf2d2d;
   --live: #d23434;
+  /* Behind white text: the badge and calendar chip of what is on air.
+     Deeper than --live, which in dark mode is bright for dots and edges
+     and left white text on it at 3:1. */
+  --live-fill: #c42b2b;
 
   /* Tints are derived, so a palette change cannot leave a stale pastel. */
   --accent-soft: color-mix(in srgb, var(--accent) 11%, transparent);
@@ -1126,7 +1130,7 @@ input[type='checkbox'] {
 }
 .pill.live {
   color: #fff;
-  background: var(--live);
+  background: var(--live-fill);
 }
 .pill.live::before {
   background: #fff;
@@ -1188,8 +1192,10 @@ input[type='checkbox'] {
   background: var(--surface-2);
 }
 
+/* Told apart by the cell's own background, not by fading the number:
+   faded, it fell below what can be read. */
 .calendar .day.outside .daynum {
-  opacity: 0.5;
+  font-weight: 400;
 }
 
 .daynum {
@@ -1339,8 +1345,15 @@ input[type='checkbox'] {
   background: var(--surface-3);
 }
 
-.event.live {
-  background: var(--live);
+/* The name is faded beside the time on an ordinary chip; on a red one
+   that took it under readable contrast. */
+.event.live .event-name {
+  opacity: 1;
+}
+
+.event.live,
+.event.live:hover:not(:disabled) {
+  background: var(--live-fill);
   border-color: transparent;
   color: #fff;
 }
@@ -2014,9 +2027,10 @@ button.link:hover {
   text-align: center;
 }
 
-/* "Card:" before "23h left", quieter than the value it names. */
+/* "Card:" before "23h left", quieter than the value it names — in the
+   muted colour rather than faded, which took it below readable contrast. */
 .fact-label {
-  opacity: 0.7;
+  color: var(--muted);
 }
 
 /* The event summary that opens where a calendar date was clicked. */
