@@ -496,6 +496,48 @@ async function theFileBrowser(browser, base) {
     check('and it offers every card the deck has', names.length === 2, names.join(', '))
   }
 
+  // Walking the card. The resolver can only ever land on one directory,
+  // and a deck serves every mounted card at its root, so the way to the
+  // others is through the browser — which lives entirely in the page and
+  // is invisible to every other kind of test here.
+  await files.getByRole('button', { name: 'Read the media' }).first().click()
+  const crumb = files.locator('code').first()
+  await crumb.waitFor({ timeout: TIMEOUT })
+
+  const landed = (await crumb.textContent())?.trim() ?? ''
+  check(
+    'the panel says which directory it is showing',
+    landed.startsWith('/') && landed !== '/',
+    `showed "${landed}"`,
+  )
+  if (!landed.startsWith('/')) await shoot(page, 'files-no-breadcrumb')
+
+  const up = files.getByRole('button', { name: /Up/ }).first()
+  await up.click()
+  await crumb
+    .filter({ hasText: /^\/$/ })
+    .waitFor({ timeout: TIMEOUT })
+    .catch(() => undefined)
+  const atRoot = (await crumb.textContent())?.trim() ?? ''
+  check('going up reaches the root the deck serves', atRoot === '/', `showed "${atRoot}"`)
+  if (atRoot !== '/') await shoot(page, 'files-up-did-not-reach-root')
+
+  // And the root is a list of cards, each of which opens.
+  const intoCard = files.locator('tbody button.linkish').first()
+  const cardName = (await intoCard.textContent())?.replace(/\s*›\s*$/, '').trim() ?? ''
+  await intoCard.click()
+  await crumb
+    .filter({ hasText: /\/./ })
+    .waitFor({ timeout: TIMEOUT })
+    .catch(() => undefined)
+  const inside = (await crumb.textContent())?.trim() ?? ''
+  check(
+    'and a card at the root opens into it',
+    inside === `/${cardName}`,
+    `clicked "${cardName}", showed "${inside}"`,
+  )
+  if (inside !== `/${cardName}`) await shoot(page, 'files-folder-did-not-open')
+
   check('files: no console errors', problems.length === 0, problems.slice(0, 3).join(' | '))
   await context.close()
 }

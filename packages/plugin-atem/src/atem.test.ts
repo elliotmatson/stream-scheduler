@@ -788,6 +788,40 @@ describe('what is on the switcher\u2019s drive', () => {
     expect(ftp.names('/AND-College')).toEqual([])
   })
 
+  it('lists the directory it was given, rather than resolving one', async () => {
+    const name = '2026-10-18_08-57-59_and-college-atem'
+    const ftp = fakeFtp({ 'AND-College': [name] }, { asFolders: true })
+    const atem = await connect(recorder(), {}, ftp)
+
+    // Without a path this answers "wherever the recordings are", which is
+    // what retention relies on and must not change.
+    const resolved = await atem.invoke('record', 'listMedia', {})
+    expect(resolved?.raw?.directory).toBe('/AND-College')
+    expect(resolved?.raw?.parent).toBe('/')
+
+    // With one, it goes where it was told — which is how somebody walks a
+    // drive the resolver can only ever guess at one directory of.
+    const root = await atem.invoke('record', 'listMedia', { path: '/' })
+    expect(root?.raw?.directory).toBe('/')
+    expect((root?.raw?.media as { name: string }[]).map((item) => item.name)).toEqual([
+      'AND-College',
+    ])
+    // Nothing above the root, so the screen offers no way up from it.
+    expect(root?.raw?.parent).toBeUndefined()
+  })
+
+  it('deletes from the directory it was shown, not the resolved one', async () => {
+    const ftp = fakeFtp({ Archive: ['old.mp4'], 'Sunday A': ['service.mp4'] })
+    const atem = await connect(recorder(), {}, ftp)
+
+    // The resolver would land on 'Sunday A'. Deleting what was picked
+    // while looking at 'Archive' has to remove the one that was on screen.
+    await atem.invoke('record', 'deleteMedia', { name: 'old.mp4', path: '/Archive' })
+
+    expect(ftp.removed).toEqual(['/Archive/old.mp4'])
+    expect(ftp.names('/Sunday A')).toEqual(['service.mp4'])
+  })
+
   it('looks on the disk it is writing to, not whichever sorts first', async () => {
     // Two disks visible to the server. Listing the other one shows
     // somebody last month's files and calls them this morning's.

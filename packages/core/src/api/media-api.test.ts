@@ -219,3 +219,46 @@ describe('deleting a selection', () => {
     expect(done.failed.map((entry: { name: string }) => entry.name)).toEqual(['gone-already.mov'])
   })
 })
+
+describe('walking the media as the device serves it', () => {
+  it('refuses a path that steps above itself', async () => {
+    const deviceId = await deckWith(['sunday'])
+
+    // The path reaches someone else's FTP server, which will resolve a
+    // traversal out of the media directory quite happily and then list —
+    // or delete — whatever it lands on.
+    const refused = await get(
+      `/api/devices/${deviceId}/nodes/record/media?path=${encodeURIComponent('/cards/../../etc')}`,
+    )
+    expect(refused.statusCode).toBe(400)
+  })
+
+  it('refuses a path that is not absolute', async () => {
+    const deviceId = await deckWith(['sunday'])
+    const refused = await get(`/api/devices/${deviceId}/nodes/record/media?path=cards`)
+    expect(refused.statusCode).toBe(400)
+  })
+
+  it('removes what the confirmation described, in the directory it described', async () => {
+    const deviceId = await deckWith(['sunday', 'midweek'])
+
+    // The token carries the directory, so a second call cannot quietly
+    // redirect a confirmed delete at another one by changing the body.
+    const prepared = json(
+      await post(`/api/devices/${deviceId}/nodes/record/media/delete`, {
+        names: ['sunday.mov'],
+      }),
+    )
+    const done = json(
+      await post(`/api/devices/${deviceId}/nodes/record/media/delete`, {
+        names: ['sunday.mov'],
+        confirm: prepared.confirm,
+        path: '/somewhere-else',
+      }),
+    )
+
+    expect(done.removed).toEqual(['sunday.mov'])
+    const left = json(await get(`/api/devices/${deviceId}/nodes/record/media`))
+    expect(left.files.map((file: { name: string }) => file.name)).toEqual(['midweek.mov'])
+  })
+})

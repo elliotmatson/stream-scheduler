@@ -83,6 +83,25 @@ export interface MediaItem {
   isFolder?: boolean
 }
 
+/**
+ * A listing, and where it came from.
+ *
+ * The plain array stays valid — an adapter that has nothing to say about
+ * directories keeps returning one — but a device whose media is a tree
+ * has to be able to say which part of it answered. Without that the
+ * screen showing the list cannot offer a way back up, and a caller that
+ * asked for "wherever the recordings are" never learns where that was.
+ */
+export interface MediaListing {
+  items: MediaItem[]
+  /** As the device's own file server spells it, so it can be handed back
+   *  verbatim to list the same place again. */
+  directory?: string
+  /** The directory one level up, absent at the top. The device decides
+   *  where its own top is; nothing else can know. */
+  parent?: string
+}
+
 /** One card, disk or slot a recorder can write to. */
 export interface StorageSlot {
   id: number
@@ -278,7 +297,19 @@ export interface NodeActions {
    * single file over the same protocol is not. Declaring them apart means
    * a deck can show its contents without implying it can be swept.
    */
-  listMedia?(options: { slot?: number }): Promise<MediaItem[]>
+  listMedia?(options: {
+    slot?: number
+    /**
+     * A directory on the device's own file server, as it names it.
+     *
+     * Absent means "wherever the recordings are", which is what every
+     * caller but the file browser wants and what retention relies on. A
+     * path is how somebody looking at the screen walks the card as it
+     * actually is — a deck with two cards serves both at its root, and
+     * the resolver can only ever pick one of them.
+     */
+    path?: string
+  }): Promise<MediaItem[] | MediaListing>
   /**
    * Removes one named file.
    *
@@ -296,7 +327,7 @@ export interface NodeActions {
    * A sweep that reports success on a file it did not remove is worse than
    * one that fails loudly.
    */
-  deleteMedia?(options: { slot?: number; name: string }): Promise<void>
+  deleteMedia?(options: { slot?: number; name: string; path?: string }): Promise<void>
   stopRecording?(): Promise<void>
   route?(options: { input: string; output: string }): Promise<void>
   /**

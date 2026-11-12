@@ -1552,9 +1552,37 @@ function registerRoutes(fastify: FastifyInstance, app: Application): void {
    * one costs a second look at the list — which is the right thing to
    * lose.
    */
+  /**
+   * A directory on a device's own file server.
+   *
+   * Absolute, and with no `..` in it. The path arrives from a browser and
+   * is handed to someone else's FTP server, which will happily resolve a
+   * traversal out of the media directory and let somebody list — or
+   * delete — wherever it lands. Rejecting the segment outright is the
+   * cheap half of that; the device still decides what it will serve.
+   */
+  const devicePath = z
+    .string()
+    .min(1)
+    .max(1024)
+    .startsWith('/')
+    .refine((value) => !value.split('/').includes('..'), {
+      message: 'A path cannot step above itself.',
+    })
+
   const pendingDeletes = new Map<
     string,
-    { deviceId: string; nodeId: string; names: string[]; slot?: number; at: number }
+    {
+      deviceId: string
+      nodeId: string
+      names: string[]
+      slot?: number
+      /** Where they were seen. Carried on the token so the second call
+       *  removes what the first one listed, not what the same names
+       *  would resolve to a minute later. */
+      path?: string
+      at: number
+    }
   >()
 
   /**
@@ -1566,8 +1594,11 @@ function registerRoutes(fastify: FastifyInstance, app: Application): void {
    */
   fastify.get('/api/devices/:id/nodes/:nodeId/media', async (request) => {
     const { id, nodeId } = z.object({ id: z.string(), nodeId: z.string() }).parse(request.params)
-    const { slot } = z
-      .object({ slot: z.coerce.number().int().positive().optional() })
+    const { slot, path } = z
+      .object({
+        slot: z.coerce.number().int().positive().optional(),
+        path: devicePath.optional(),
+      })
       .parse(request.query ?? {})
 
     const node = nodeOr404(app, id, nodeId)
@@ -1577,9 +1608,16 @@ function registerRoutes(fastify: FastifyInstance, app: Application): void {
 
     const state = await app.connections.invoke(id, nodeId, 'listMedia', {
       ...(slot === undefined ? {} : { slot }),
+      ...(path === undefined ? {} : { path }),
     })
     const media = state?.raw?.media
-    return { files: Array.isArray(media) ? (media as unknown as MediaItem[]) : [] }
+    return {
+      files: Array.isArray(media) ? (media as unknown as MediaItem[]) : [],
+      // Where the device says it looked, so the screen can show a way back
+      // up rather than guessing at the shape of somebody else's paths.
+      ...(typeof state?.raw?.directory === 'string' ? { directory: state.raw.directory } : {}),
+      ...(typeof state?.raw?.parent === 'string' ? { parent: state.raw.parent } : {}),
+    }
   })
 
   /**
@@ -1598,6 +1636,7 @@ function registerRoutes(fastify: FastifyInstance, app: Application): void {
       .object({
         names: z.array(z.string().min(1)).min(1).max(500),
         slot: z.number().int().positive().optional(),
+        path: devicePath.optional(),
         confirm: z.string().min(1).optional(),
       })
       .parse(request.body)
@@ -1626,6 +1665,7 @@ function registerRoutes(fastify: FastifyInstance, app: Application): void {
         nodeId,
         names: body.names,
         ...(body.slot === undefined ? {} : { slot: body.slot }),
+        ...(body.path === undefined ? {} : { path: body.path }),
         at: app.clock.now(),
       })
       return { deleted: false, confirm: token, files: body.names }
@@ -1650,6 +1690,9 @@ function registerRoutes(fastify: FastifyInstance, app: Application): void {
         await app.connections.invoke(id, nodeId, 'deleteMedia', {
           name,
           ...(plan.slot === undefined ? {} : { slot: plan.slot }),
+          // From the token, never from this request: the directory is as
+          // much a part of what was confirmed as the names are.
+          ...(plan.path === undefined ? {} : { path: plan.path }),
         })
         removed.push(name)
       } catch (error) {

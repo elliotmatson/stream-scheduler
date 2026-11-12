@@ -130,6 +130,21 @@ export function ftpPath(directory: string, name: string): string {
 }
 
 /**
+ * The directory above this one, or nothing at the top.
+ *
+ * The root is the top and has no parent: a browser that offered a way up
+ * from `/` would ask the server for `` and get whatever the server makes
+ * of that, which is not the same on any two of them.
+ */
+export function parentOf(directory: string): string | undefined {
+  const trimmed = directory.endsWith('/') && directory !== '/' ? directory.slice(0, -1) : directory
+  if (trimmed === '' || trimmed === '/') return undefined
+  const cut = trimmed.lastIndexOf('/')
+  if (cut < 0) return undefined
+  return cut === 0 ? '/' : trimmed.slice(0, cut)
+}
+
+/**
  * Where a device actually keeps its clips.
  *
  * Blackmagic boxes do not put recordings at the FTP root. The root holds
