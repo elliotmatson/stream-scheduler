@@ -1368,6 +1368,34 @@ function registerRoutes(fastify: FastifyInstance, app: Application): void {
   })
 
   /**
+   * Puts an occurrence back on the schedule after a run that ended badly.
+   *
+   * For the case the engine cannot decide on its own: a run that failed or
+   * was cancelled once the occurrence was already due — at 08:45, say, with
+   * the service at 09:00 — leaves it failed, and whether to try again is a
+   * person's call. Refused while anything is still running for it, and once
+   * it is over.
+   */
+  fastify.post('/api/occurrences/:id/rearm', async (request) => {
+    const { id } = z.object({ id: z.string() }).parse(request.params)
+    const row = db.prepare('SELECT status, scheduled_end FROM occurrence WHERE id = ?').get(id) as
+      { status: string; scheduled_end: number } | undefined
+    if (!row) throw new NotFoundError('No such date.')
+    const latest = app.store.findRunForOccurrence(id)
+    if (latest && !['completed', 'failed', 'cancelled'].includes(latest.state)) {
+      throw new ConflictError('It is still running. Stop it first.')
+    }
+    if (!['failed', 'cancelled', 'done'].includes(row.status)) {
+      throw new ConflictError('It is already scheduled.')
+    }
+    if (row.scheduled_end <= app.clock.now()) {
+      throw new ConflictError('It is already over.')
+    }
+    db.prepare("UPDATE occurrence SET status = 'pending' WHERE id = ?").run(id)
+    return { ok: true, status: 'pending' }
+  })
+
+  /**
    * Prepare an event early, so the broadcast exists and can be linked to.
    *
    * An unlisted stream has to be sent round before the day, and the link

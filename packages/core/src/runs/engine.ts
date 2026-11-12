@@ -143,7 +143,10 @@ export class RunEngine {
         // the spot. That puts it on the Runs page and in an alert rather
         // than in a log line repeated every five seconds, and it stops the
         // occurrence being due again on the next tick.
-        const run = this.deps.store.createRun(occurrenceId, plan ?? [])
+        const previous = this.deps.store.findRunForOccurrence(occurrenceId)
+        const run = this.deps.store.createRun(occurrenceId, plan ?? [], {
+          attempt: (previous?.attempt ?? 0) + 1,
+        })
         this.deps.db
           .prepare("UPDATE occurrence SET status = 'running' WHERE id = ?")
           .run(occurrenceId)
@@ -289,14 +292,14 @@ export class RunEngine {
     // the next is released before the next output claims it.
     for (const entry of timeline.outputs) {
       if (progress.get(entry.output.id) !== 'started') continue
-      if (now < entry.endsAt + timeline.postrollMs) continue
+      if (now < entry.stopAt) continue
       await this.runOutputPhase(run, plan, entry, 'stop')
       return true
     }
 
     for (const entry of timeline.outputs) {
       if (progress.get(entry.output.id) !== 'pending') continue
-      if (now < entry.startsAt - timeline.prerollMs) continue
+      if (now < entry.startAt) continue
 
       if (!run.forced_at && now > entry.startsAt + timeline.lateStartGraceMs) {
         await this.markMissed(run, plan, entry, now, timeline)
@@ -458,9 +461,7 @@ export class RunEngine {
     }
 
     this.deps.store.transition(run.id, 'completed')
-    this.deps.db
-      .prepare("UPDATE occurrence SET status = 'done' WHERE id = ?")
-      .run(run.occurrence_id)
+    this.settleOccurrence(run, 'done')
     this.deps.onLifecycle?.({
       kind: 'run.finished',
       runId: run.id,
@@ -656,7 +657,7 @@ export class RunEngine {
     this.deps.store.recordFailure(run.id, failure)
     this.deps.store.transition(run.id, to)
     this.deps.store.clearCancelRequest(run.id)
-    this.deps.db.prepare('UPDATE occurrence SET status = ? WHERE id = ?').run(to, run.occurrence_id)
+    this.settleOccurrence(run, to)
     if (to === 'failed') {
       this.logger.error('run failed', {
         runId: run.id,
@@ -980,7 +981,11 @@ export class RunEngine {
           WHERE o.status = 'pending'
             AND s.enabled = 1
             AND ? >= o.scheduled_start - s.prepare_lead_ms
-            AND NOT EXISTS (SELECT 1 FROM run r WHERE r.occurrence_id = o.id)
+            AND NOT EXISTS (
+              SELECT 1 FROM run r
+               WHERE r.occurrence_id = o.id
+                 AND r.state NOT IN ('completed', 'failed', 'cancelled')
+            )
           ORDER BY o.scheduled_start`,
       )
       .all(now) as { id: string }[]
@@ -1009,6 +1014,38 @@ export class RunEngine {
     const signal = this.holders.get(runId)?.abort.signal
     if (signal) deps.signal = signal
     return deps
+  }
+
+  /**
+   * Records how an occurrence came out — or hands it back to the schedule.
+   *
+   * A run that ended before the occurrence was even due to prepare was not
+   * the service: it was Start now pressed to test the encoders on a
+   * Wednesday, or Prepare now that failed on an expired token. Marking the
+   * occurrence failed or done would quietly take Sunday's service off the
+   * schedule, so it goes back to pending and the scheduled run still
+   * happens at its own time.
+   */
+  private settleOccurrence(run: RunRecord, status: 'done' | 'failed' | 'cancelled'): void {
+    const row = this.deps.db
+      .prepare(
+        `SELECT o.scheduled_start, s.prepare_lead_ms
+           FROM occurrence o JOIN event_series s ON s.id = o.series_id
+          WHERE o.id = ?`,
+      )
+      .get(run.occurrence_id) as { scheduled_start: number; prepare_lead_ms: number } | undefined
+    const early =
+      row !== undefined && this.deps.clock.now() < row.scheduled_start - row.prepare_lead_ms
+    this.deps.db
+      .prepare('UPDATE occurrence SET status = ? WHERE id = ?')
+      .run(early ? 'pending' : status, run.occurrence_id)
+    if (early) {
+      this.logger.info('a run ended before its occurrence was due; it is scheduled again', {
+        runId: run.id,
+        occurrenceId: run.occurrence_id,
+        outcome: status,
+      })
+    }
   }
 
   private activeRunFor(occurrenceId: string): RunRecord | undefined {

@@ -161,6 +161,9 @@ describe('changing one occurrence', () => {
 
   it('refuses to change an event that is under way', async () => {
     const { first } = await weeklyService()
+    // Inside its prepare window: a run started any earlier than that is a
+    // rehearsal, and hands the date back to the schedule when it ends.
+    clock.set(first.scheduledStart - 10 * MINUTE)
     await post(`/api/occurrences/${first.id}/start-now`)
 
     const refused = await patch(`/api/occurrences/${first.id}`, { label: 'Too late' })

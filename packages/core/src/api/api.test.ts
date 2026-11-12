@@ -293,6 +293,46 @@ describe('in the middle of a service', () => {
   })
 })
 
+describe('scheduling a date again', () => {
+  async function firstOccurrence(): Promise<string> {
+    await seedEverything()
+    const list = await get(`/api/occurrences?from=${START - MINUTE}&to=${START + 60 * MINUTE}`)
+    return list.json[0].id
+  }
+
+  it('puts a failed date back on the schedule', async () => {
+    const id = await firstOccurrence()
+    clock.set(START - 10 * MINUTE)
+    app.db.prepare("UPDATE occurrence SET status = 'failed' WHERE id = ?").run(id)
+
+    const response = await post(`/api/occurrences/${id}/rearm`, {})
+    expect(response.status).toBe(200)
+    expect((await get(`/api/occurrences/${id}`)).json.status).toBe('pending')
+  })
+
+  it('refuses one that is already scheduled, or already over', async () => {
+    const id = await firstOccurrence()
+    expect((await post(`/api/occurrences/${id}/rearm`, {})).status).toBe(409)
+
+    app.db.prepare("UPDATE occurrence SET status = 'failed' WHERE id = ?").run(id)
+    clock.set(START + 2 * 60 * MINUTE)
+    const late = await post(`/api/occurrences/${id}/rearm`, {})
+    expect(late.status).toBe(409)
+    expect(late.json.error).toMatch(/over/)
+  })
+
+  it('refuses one with a run still going', async () => {
+    const id = await firstOccurrence()
+    clock.set(START - 10 * MINUTE)
+    await post(`/api/occurrences/${id}/start-now`, {})
+    app.db.prepare("UPDATE occurrence SET status = 'failed' WHERE id = ?").run(id)
+
+    const response = await post(`/api/occurrences/${id}/rearm`, {})
+    expect(response.status).toBe(409)
+    expect(response.json.error).toMatch(/still running/)
+  })
+})
+
 describe('the status screen', () => {
   it('answers what is on air, what is next and what needs somebody, in one read', async () => {
     const { deviceId } = await seedEverything()
@@ -1190,6 +1230,24 @@ describe('outputs', () => {
     // stopped by a clash they are about to fix — but it is reported.
     expect(added.json.conflicts).toHaveLength(1)
     expect(added.json.conflicts[0].detail).toContain('Sanctuary encoder')
+    expect(added.json.conflicts[0].detail).toContain('only do one at a time')
+  })
+
+  it('measures an output that follows the window by the window, not its stored length', async () => {
+    const { seriesId, credentialId, deviceId, outputId } = await seedEverything()
+    // Stored as ten minutes, but it runs to the end of the 90-minute window.
+    await patch(`/api/outputs/${outputId}`, { durationMs: 10 * MINUTE, followsWindow: true })
+    const added = await post(`/api/series/${seriesId}/outputs`, {
+      kind: 'stream',
+      label: 'Worship',
+      offsetMs: 30 * MINUTE,
+      durationMs: 30 * MINUTE,
+      credentialId,
+      deviceId,
+      nodeId: 'stream',
+    })
+
+    expect(added.json.conflicts).toHaveLength(1)
     expect(added.json.conflicts[0].detail).toContain('only do one at a time')
   })
 
