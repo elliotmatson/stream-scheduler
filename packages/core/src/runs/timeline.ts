@@ -130,10 +130,10 @@ export function timelineFor(
     timezone: row.timezone,
     windowStart,
     windowEnd: row.scheduled_end + shift,
-    // Replaced wholesale, not merged. "This week the title is different"
-    // means the title somebody typed on this screen, and a merge would
-    // silently keep a description they had just cleared.
-    templates: overrides.templates ?? parseTemplates(row.templates),
+    // Field by field: this date's own value where it has one — "" being a
+    // value, blank on purpose — and the series' everywhere else, so a later
+    // change to the series still reaches the fields this date left alone.
+    templates: { ...parseTemplates(row.templates), ...(overrides.templates ?? {}) },
     prepareLeadMs: row.prepare_lead_ms,
     prerollMs: row.preroll_ms,
     postrollMs: row.postroll_ms,

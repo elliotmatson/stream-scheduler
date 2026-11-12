@@ -70,8 +70,27 @@ export function App(): ReactNode {
   // up rather than leaving a screen of numbers that stopped being true.
   useEffect(() => whenSignedOut(session.reload), [session.reload])
 
-  // Nothing is rendered until the answer is in: guessing wrong flashes the
-  // whole app up and then snatches it away, or the reverse.
+  // Asked again while it cannot be reached — the booth PC starting before
+  // the server is the usual case — rather than leaving a blank page that
+  // only a reload would fix.
+  const unreachable = !session.data && session.error !== undefined
+  useEffect(() => {
+    if (!unreachable) return
+    const timer = setTimeout(session.reload, 3000)
+    return () => clearTimeout(timer)
+  }, [unreachable, session.reload, session.loading])
+
+  if (unreachable) {
+    return (
+      <main className="unreachable" role="alert">
+        <h1>Can&apos;t reach the scheduler</h1>
+        <p className="muted">Trying again every few seconds…</p>
+        <button onClick={session.reload}>Try now</button>
+      </main>
+    )
+  }
+  // Nothing else is rendered until the answer is in: guessing wrong flashes
+  // the whole app up and then snatches it away, or the reverse.
   if (!session.data) return null
   if (session.data.required && !session.data.signedIn) {
     return <Login onSignedIn={session.reload} />
@@ -264,6 +283,10 @@ function NavLink({
     <a
       className="nav-link"
       href={`#${to}`}
+      // Named for screen readers and tooltips: on a phone the label beside
+      // the icon is hidden, which left the link with no name at all.
+      aria-label={label}
+      title={label}
       aria-current={active ? 'page' : undefined}
       onClick={(event) => {
         event.preventDefault()

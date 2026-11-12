@@ -14,6 +14,7 @@ import {
   type Series,
 } from '../api.ts'
 import { ConfirmButton, Empty, ErrorBanner, Field, TemplateTokens } from '../components.tsx'
+import { clockAt, offsetFrom, timeOf } from '../output-times.ts'
 import {
   bitrateHint,
   CUSTOM_VALUE,
@@ -43,15 +44,30 @@ export function Outputs({ series }: { series: Series }): ReactNode {
   const [adding, setAdding] = useState<'stream' | 'recording'>()
 
   const current = result ?? data
+  const [saving, setSaving] = useState(false)
+  const [saved, setSaved] = useState(false)
   const act = async (run: () => Promise<OutputsResponse>): Promise<void> => {
+    // One save at a time: a second click on Add while the first is still
+    // on its way made a second output.
+    if (saving) return
+    setSaving(true)
+    setSaved(false)
     setActionError(undefined)
     try {
       setResult(await run())
       setAdding(undefined)
+      setSaved(true)
     } catch (err) {
       setActionError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setSaving(false)
     }
   }
+  useEffect(() => {
+    if (!saved) return
+    const timer = setTimeout(() => setSaved(false), 3000)
+    return () => clearTimeout(timer)
+  }, [saved])
 
   return (
     <section className="card">
@@ -86,6 +102,12 @@ export function Outputs({ series }: { series: Series }): ReactNode {
         </div>
       ))}
 
+      {saved ? (
+        <div className="banner info" role="status">
+          Saved.
+        </div>
+      ) : null}
+
       {adding ? (
         <OutputRow
           key={adding}
@@ -95,6 +117,7 @@ export function Outputs({ series }: { series: Series }): ReactNode {
           credentials={credentials ?? []}
           devices={devices ?? []}
           onSave={(input) => act(() => api.createOutput(series.id, input))}
+          saving={saving}
           onCancel={() => setAdding(undefined)}
         />
       ) : null}
@@ -121,6 +144,7 @@ export function Outputs({ series }: { series: Series }): ReactNode {
             credentials={credentials ?? []}
             devices={devices ?? []}
             onSave={(input) => act(() => api.updateOutput(output.id, input))}
+            saving={saving}
             onRemove={() => act(() => api.deleteOutput(output.id))}
             onReload={reload}
           />
@@ -138,6 +162,8 @@ interface RowProps {
   credentials: Credential[]
   devices: Device[]
   onSave: (input: OutputInput) => void
+  /** A save is on its way; the button waits for it. */
+  saving?: boolean
   onRemove?: () => void
   onCancel?: () => void
   onReload?: () => void
@@ -418,8 +444,12 @@ function OutputRow(props: RowProps): ReactNode {
       </details>
 
       <div className="row">
-        <button className="primary" disabled={!draft.label || !draft.deviceId} onClick={save}>
-          {output ? 'Save' : 'Add'}
+        <button
+          className="primary"
+          disabled={!draft.label || !draft.deviceId || props.saving === true}
+          onClick={save}
+        >
+          {props.saving ? 'Saving…' : output ? 'Save' : 'Add'}
         </button>
         <label
           className="row"
@@ -701,30 +731,3 @@ function templatesOf(draft: RowDraft, kind: 'stream' | 'recording'): Record<stri
 }
 
 /** The event's own start, as HH:mm in its zone. */
-function timeOf(series: Series): string {
-  return clockAt(series, 0)
-}
-
-function clockAt(series: Series, offsetMs: number): string {
-  return new Intl.DateTimeFormat('en-GB', {
-    timeZone: series.timezone,
-    hour: '2-digit',
-    minute: '2-digit',
-    hour12: false,
-  }).format(series.dtstart + offsetMs)
-}
-
-/**
- * Turns a typed clock time back into an offset from the window's start.
- *
- * Done in minutes-since-midnight rather than by building a date, so a clock
- * change on the event's first date cannot make an output an hour out from
- * every other one.
- */
-function offsetFrom(series: Series, startsAt: string): number {
-  const [hour, minute] = startsAt.split(':').map(Number)
-  if (hour === undefined || minute === undefined || Number.isNaN(hour) || Number.isNaN(minute))
-    return 0
-  const [openHour, openMinute] = timeOf(series).split(':').map(Number) as [number, number]
-  return (hour * 60 + minute - openHour * 60 - openMinute) * 60_000
-}

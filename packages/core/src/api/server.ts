@@ -1262,7 +1262,9 @@ function registerRoutes(fastify: FastifyInstance, app: Application): void {
         label: z.string().min(1).max(200).nullable().optional(),
         startsAt: LOCAL_START.optional(),
         durationMs: z.number().int().positive().optional(),
-        templates: z.record(z.string()).nullable().optional(),
+        // Per field: a string sets this date's own value ("" for blank on
+        // purpose), null puts that field back on the series.
+        templates: z.record(z.string().nullable()).nullable().optional(),
       })
       .parse(request.body ?? {})
 
@@ -1321,10 +1323,15 @@ function registerRoutes(fastify: FastifyInstance, app: Application): void {
 
     if (body.templates === null) delete overrides.templates
     else if (body.templates !== undefined) {
-      const kept: Record<string, string> = {}
-      for (const key of ['title', 'description', 'filename']) {
+      // Merged into what this date already overrides, field by field: a new
+      // title for one week leaves its description following the series, so
+      // a later change to the series' description still reaches it.
+      const kept: Record<string, string> = { ...(overrides.templates ?? {}) }
+      for (const key of ['title', 'description', 'filename'] as const) {
+        if (!(key in body.templates)) continue
         const value = body.templates[key]
-        if (typeof value === 'string' && value) kept[key] = value
+        if (value === null || value === undefined) delete kept[key]
+        else kept[key] = value
       }
       if (Object.keys(kept).length > 0) overrides.templates = kept
       else delete overrides.templates

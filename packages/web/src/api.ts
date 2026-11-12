@@ -47,7 +47,7 @@ export interface OccurrenceEdit {
   label?: string | null
   startsAt?: { date: string; time: string }
   durationMs?: number
-  templates?: Record<string, string> | null
+  templates?: Record<string, string | null> | null
 }
 
 export interface Series {
@@ -641,15 +641,32 @@ export function whenSignedOut(handler: () => void): void {
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const method = init?.method ?? 'GET'
-  const response = await fetch(path, {
-    ...init,
-    headers: { 'content-type': 'application/json', ...(init?.headers ?? {}) },
-    // Fastify rejects a JSON content-type with an empty body, so action
-    // endpoints that take no arguments still send `{}`.
-    ...(method === 'GET' || init?.body !== undefined ? {} : { body: '{}' }),
-  })
+  let response: Response
+  try {
+    response = await fetch(path, {
+      ...init,
+      headers: { 'content-type': 'application/json', ...(init?.headers ?? {}) },
+      // Fastify rejects a JSON content-type with an empty body, so action
+      // endpoints that take no arguments still send `{}`.
+      ...(method === 'GET' || init?.body !== undefined ? {} : { body: '{}' }),
+    })
+  } catch {
+    // The browser's own wording is "Failed to fetch", which says nothing.
+    throw new ApiError(0, "Can't reach the scheduler. Check it is running.", [])
+  }
   const text = await response.text()
-  const body = text ? (JSON.parse(text) as Record<string, unknown>) : {}
+  let body: Record<string, unknown> = {}
+  try {
+    body = text ? (JSON.parse(text) as Record<string, unknown>) : {}
+  } catch {
+    // A proxy's error page, not an answer from the app. Its HTML is no use
+    // to anybody; the status is.
+    throw new ApiError(
+      response.status,
+      `The server didn't answer properly (${response.status}). Try again in a moment.`,
+      [],
+    )
+  }
   if (response.status === 401 && path !== '/api/login') onUnauthorized?.()
   if (!response.ok) {
     throw new ApiError(
@@ -835,6 +852,9 @@ export const api = {
     ),
   skip: (occurrenceId: string) =>
     request<unknown>(`/api/occurrences/${occurrenceId}/skip`, { method: 'POST' }),
+  /** Puts a failed, cancelled or finished date back on the schedule. */
+  rearm: (occurrenceId: string) =>
+    request<unknown>(`/api/occurrences/${occurrenceId}/rearm`, { method: 'POST' }),
   notificationKinds: () => request<ChannelKind[]>('/api/notifications/kinds'),
   notificationEvents: () => request<NotificationEventKind[]>('/api/notifications/events'),
   notificationSettings: () => request<NotificationSettings>('/api/notifications/settings'),
@@ -1186,15 +1206,19 @@ function publish(next: (current: LiveState) => LiveState): void {
 
 function openSocket(): void {
   const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws'
-  socket = new WebSocket(`${protocol}://${window.location.host}/ws`)
-  socket.onopen = () => publish((s) => ({ ...s, connected: true }))
-  socket.onclose = () => {
+  const opened = new WebSocket(`${protocol}://${window.location.host}/ws`)
+  socket = opened
+  opened.onopen = () => publish((s) => ({ ...s, connected: true }))
+  opened.onclose = () => {
+    // A socket already replaced — closed on the way out, then reopened —
+    // says nothing about the current one, and must not schedule a second.
+    if (socket !== opened) return
     publish((s) => ({ ...s, connected: false }))
     // Only while somebody is still listening: a closed tab must not keep
     // reconnecting in the background.
     if (subscribers.size > 0) retry = setTimeout(openSocket, 2000)
   }
-  socket.onmessage = (event) => {
+  opened.onmessage = (event) => {
     const payload = JSON.parse(String(event.data)) as Record<string, unknown>
     if (payload.channel === 'runs') {
       publish((s) => ({

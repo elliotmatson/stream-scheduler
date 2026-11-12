@@ -221,6 +221,7 @@ function Restore({
           <input
             ref={chooser}
             type="file"
+            aria-label="Backup file to restore"
             accept=".db,application/octet-stream"
             onChange={(event) => {
               const chosen = event.target.files?.[0]
@@ -342,7 +343,7 @@ function Security({
           variable is almost always still sitting in a compose file, and
           "why did my change stick?" is a fair question to have answered
           before you make it rather than after. */}
-      {session.seededFromEnvironment ? (
+      {session.seededFromEnvironment && session.required ? (
         <p className="muted" style={{ marginTop: 0 }}>
           This password started out as <code>SCHEDULER_UI_PASSWORD</code>. It was copied here the
           first time the app started and that variable is no longer read, so changing it here is

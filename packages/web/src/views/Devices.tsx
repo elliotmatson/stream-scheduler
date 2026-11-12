@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react'
-import type { ReactNode } from 'react'
+import { useEffect, useRef, useState } from 'react'
+import type { KeyboardEvent as ReactKeyboardEvent, ReactNode } from 'react'
 import {
   api,
   useLive,
@@ -102,12 +102,16 @@ export function Devices({
   useEffect(() => {
     if (!open) return
     const onKey = (event: KeyboardEvent): void => {
-      if (event.key === 'Escape') show(undefined)
+      if (event.key !== 'Escape') return
+      // Half-filled edits are not thrown away by a stray key.
+      if (editing === open.id && !window.confirm('Close without saving your changes?')) return
+      setEditing(undefined)
+      show(undefined)
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open?.id])
+  }, [open?.id, editing])
 
   return (
     <>
@@ -148,7 +152,7 @@ export function Devices({
           />
         ) : null}
 
-        {devices.length === 0 && !adding ? (
+        {data !== undefined && devices.length === 0 && !adding ? (
           <Card>
             <Empty>
               {all.length === 0
@@ -298,6 +302,32 @@ function DevicePanel({
   onEdited: () => void
   onRemove: () => void
 }): ReactNode {
+  // Focus goes into the drawer when it opens and back where it came from
+  // when it closes, and Tab stays inside it while it is open: a dialog a
+  // keyboard user cannot get into, or out of, is not one they can use.
+  const drawerRef = useRef<HTMLElement>(null)
+  useEffect(() => {
+    const before = document.activeElement as HTMLElement | null
+    drawerRef.current?.focus()
+    return () => before?.focus?.()
+  }, [device.id])
+  const trapFocus = (event: ReactKeyboardEvent<HTMLElement>): void => {
+    if (event.key !== 'Tab' || !drawerRef.current) return
+    const focusable = drawerRef.current.querySelectorAll<HTMLElement>(
+      'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+    )
+    const first = focusable[0]
+    const last = focusable[focusable.length - 1]
+    if (!first || !last) return
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault()
+      last.focus()
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault()
+      first.focus()
+    }
+  }
+
   return (
     <>
       {/* Catches the click that means "I am done with this", which on a
@@ -310,7 +340,15 @@ function DevicePanel({
           Escape closes the drawer, and the drawer has its own ×, so
           nothing is lost by hiding this from the keyboard entirely. */}
       <div className="drawer-scrim" aria-hidden="true" onClick={onClose} />
-      <aside className="drawer" role="dialog" aria-label={device.label}>
+      <aside
+        className="drawer"
+        role="dialog"
+        aria-modal="true"
+        aria-label={device.label}
+        ref={drawerRef}
+        tabIndex={-1}
+        onKeyDown={trapFocus}
+      >
         <div className="page-head drawer-head">
           <div>
             <h2 style={{ marginBottom: 2 }}>{device.label}</h2>
@@ -330,7 +368,7 @@ function DevicePanel({
               title="Opens the connection again and re-reads what this device can do."
               onClick={onConnect}
             >
-              {busy ? 'Connecting…' : 'Connect'}
+              {busy ? 'Connecting…' : device.health === 'connected' ? 'Reconnect' : 'Connect'}
             </button>
             <button onClick={onEdit}>Edit</button>
             <ConfirmButton label="Remove" disabled={busy} onConfirm={onRemove} />
@@ -882,18 +920,30 @@ function NodeControls({ device, node }: { device: Device; node: DeviceNode }): R
                 ] as [ManualAction, string][]
               )
                 .filter(([action]) => node.supports.includes(action))
-                .map(([action, label]) => (
-                  <button
-                    key={action}
-                    className={action.startsWith('stop') ? 'danger' : ''}
-                    // A recording has to be called something, and greying
-                    // the button out says so better than an error does.
-                    disabled={busy !== undefined || (action === 'startRecording' && !filename)}
-                    onClick={() => drive(action)}
-                  >
-                    {busy === action ? 'Working…' : label}
-                  </button>
-                ))}
+                .map(([action, label]) =>
+                  // Stopping something a scheduled event is running is the
+                  // one click here that takes a service off air: asked twice.
+                  action.startsWith('stop') && device.inUseBy.length > 0 ? (
+                    <ConfirmButton
+                      key={action}
+                      label={busy === action ? 'Working…' : label}
+                      confirmLabel="Stop it mid-service?"
+                      disabled={busy !== undefined}
+                      onConfirm={() => drive(action)}
+                    />
+                  ) : (
+                    <button
+                      key={action}
+                      className={action.startsWith('stop') ? 'danger' : ''}
+                      // A recording has to be called something, and greying
+                      // the button out says so better than an error does.
+                      disabled={busy !== undefined || (action === 'startRecording' && !filename)}
+                      onClick={() => drive(action)}
+                    >
+                      {busy === action ? 'Working…' : label}
+                    </button>
+                  ),
+                )}
             </div>
 
             {readOnly ? null : (

@@ -357,12 +357,27 @@ function factsOf(app: Application, connection: Connection): DeviceFact[] {
     // in the value, because "ProRes422HQ" beside a device label reads as a
     // model number and "standard" reads as nothing at all.
     const quality = state.options?.quality?.current
-    if (quality !== undefined) add({ label: 'Quality', value: `${quality} quality` })
+    if (quality !== undefined)
+      add({ label: 'Quality', value: `${readableQuality(quality)} quality` })
   }
 
   // Always something, even for a device that reports nothing at all.
   add({ label: 'Type', value: pluginName(app, connection.pluginId) })
   return facts
+}
+
+/**
+ * A codec name the way a person would write it.
+ *
+ * Decks report them run together — "H.264Low", "QuickTimeProResHQ" — which
+ * on a status line reads as a typo.
+ */
+export function readableQuality(raw: string): string {
+  return raw
+    .replace(/^QuickTime(?=\S)/, 'QuickTime ')
+    .replace(/ProRes(?=[A-Z])/, 'ProRes ')
+    .replace(/^(H\.26[45])(?=[A-Za-z])/, '$1 ')
+    .replace(/DNx(HD|HR)(?=\d)/, 'DNx$1 ')
 }
 
 /** Cache states that mean "nothing is happening", and so are not worth a line. */

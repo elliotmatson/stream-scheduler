@@ -463,7 +463,12 @@ function Output({ output, now }: { output: DashboardOutput; now: number }): Reac
         aria-label={state}
       />
 
-      <div className="onair-name">{output.label}</div>
+      <div className="onair-name">
+        {output.label}
+        {/* Said in words as well as colour: a red dot is easy to miss,
+            and to some people it is not red. */}
+        {state === 'failed' ? <span className="pill bad">Failed</span> : null}
+      </div>
 
       <div className="onair-actions">
         {/* The address, not the word: "Watch" spelled out sat level with

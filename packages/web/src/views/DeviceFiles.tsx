@@ -125,6 +125,7 @@ export function DeviceFiles({
           <>
             {slots.length > 1 ? (
               <select
+                aria-label="Card"
                 value={String(slot ?? '')}
                 onChange={(event) => chooseSlot(Number(event.target.value))}
               >
@@ -137,6 +138,9 @@ export function DeviceFiles({
             ) : null}
             <button
               onClick={() => {
+                // Opened again, it starts at the recordings, not wherever it
+                // was left.
+                if (open) goTo(undefined)
                 setOpen((was) => !was)
                 setPicked(new Set())
                 setResult(undefined)
@@ -150,8 +154,43 @@ export function DeviceFiles({
 
       <ErrorBanner error={error ?? problem} />
 
-      {!open ? null : files.length === 0 ? (
-        <Empty>Nothing on this media.</Empty>
+      {/* Where this listing came from, and the way back out of it — shown
+          whatever is in the folder, so an empty one is not a dead end.
+          Only once the device has said: nothing here invents a path,
+          because the shape of them belongs to the device's own file
+          server and not to this screen. */}
+      {!open || here === undefined ? null : (
+        <div className="row" style={{ gap: 8, alignItems: 'center', marginBottom: 10 }}>
+          <button
+            disabled={busy || parent === undefined}
+            title={
+              parent === undefined
+                ? 'This is the top of what the device serves.'
+                : `Up to ${parent}`
+            }
+            onClick={() => goTo(parent)}
+          >
+            ↑ Up
+          </button>
+          <code className="muted" style={{ fontSize: 12, wordBreak: 'break-all' }}>
+            {here}
+          </code>
+          {path === undefined ? null : (
+            <button disabled={busy} onClick={() => goTo(undefined)}>
+              Back to the recordings
+            </button>
+          )}
+        </div>
+      )}
+
+      {!open ? null : data === undefined ? (
+        error ? null : (
+          <p className="muted">Reading the media…</p>
+        )
+      ) : files.length === 0 ? (
+        // An empty folder is not the end of the road: the row above still
+        // leads back out of it.
+        <Empty>{path === undefined ? 'Nothing on this media.' : 'This folder is empty.'}</Empty>
       ) : (
         <>
           {/* What is about to go, spelled out, before it goes. Ticking
@@ -217,34 +256,6 @@ export function DeviceFiles({
               <button onClick={() => setPicked(new Set())}>Clear selection</button>
             ) : null}
           </div>
-
-          {/* Where this listing came from, and the way back out of it.
-              Only shown once the device has said — nothing here invents a
-              path, because the shape of them belongs to the device's own
-              file server and not to this screen. */}
-          {here === undefined ? null : (
-            <div className="row" style={{ gap: 8, alignItems: 'center', marginBottom: 10 }}>
-              <button
-                disabled={busy || parent === undefined}
-                title={
-                  parent === undefined
-                    ? 'This is the top of what the device serves.'
-                    : `Up to ${parent}`
-                }
-                onClick={() => goTo(parent)}
-              >
-                ↑ Up
-              </button>
-              <code className="muted" style={{ fontSize: 12, wordBreak: 'break-all' }}>
-                {here}
-              </code>
-              {path === undefined ? null : (
-                <button disabled={busy} onClick={() => goTo(undefined)}>
-                  Back to the recordings
-                </button>
-              )}
-            </div>
-          )}
 
           <div className="table-wrap">
             <table>

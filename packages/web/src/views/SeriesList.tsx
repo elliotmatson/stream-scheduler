@@ -96,7 +96,7 @@ export function SeriesList(): ReactNode {
           />
         ) : null}
 
-        {(data ?? []).length === 0 && !adding ? (
+        {data !== undefined && data.length === 0 && !adding ? (
           <Card>
             <Empty>
               No events yet. An event is one service or programme, with the dates it falls on.
@@ -182,7 +182,13 @@ function SeriesCard({
             prepares {duration(series.prepareLeadMs)} early
           </span>
           <button onClick={onEdit}>Edit</button>
-          <ConfirmButton label="Remove" onConfirm={onRemove} />
+          <ConfirmButton
+            label="Remove"
+            confirmLabel={
+              series.rrule || series.planSourceId ? 'Remove it and every date?' : 'Remove it?'
+            }
+            onConfirm={onRemove}
+          />
         </div>
       </div>
 
