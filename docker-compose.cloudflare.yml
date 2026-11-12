@@ -55,10 +55,15 @@ services:
       SCHEDULER_UI_PASSWORD: '${SCHEDULER_UI_PASSWORD:?Access does not cover traffic that reaches the container directly, so set a password}'
 
   cloudflared:
-    image: cloudflare/cloudflared:latest
+    # Pinned, so an upgrade is something you chose. Cloudflare supports a
+    # release for about a year; move this forward when you update the app.
+    image: cloudflare/cloudflared:2026.10.7
     restart: unless-stopped
     command: tunnel --no-autoupdate run
     environment:
       TUNNEL_TOKEN: '${TUNNEL_TOKEN:?create a tunnel in the Cloudflare dashboard and put its token here}'
     depends_on:
-      - scheduler
+      # Not before the app answers, so the tunnel does not serve 502s while
+      # it starts.
+      scheduler:
+        condition: service_healthy
