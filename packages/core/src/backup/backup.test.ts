@@ -177,6 +177,30 @@ describe('taking a backup', () => {
 })
 
 describe('restoring one', () => {
+  it('restores only the file that was looked at', async () => {
+    const source = freshDir()
+    const { server: from } = await install(source)
+    await populate(from)
+    const shown = (await from.inject({ method: 'GET', url: '/api/backup' })).rawPayload
+    const swapped = Buffer.concat([shown, Buffer.from('tampered')])
+
+    const { server: to } = await install(freshDir())
+    const look = await to.inject({
+      method: 'POST',
+      url: '/api/restore/inspect',
+      headers: { 'content-type': 'application/octet-stream' },
+      payload: shown,
+    })
+    const staged = await to.inject({
+      method: 'POST',
+      url: '/api/restore',
+      headers: { 'content-type': 'application/octet-stream', 'x-confirm': json(look).confirm },
+      payload: swapped,
+    })
+    expect(staged.statusCode).toBe(409)
+    expect(json(staged).error).toMatch(/not the file that was looked at/)
+  })
+
   it('brings back the schedule, the devices and a key that still decrypts', async () => {
     // The whole point of the issue: a round trip, into an empty install.
     const source = freshDir()

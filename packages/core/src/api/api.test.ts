@@ -293,6 +293,75 @@ describe('in the middle of a service', () => {
   })
 })
 
+describe('deleting what holds a secret', () => {
+  const secretCount = () =>
+    (app.db.prepare('SELECT COUNT(*) AS n FROM secret').get() as { n: number }).n
+
+  it('takes a stream key out of the vault when it is deleted', async () => {
+    const before = secretCount()
+    const created = await post('/api/credentials', {
+      label: 'Spare',
+      ingestUrl: 'rtmp://example.test/live',
+      key: 'live_spare-key',
+    })
+    expect(secretCount()).toBe(before + 1)
+    expect((await del(`/api/credentials/${created.json.id}`)).status).toBe(200)
+    expect(secretCount()).toBe(before)
+  })
+
+  it('takes a device password out of the vault when it is replaced or the device deleted', async () => {
+    const before = secretCount()
+    const device = await post('/api/devices', {
+      pluginId: 'mock',
+      label: 'Spare encoder',
+      config: { kind: 'encoder', password: 'first-password' },
+    })
+    expect(secretCount()).toBe(before + 1)
+
+    await patch(`/api/devices/${device.json.id}`, {
+      config: { kind: 'encoder', password: 'second-password' },
+    })
+    expect(secretCount()).toBe(before + 1)
+
+    await del(`/api/devices/${device.json.id}`)
+    expect(secretCount()).toBe(before)
+  })
+
+  it('removes an OAuth client and its secret, unless an account still uses it', async () => {
+    app.destinations.register({
+      id: 'yt-test',
+      displayName: 'Test service',
+      apiVersion: '1',
+      configSchema: [],
+      providesIngest: true,
+      createDestination: async () => {
+        throw new Error('not used')
+      },
+    })
+    const before = secretCount()
+    const client = await post('/api/oauth/clients', {
+      provider: 'yt-test',
+      label: 'Church project',
+      clientId: 'id.apps.googleusercontent.com',
+      clientSecret: 'client-secret',
+    })
+    app.db
+      .prepare(
+        `INSERT INTO account (id, provider, external_id, display_name, secret_ref, oauth_client_ref, scopes, created_at)
+         VALUES ('acct', 'yt-test', 'chan', 'Grace Worship', 'ref', ?, '[]', 0)`,
+      )
+      .run(client.json.id)
+
+    const refused = await del(`/api/oauth/clients/${client.json.id}`)
+    expect(refused.status).toBe(409)
+    expect(refused.json.error).toContain('Grace Worship')
+
+    app.db.prepare("DELETE FROM account WHERE id = 'acct'").run()
+    expect((await del(`/api/oauth/clients/${client.json.id}`)).status).toBe(200)
+    expect(secretCount()).toBe(before)
+  })
+})
+
 describe('scheduling a date again', () => {
   async function firstOccurrence(): Promise<string> {
     await seedEverything()
