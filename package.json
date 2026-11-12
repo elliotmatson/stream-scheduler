@@ -20,6 +20,7 @@
     "ui-check": "node scripts/ui-check.mjs"
   },
   "devDependencies": {
+    "@axe-core/playwright": "^4.14.0",
     "@types/node": "^22.10.2",
     "dependency-cruiser": "^16.9.0",
     "eslint": "^9.17.0",

@@ -23,8 +23,9 @@
  */
 import { mkdirSync } from 'node:fs'
 import { join } from 'node:path'
+import AxeBuilder from '@axe-core/playwright'
 import { chromium } from 'playwright'
-import { reporter, seed, startHost, startSomething, waitForHealth } from './lib/harness.mjs'
+import { apiAt, reporter, seed, startHost, startSomething, waitForHealth } from './lib/harness.mjs'
 
 const PORT = Number(process.env.UI_CHECK_PORT ?? 8598)
 /** A browser Playwright did not install itself — a system Chromium, or one
@@ -94,6 +95,11 @@ async function main() {
       ['file browser', () => theFileBrowser(browser, host.base)],
       ['device list', () => theDeviceList(browser, host.base)],
       ['phone', () => nothingOverflowsOnAPhone(browser, host.base)],
+      ['one date', () => oneDateOfAnEvent(browser, host.base, ids.sundayId)],
+      ['create, skip, delete', () => makeSkipAndRemoveAnEvent(browser, host.base)],
+      ['accessibility', () => nothingAxeCallsSerious(browser, host.base)],
+      // Last: it sets a password, and every section after it would need one.
+      ['sign-in', () => signingIn(browser, host.base)],
     ]) {
       try {
         await run()
@@ -541,6 +547,213 @@ async function theFileBrowser(browser, base) {
   if (inside !== `/${cardName}`) await shoot(page, 'files-folder-did-not-open')
 
   check('files: no console errors', problems.length === 0, problems.slice(0, 3).join(' | '))
+  await context.close()
+}
+
+/**
+ * One date of a repeating event, and changing only that one.
+ *
+ * The bug this page exists to prevent: sending every box on save pinned
+ * the untouched templates to today's values, and later changes to the
+ * event then never reached this date. So the check is on what the server
+ * kept, not on what the page shows.
+ */
+async function oneDateOfAnEvent(browser, base, seriesId) {
+  const context = await browser.newContext()
+  const page = await context.newPage()
+  const problems = []
+  watch(page, problems, 'one date')
+
+  const from = Date.now()
+  const occurrences = await apiAt(
+    base,
+    'GET',
+    `/api/occurrences?from=${from}&to=${from + 60 * 86_400_000}`,
+  )
+  const one = occurrences.find((o) => o.seriesId === seriesId && o.status === 'pending')
+  check('there is a Sunday to open', Boolean(one))
+  if (!one) return
+
+  await page.goto(`${base}/#/occurrences/${one.id}`)
+  await page.locator('h1', { hasText: 'Sunday // Anderson' }).waitFor({ timeout: TIMEOUT })
+  check('the date opens on its own page', true)
+
+  const outputs = page.locator('.card', { has: page.locator('h2:text-is("What goes out")') })
+  await outputs.waitFor({ timeout: TIMEOUT })
+  const listed = await outputs.innerText()
+  check(
+    'it lists what goes out that morning',
+    listed.includes('9:00') && listed.includes('Archive'),
+    listed.slice(0, 120),
+  )
+
+  const called = page
+    .locator('label.field', { has: page.locator('span.field-label:text-is("Called")') })
+    .locator('input')
+  await called.fill('Easter Sunday')
+  await page.getByRole('button', { name: 'Save just this one' }).click()
+  await page.locator('h1', { hasText: 'Easter Sunday' }).waitFor({ timeout: TIMEOUT })
+  check('a rename shows straight away', true)
+
+  const saved = await apiAt(base, 'GET', `/api/occurrences/${one.id}`)
+  check('the new name is kept', saved.overrides.label === 'Easter Sunday')
+  check(
+    'and nothing else was pinned to this date',
+    saved.overrides.templates === undefined,
+    JSON.stringify(saved.overrides),
+  )
+
+  check('one date: no console errors', problems.length === 0, problems.slice(0, 3).join(' | '))
+  if (problems.length > 0) await shoot(page, 'one-date')
+  await context.close()
+}
+
+/**
+ * The whole of an event's life, through the page rather than the API.
+ *
+ * Everything else here looks; this is the one place that changes things,
+ * on the throwaway instance the check runs against. It makes an event with
+ * its stream in one go, skips its date, and removes it.
+ */
+async function makeSkipAndRemoveAnEvent(browser, base) {
+  const NAME = 'UI check event'
+  const context = await browser.newContext()
+  const page = await context.newPage()
+  const problems = []
+  watch(page, problems, 'create')
+  const field = (label) =>
+    page.locator('label.field', { has: page.locator(`span.field-label:text-is("${label}")`) })
+
+  await page.goto(`${base}/#/events`)
+  await page.getByRole('button', { name: 'Add an event' }).click()
+  await field('Name').first().locator('input').fill(NAME)
+
+  // The stream goes in before the event exists.
+  await page.getByRole('button', { name: 'Add a stream' }).click()
+  await field('Name').last().locator('input').fill('Main')
+  await field('Streams to').locator('select').selectOption({ index: 1 })
+  await field('Runs on').locator('select').selectOption({ index: 1 })
+  await page.getByRole('button', { name: 'Add', exact: true }).click()
+
+  const create = page.getByRole('button', { name: 'Create with 1 output' })
+  await create.waitFor({ timeout: TIMEOUT })
+  check('Create says what it is about to make', true)
+  await create.click()
+
+  const card = page.locator('.card', { has: page.locator('h2', { hasText: NAME }) })
+  await card.first().waitFor({ timeout: TIMEOUT })
+  const series = (await apiAt(base, 'GET', '/api/series')).find((s) => s.label === NAME)
+  const outputs = series ? await apiAt(base, 'GET', `/api/series/${series.id}/outputs`) : []
+  const outputList = Array.isArray(outputs) ? outputs : (outputs.outputs ?? [])
+  check('the event and its stream were made together', outputList.length === 1)
+  if (!series) return
+
+  // Skipping its one date, from the schedule's list.
+  await page.goto(`${base}/#/schedule`)
+  await page.getByRole('button', { name: 'List', exact: true }).click()
+  const row = page.locator('tr', { hasText: NAME }).first()
+  await row.waitFor({ timeout: TIMEOUT })
+  await row.getByRole('button', { name: 'Skip', exact: true }).click()
+  await row
+    .getByRole('button', { name: 'Skip', exact: true })
+    .waitFor({ state: 'detached', timeout: TIMEOUT })
+  const from = Date.now() - 86_400_000
+  const dates = await apiAt(
+    base,
+    'GET',
+    `/api/occurrences?from=${from}&to=${from + 40 * 86_400_000}`,
+  )
+  const mine = dates.filter((o) => o.seriesId === series.id)
+  check(
+    'skipping leaves that date skipped',
+    mine.length > 0 && mine.every((o) => o.status === 'skipped'),
+    mine.map((o) => o.status).join(', '),
+  )
+
+  // And removing it, which asks first.
+  await page.goto(`${base}/#/events`)
+  const remove = card.first().getByRole('button', { name: 'Remove' })
+  await remove.click()
+  await card
+    .first()
+    .getByRole('button', { name: /^Remove it/ })
+    .click()
+  await card.first().waitFor({ state: 'detached', timeout: TIMEOUT })
+  const left = (await apiAt(base, 'GET', '/api/series')).some((s) => s.label === NAME)
+  check('removing it removes it', !left)
+
+  check('create: no console errors', problems.length === 0, problems.slice(0, 3).join(' | '))
+  if (problems.length > 0) await shoot(page, 'create-skip-remove')
+  await context.close()
+}
+
+/**
+ * Every screen through axe, in both themes.
+ *
+ * Only what axe calls serious or critical fails the check: missing names
+ * on controls, contrast too low to read, and the like. Each failure names
+ * the rule and the first element, so it can be found without rerunning.
+ */
+async function nothingAxeCallsSerious(browser, base) {
+  for (const theme of ['light', 'dark']) {
+    const context = await browser.newContext({
+      viewport: { width: 1280, height: 900 },
+      colorScheme: theme,
+      // A link fading between colours on a route change reads as low
+      // contrast to axe. Reduced motion makes the fade instant.
+      reducedMotion: 'reduce',
+    })
+    const page = await context.newPage()
+    for (const screen of SCREENS) {
+      await page.goto(`${base}/#${screen.route}`)
+      await page.locator(screen.sees).first().waitFor({ timeout: TIMEOUT })
+      const { violations } = await new AxeBuilder({ page })
+        .withTags(['wcag2a', 'wcag2aa'])
+        .analyze()
+      const serious = violations.filter((v) => ['serious', 'critical'].includes(v.impact))
+      check(
+        `${screen.name} passes axe in ${theme}`,
+        serious.length === 0,
+        serious
+          .map((v) => `${v.id} (${v.nodes.length}): ${v.nodes[0]?.target.join(' ')}`)
+          .join(' | '),
+      )
+      if (serious.length > 0) await shoot(page, `axe-${screen.name}-${theme}`)
+    }
+    await context.close()
+  }
+}
+
+/**
+ * The sign-in screen, once a password is set.
+ *
+ * A wrong password has to say so, and the right one has to land on the
+ * app — the only screen nobody can work around if it breaks.
+ */
+async function signingIn(browser, base) {
+  const PASSWORD = 'ui-check-password'
+  await apiAt(base, 'POST', '/api/password', { password: PASSWORD })
+
+  const context = await browser.newContext({ reducedMotion: 'reduce' })
+  const page = await context.newPage()
+  await page.goto(`${base}/#/`)
+  const password = page.locator('input[type="password"]')
+  await password.waitFor({ timeout: TIMEOUT })
+  check('a password shows the sign-in screen', true)
+
+  const { violations } = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa']).analyze()
+  const serious = violations.filter((v) => ['serious', 'critical'].includes(v.impact))
+  check('the sign-in screen passes axe', serious.length === 0, serious.map((v) => v.id).join(', '))
+
+  await password.fill('not-the-password')
+  await page.getByRole('button', { name: 'Sign in' }).click()
+  await page.getByRole('alert').waitFor({ timeout: TIMEOUT })
+  check('a wrong password says so', true)
+
+  await password.fill(PASSWORD)
+  await page.getByRole('button', { name: 'Sign in' }).click()
+  await page.locator('h1:text-is("Now")').waitFor({ timeout: TIMEOUT })
+  check('the right one lands on the app', true)
   await context.close()
 }
 
