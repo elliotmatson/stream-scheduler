@@ -720,7 +720,39 @@ export class RunEngine {
     } else {
       for (const entry of neverAired) await compensateOutput(run.id, plan, entry.output.id, deps)
     }
-    return aired.map((entry) => entry.output.label)
+
+    // Outputs switched off or deleted while the run was going are not in
+    // the plan any more, but what they made still exists. The planner
+    // rebuilds enough of their steps from the committed rows to undo it.
+    const removedLeftOnAir = await this.cleanUpRemovedOutputs(run, plan)
+    return [...aired.map((entry) => entry.output.label), ...removedLeftOnAir]
+  }
+
+  /**
+   * Undoes what outputs that have left the event made, unless they aired.
+   * Returns the labels of any that did air, which are left alone.
+   */
+  private async cleanUpRemovedOutputs(run: RunRecord, plan: RunPlan): Promise<string[]> {
+    const known = new Set(plan.map((step) => step.kind))
+    const removed = this.deps.store.steps(run.id).filter((record) => !known.has(record.kind))
+    if (removed.length === 0 || !this.deps.planner.orphans) return []
+
+    const orphans = this.deps.planner.orphans(removed)
+    const full = [...plan, ...orphans]
+    const outputIds = [
+      ...new Set(orphans.map((step) => step.outputId).filter((id) => id !== undefined)),
+    ]
+    const leftOnAir: string[] = []
+    for (const outputId of outputIds) {
+      if (this.aired(run.id, full, outputId)) {
+        const label = orphans.find((step) => step.outputId === outputId)?.label
+        leftOnAir.push(label?.split(':')[0] ?? 'an output that was removed')
+        continue
+      }
+      await compensateOutput(run.id, full, outputId, this.executorDeps(run.id))
+      this.logger.info('cleaned up after an output removed mid-run', { runId: run.id, outputId })
+    }
+    return leftOnAir
   }
 
   private logIfFailed(

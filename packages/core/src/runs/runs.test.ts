@@ -272,6 +272,25 @@ function plannerFor(world: FakeBroadcastService, options: PlanOptions = {}): Run
       }
       return steps
     },
+    // Like the real planner: a removed output's prepare can still be undone,
+    // because the broadcast it made is found by the key it was made with.
+    orphans(records) {
+      return records
+        .filter((record) => record.kind.endsWith('.prepare'))
+        .map((record) => ({
+          kind: record.kind,
+          phase: 'prepare' as const,
+          outputId: record.kind.slice(0, -'.prepare'.length),
+          label: record.label ?? record.kind,
+          async execute() {
+            throw new Error('removed')
+          },
+          async compensate(ctx) {
+            const id = world.findByTag(ctx.idempotencyKey)
+            if (id) world.delete(id)
+          },
+        }))
+    },
   }
 }
 
@@ -1089,9 +1108,9 @@ describe('winding a run down', () => {
     // The recorder that was rolling is named and was not touched.
     expect(failure.remediation).toMatch(/Archive/)
     expect(world.log).not.toContain('stop Archive')
-    // The 11:00 never aired, so its broadcast is undone. The 9:00 output
-    // is gone from the event, and so is any way of undoing what it made.
-    expect(world.liveCount).toBe(1)
+    // Neither service aired, so neither broadcast is left on the channel —
+    // including the 9:00's, though that output is no longer in the event.
+    expect(world.liveCount).toBe(0)
   })
 })
 
