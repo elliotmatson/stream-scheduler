@@ -98,15 +98,15 @@ export async function createServer(options: ServerOptions): Promise<FastifyInsta
   // screen, which is what `setExposed` is for.
   app.setExposed(!isLoopback(host))
   if (!isLoopback(host) && !app.auth.required) {
-    if (app.authProxy) {
+    if (app.trustedNetwork) {
       // Said out loud at every start, because it is the one line that
       // explains why this install has no lock of its own. Somebody reading
       // the log after moving the container should find the assumption
-      // written down rather than having to infer it.
+      // written down rather than having to infer it from a silence.
       app.logger.info(
-        `Listening on ${host} with no password, trusting something in front of ` +
-          `it to sign people in (SCHEDULER_AUTH_PROXY). Anything that reaches ` +
-          `this port directly, bypassing that, is unauthenticated.`,
+        `Listening on ${host} with no password, because SCHEDULER_TRUSTED_NETWORK ` +
+          `says whatever can reach this port is already trusted. Anything that ` +
+          `can open this address is in.`,
       )
     } else {
       app.logger.warn(

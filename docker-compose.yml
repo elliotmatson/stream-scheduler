@@ -30,15 +30,15 @@ services:
       # change it in Settings afterwards and it will stick. Leaving this
       # here does not undo that.
       # SCHEDULER_UI_PASSWORD: change-me
-      # Set this only when something in front of this app already signs
-      # people in — Cloudflare Access, an authenticating reverse proxy, a
-      # VPN that terminates elsewhere. It switches off the "no password and
-      # reachable from the network" warning, which is correct there and
-      # wrong everywhere else: nothing about it adds a lock, it only stops
-      # the app insisting on one. Anything that reaches this port without
-      # passing through that proxy is unauthenticated, so do not publish
-      # the port widely as well.
-      # SCHEDULER_AUTH_PROXY: "true"
+      # Say that whatever can reach this port is already trusted, so the
+      # app stops warning that it has no password. Two quite different
+      # installs want this: one on a church LAN with no route in from
+      # outside, and one behind something that signs people in first, such
+      # as Cloudflare Access. It adds no protection in either case — it
+      # only stops the app insisting on a lock of its own, so set it
+      # because you have checked what can reach this address, not to quiet
+      # the warning.
+      # SCHEDULER_TRUSTED_NETWORK: "true"
       # Where scheduled backups are written, inside the container. What it
       # is worth depends on where the volume below actually lives.
       SCHEDULER_BACKUP_DIR: /backups

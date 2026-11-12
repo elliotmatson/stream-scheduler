@@ -528,11 +528,12 @@ function attention(app: Application, now: number): DashboardAttention[] {
 
   // Only where it is actually a problem: a booth machine on loopback with
   // no password is a reasonable way to run this, and nagging about it there
-  // would teach people to ignore this list. The same goes for an install
-  // behind something that signs people in before they ever reach it — the
-  // operator has said so, and a permanent warning they cannot act on is
-  // how a list like this stops being read.
-  if (app.exposed && !app.auth.required && !app.authProxy) {
+  // would teach people to ignore this list. The same goes for one whose
+  // operator has said the network it answers on is already trusted —
+  // a closed LAN, or something that signs people in before they ever
+  // reach it. A permanent warning nobody can act on is how a list like
+  // this stops being read at all.
+  if (app.exposed && !app.auth.required && !app.trustedNetwork) {
     items.push({
       kind: 'security',
       message:

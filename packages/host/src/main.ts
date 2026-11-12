@@ -21,9 +21,9 @@ export async function startHost(): Promise<{ stop: () => Promise<void>; url: str
     // startup for anything wider.
     uiPassword: process.env.SCHEDULER_UI_PASSWORD,
     // Read every start rather than stored: it describes where the
-    // container sits, and moving it out from behind that proxy has to
-    // bring the warning back.
-    authProxy: isTruthy(process.env.SCHEDULER_AUTH_PROXY),
+    // container sits, and moving it somewhere less trusted has to bring
+    // the warning back by itself.
+    trustedNetwork: isTruthy(process.env.SCHEDULER_TRUSTED_NETWORK),
     ...(process.env.SCHEDULER_LOG_LEVEL
       ? { logLevel: process.env.SCHEDULER_LOG_LEVEL as LogLevel }
       : {}),

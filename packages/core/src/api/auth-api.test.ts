@@ -27,7 +27,7 @@ let app: Application
 let server: FastifyInstance
 
 async function boot(
-  options: { uiPassword?: string; authProxy?: boolean; host?: string } = {},
+  options: { uiPassword?: string; trustedNetwork?: boolean; host?: string } = {},
 ): Promise<void> {
   dir = mkdtempSync(join(tmpdir(), 'scheduler-auth-api-'))
   clock = new ManualClock(Date.parse('2026-03-08T14:00:00Z'))
@@ -37,7 +37,7 @@ async function boot(
     logger: silentLogger,
     plugins: [mockPlugin({ now: () => clock.now() })],
     ...(options.uiPassword === undefined ? {} : { uiPassword: options.uiPassword }),
-    ...(options.authProxy === undefined ? {} : { authProxy: options.authProxy }),
+    ...(options.trustedNetwork === undefined ? {} : { trustedNetwork: options.trustedNetwork }),
   })
   server = await createServer({
     app,
@@ -272,40 +272,40 @@ describe('with the password set by the environment', () => {
   })
 })
 
-describe('an install behind something that signs people in', () => {
+describe('an install told its network is already trusted', () => {
   const securityItems = (): unknown[] =>
     buildDashboard(app).attention.filter((item) => item.kind === 'security')
 
   it('stops warning that it has no password', async () => {
-    // The warning is right for a bare port and wrong behind Cloudflare
-    // Access, and a permanent warning nobody can act on is how a security
-    // list stops being read at all.
-    await boot({ authProxy: true, host: '0.0.0.0' })
+    // The warning is right for a port somebody left open and wrong for a
+    // closed LAN or an install behind Cloudflare Access. A permanent
+    // warning nobody can act on is how a security list stops being read.
+    await boot({ trustedNetwork: true, host: '0.0.0.0' })
     expect(securityItems()).toHaveLength(0)
   })
 
-  it('still warns when nothing was said about a proxy', async () => {
+  it('still warns when nothing was said at all', async () => {
     await boot({ host: '0.0.0.0' })
     expect(securityItems()).toHaveLength(1)
   })
 
   it('tells the UI, so the missing password can be explained', async () => {
-    await boot({ authProxy: true })
+    await boot({ trustedNetwork: true })
     const response = await server.inject({ method: 'GET', url: '/api/session' })
-    expect(response.json()).toMatchObject({ required: false, authProxy: true })
+    expect(response.json()).toMatchObject({ required: false, trustedNetwork: true })
   })
 
   it('is off unless it was asked for', async () => {
     await boot()
-    expect(app.authProxy).toBe(false)
+    expect(app.trustedNetwork).toBe(false)
     const response = await server.inject({ method: 'GET', url: '/api/session' })
-    expect(response.json()).toMatchObject({ authProxy: false })
+    expect(response.json()).toMatchObject({ trustedNetwork: false })
   })
 
   it('does not disable a password that is set', async () => {
     // The two are not exclusive. Somebody who wants both locks keeps both,
-    // and trusting a proxy must never unlock an install that has its own.
-    await boot({ authProxy: true, uiPassword: PASSWORD })
+    // and trusting the network must never unlock an install that has one.
+    await boot({ trustedNetwork: true, uiPassword: PASSWORD })
     const refused = await server.inject({ method: 'GET', url: '/api/devices' })
     expect(refused.statusCode).toBe(401)
   })

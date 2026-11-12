@@ -37,8 +37,9 @@
 #
 # So this file refuses to start without SCHEDULER_UI_PASSWORD. If you mean
 # to run with no password anyway, use the base docker-compose.yml with
-# SCHEDULER_AUTH_PROXY=true instead — that is the deliberate way to say the
-# lock is Access's job, and it adds nothing but silence. Turning the
+# SCHEDULER_TRUSTED_NETWORK=true instead — the deliberate way to say you
+# have checked what can reach this port, and a setting that adds nothing
+# but silence. Turning the
 # app's own password off is safe only when you are certain nothing can reach
 # the container except through Cloudflare, and on a machine that also runs
 # your production gear that is a strong claim to make.

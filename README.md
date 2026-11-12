@@ -222,17 +222,30 @@ The app does not verify Access's JWT. If it did, the password could come off
 honestly; until then two sign-ins is the price of not leaving a hole behind
 the one you can see.
 
-**If you take it off anyway**, set `SCHEDULER_AUTH_PROXY=true` and use the
-base `docker-compose.yml` rather than the overlay, which will not start
-without a password. That variable adds no protection whatsoever — it only
-tells the app that the lock is somebody else's job, so it stops warning
-that it has none and the status screen stops flagging it. Everything above
-still applies: publish no ports, keep the container off any network that
-other people's containers share, and understand that the tunnel is then the
-only thing between the app and whoever finds it.
+**If you take it off anyway**, set `SCHEDULER_TRUSTED_NETWORK=true` and use
+the base `docker-compose.yml` rather than the overlay, which will not start
+without a password. Everything above still applies: publish no ports, keep
+the container off any network that other people's containers share, and
+understand that the tunnel is then the only thing between the app and
+whoever finds it.
+
+### Running it without a password
+
+A password is optional and off until you set one, and there are two honest
+reasons to leave it that way: the app is on a network with no route in from
+outside, or something in front of it signs people in before they ever reach
+it. In both, the app's warning that it is "reachable from the network with
+no password" is true of the port and wrong about the situation — and a
+warning nobody can act on is how people learn to ignore warnings.
+
+`SCHEDULER_TRUSTED_NETWORK=true` says you have made that call. It **adds no
+protection at all**. It does not disable anything, it does not remove a
+password you have set, and it does not make the port any harder to reach —
+it only stops the app insisting on a lock of its own, so set it because you
+have checked what can reach this address rather than to quiet the message.
 
 It is read fresh at every start rather than stored, so moving the container
-out from behind the proxy brings the warnings back by itself.
+somewhere you trust less brings the warnings back by itself.
 
 ### Backups
 
@@ -253,15 +266,15 @@ empty ever since.
 
 ## Configuration
 
-| Variable                | Default      | Meaning                                                                                             |
-| ----------------------- | ------------ | --------------------------------------------------------------------------------------------------- |
-| `SCHEDULER_CONFIG_DIR`  | per-platform | Database, logs, master key                                                                          |
-| `SCHEDULER_SECRET`      | —            | Derives the master key when no keychain or key file is available                                    |
-| `SCHEDULER_HOST`        | `127.0.0.1`  | Listen address. Anything but loopback with no password set logs a warning                           |
-| `SCHEDULER_PORT`        | `8500`       | Listen port                                                                                         |
-| `SCHEDULER_UI_PASSWORD` | —            | Sets the first password on a new install. Read once, then the app owns it                           |
-| `SCHEDULER_AUTH_PROXY`  | `false`      | Says a proxy in front already signs people in. Silences the no-password warning; adds no protection |
-| `SCHEDULER_LOG_LEVEL`   | `info`       | `debug`, `info`, `warn`, `error`                                                                    |
+| Variable                    | Default      | Meaning                                                                                                    |
+| --------------------------- | ------------ | ---------------------------------------------------------------------------------------------------------- |
+| `SCHEDULER_CONFIG_DIR`      | per-platform | Database, logs, master key                                                                                 |
+| `SCHEDULER_SECRET`          | —            | Derives the master key when no keychain or key file is available                                           |
+| `SCHEDULER_HOST`            | `127.0.0.1`  | Listen address. Anything but loopback with no password set logs a warning                                  |
+| `SCHEDULER_PORT`            | `8500`       | Listen port                                                                                                |
+| `SCHEDULER_UI_PASSWORD`     | —            | Sets the first password on a new install. Read once, then the app owns it                                  |
+| `SCHEDULER_TRUSTED_NETWORK` | `false`      | Says whatever can reach this port is already trusted. Silences the no-password warning; adds no protection |
+| `SCHEDULER_LOG_LEVEL`       | `info`       | `debug`, `info`, `warn`, `error`                                                                           |
 
 ## Connecting YouTube
 
