@@ -301,7 +301,10 @@ class AtemDevice {
             })
             return files.map((file) => ({
               name: file.name,
-              bytes: file.size,
+              // A folder's reported size describes the directory entry,
+              // not the take inside it, so it is left off rather than
+              // shown as a recording that is four kilobytes long.
+              ...(file.isDirectory ? { isFolder: true } : { bytes: file.size }),
               ...(file.modifiedAt === undefined ? {} : { recordedAt: file.modifiedAt }),
             }))
           } finally {
@@ -319,7 +322,14 @@ class AtemDevice {
           const session = await this.connectFtp({ host: this.host })
           try {
             const directory = await this.mediaDirectoryFor(session)
-            await session.remove(ftpPath(directory, name))
+            // Asked rather than assumed: in ISO mode the recording is a
+            // folder, and DELE on a directory is refused by every server.
+            // Which verb to use is a property of the thing being removed,
+            // and the listing is the only place that says.
+            const target = (await session.list(directory)).find((file) => file.name === name)
+            const path = ftpPath(directory, name)
+            if (target?.isDirectory) await session.removeDirectory(path)
+            else await session.remove(path)
             const left = await session.list(directory)
             if (left.some((file) => file.name === name)) {
               throw new DeviceError(

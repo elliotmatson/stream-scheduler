@@ -152,6 +152,56 @@ describe('ConnectionManager', () => {
     await manager.closeAll()
   })
 
+  it('reconnects a device that reports its connection has dropped', async () => {
+    const id = addDevice({ fault: 'drops-the-connection' })
+    const manager = managerFor()
+
+    // It connects, because that is what the deck does: the socket is good
+    // right up until it is not.
+    await manager.open(id)
+    expect(manager.get(id)).toBeDefined()
+
+    // The drop is reported rather than thrown, which is the whole point —
+    // nothing here fails, the device simply stops being connected.
+    await manager.tick()
+    expect(manager.get(id)).toBeUndefined()
+    const row = db.prepare('SELECT health, last_error FROM device WHERE id = ?').get(id) as {
+      health: string
+      last_error: string
+    }
+    expect(row.health).toBe('disconnected')
+    expect(row.last_error).toMatch(/closed the connection/)
+
+    // And it comes back on its own, which it did not before: the deck sat
+    // dead until somebody reconnected it by hand.
+    db.prepare('UPDATE device SET config = ? WHERE id = ?').run(
+      JSON.stringify({ fault: 'none' }),
+      id,
+    )
+    clock.advance(60_000)
+    await manager.tick()
+    expect(manager.get(id)?.capabilities.model).toBe('Mock both')
+    await manager.closeAll()
+  })
+
+  it('does not drop a connection merely because the device is degraded', async () => {
+    const id = addDevice()
+    const manager = managerFor()
+    const connection = await manager.open(id)
+    // Degraded is a device that is working and unhappy — a deck with a full
+    // card still takes commands. Reconnecting it would lose a good socket.
+    connection.device.health = async () => ({
+      state: 'degraded' as const,
+      message: 'Card nearly full.',
+      since: 0,
+    })
+
+    await manager.tick()
+
+    expect(manager.get(id)).toBe(connection)
+    await manager.closeAll()
+  })
+
   it('leaves disabled devices alone', async () => {
     addDevice({}, { enabled: false })
     const manager = managerFor()

@@ -1,4 +1,12 @@
-import { existsSync, mkdirSync, readdirSync, rmSync, statSync } from 'node:fs'
+import {
+  accessSync,
+  constants,
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  rmSync,
+  statSync,
+} from 'node:fs'
 import { join } from 'node:path'
 import type { Db } from '../db/index.js'
 import type { Paths } from '../config/paths.js'
@@ -132,6 +140,7 @@ export function takeScheduledBackup(
   // and on Docker the mount point exists but the app's own subdirectory
   // under it may not.
   mkdirSync(directory, { recursive: true })
+  assertWritable(directory)
 
   const file = join(directory, backupFileName(now))
   writeBackup(db, file, { now, envSaltFile: join(paths.configDir, 'master.salt') })
@@ -170,6 +179,30 @@ export function recordFailure(db: Db, at: number, message: string): void {
   // cadence away rather than five seconds away.
   putSetting(db, BACKUP_LAST_AT_KEY, String(at))
   putSetting(db, BACKUP_LAST_ERROR_KEY, message)
+}
+
+/**
+ * Says why the directory is unusable, before SQLite says it worse.
+ *
+ * Writing into a directory this process cannot write to fails inside
+ * better-sqlite3, which reports `unable to open database: /backups/...`.
+ * That is true and useless: handed to somebody in an alert it reads like a
+ * corrupt file, when the cause is almost always ownership rather than a
+ * missing mount. Docker creates a named volume's mountpoint owned by root
+ * and this process is not root, so the directory is present, the disk is
+ * empty, and every write is denied.
+ */
+function assertWritable(directory: string): void {
+  try {
+    accessSync(directory, constants.W_OK)
+  } catch {
+    const uid = process.getuid?.()
+    throw new Error(
+      `${directory} is not writable by the user the scheduler runs as` +
+        (uid === undefined ? '' : ` (uid ${uid})`) +
+        '. A directory mounted there is owned by root unless something created it first.',
+    )
+  }
 }
 
 /** Only this app's own backups. Anything else in the directory is somebody

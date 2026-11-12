@@ -71,6 +71,16 @@ export interface MediaItem {
   /** Only where the device reports one. A HyperDeck does not. */
   bytes?: number
   recordedAt?: number
+  /**
+   * True where the recording is a folder rather than a single file.
+   *
+   * An ATEM recording in ISO mode is a directory per take: the programme
+   * file, one file per input, and the project that ties them together.
+   * The size a server reports for a directory is the size of the
+   * directory entry and not of the recording, so a folder carries no
+   * `bytes` — a blank is honest where 128 kB against a 28 GB take is not.
+   */
+  isFolder?: boolean
 }
 
 /** One card, disk or slot a recorder can write to. */

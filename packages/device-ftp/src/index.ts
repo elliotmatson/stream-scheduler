@@ -40,13 +40,35 @@ export interface RemoteEntry extends RemoteFile {
 
 /** One conversation with a device's file server. */
 export interface FtpSession {
-  /** Files in a directory. Sub-directories are not media. */
-  list(directory: string): Promise<RemoteFile[]>
-  /** Everything in a directory, directories included. */
+  /**
+   * The media in a directory: recordings, whether each is one file or a
+   * folder of them, and nothing the card keeps for its own purposes.
+   */
+  list(directory: string): Promise<RemoteEntry[]>
+  /** Everything in a directory, exactly as the server listed it. */
   entries(directory: string): Promise<RemoteEntry[]>
   /** Removes one file. Throws if the server refuses. */
   remove(path: string): Promise<void>
+  /** Removes a directory and everything inside it. */
+  removeDirectory(path: string): Promise<void>
   close(): Promise<void>
+}
+
+/**
+ * Whether an entry is the card's business rather than a recording.
+ *
+ * Every card that has ever been plugged into a Mac carries its
+ * housekeeping: `.Spotlight-V100`, `.fseventsd`, and an AppleDouble
+ * sidecar for each file. On a real ATEM drive that sidecar — `._.`, four
+ * kilobytes, no date — was the *only* plain file among the recordings, so
+ * a listing that kept files and dropped directories showed it and nothing
+ * else: one row of junk where a month of services should have been.
+ *
+ * Leading dot, which is what every one of them has in common and what
+ * every file manager hides them by.
+ */
+export function isHousekeeping(name: string): boolean {
+  return name.startsWith('.')
 }
 
 export type FtpConnect = (options: { host: string; port?: number }) => Promise<FtpSession>
@@ -78,11 +100,22 @@ export const connectFtp: FtpConnect = async ({ host, port }) => {
 
   return {
     entries,
-    // Directories are not media: a folder somebody made is theirs to
-    // manage, and the per-card folders are resolved before this is called.
-    list: async (directory) => (await entries(directory)).filter((entry) => !entry.isDirectory),
+    // Directories are kept, because on an ATEM recording in ISO mode the
+    // recording *is* a directory: a folder per take holding the programme
+    // file, the ISO files and the project. Dropping them as "not media"
+    // hid every ATEM recording this scheduler had ever made. A deck's
+    // clips are plain files and are unaffected — but a folder somebody
+    // else put on the card shows up now, which is what the panel says it
+    // shows: everything on the media.
+    list: async (directory) =>
+      (await entries(directory)).filter((entry) => !isHousekeeping(entry.name)),
     remove: async (path) => {
       await client.remove(path)
+    },
+    removeDirectory: async (path) => {
+      // Recursive, because a recording folder is never empty and RMD on a
+      // directory with contents is refused by every server worth the name.
+      await client.removeDir(path)
     },
     close: async () => {
       client.close()
@@ -124,7 +157,12 @@ export async function mediaDirectory(
   root: string,
   prefer: (string | undefined)[] = [],
 ): Promise<string> {
-  const entries = await session.entries(root)
+  // Housekeeping is filtered before anything is decided from it. A Mac
+  // leaves an AppleDouble sidecar at the top of the card too, and one
+  // stray `._.` at the root was enough to make this call the root a card
+  // and stop looking — which is a listing of the wrong directory, and
+  // reads on screen exactly like an empty one.
+  const entries = (await session.entries(root)).filter((entry) => !isHousekeeping(entry.name))
   // Clips at the root means this is already a card, not a list of cards.
   if (entries.some((entry) => !entry.isDirectory)) return root
 

@@ -69,7 +69,15 @@ COPY --from=build --chown=scheduler:scheduler /deploy ./
 # ownership included, so this covers `docker run` with no mount and the
 # named volume in docker-compose.yml. A bind mount of a host directory keeps
 # the host's ownership instead and has to be chowned to 10001 by hand.
-RUN install -d -o scheduler -g scheduler /config
+#
+# /backups is here for the same reason, and learned the same way: it was
+# left out, so the compose volume mounted root-owned, and every scheduled
+# backup failed with EACCES while the app itself ran perfectly. It is the
+# path docker-compose.yml points SCHEDULER_BACKUP_DIR at. Creating it does
+# not change the default — an install that sets no backup directory still
+# gets one under /config — it only means that a volume mounted there starts
+# out writable.
+RUN install -d -o scheduler -g scheduler /config /backups
 
 USER scheduler
 
