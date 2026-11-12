@@ -33,6 +33,7 @@ export interface OutputConflict {
 export function findOverlaps(
   outputs: EventOutput[],
   labelFor: (deviceId: string) => string,
+  windowMs?: number,
 ): OutputConflict[] {
   const enabled = outputs.filter((output) => output.enabled)
   const conflicts: OutputConflict[] = []
@@ -51,7 +52,7 @@ export function findOverlaps(
       if (a.kind !== b.kind) continue
 
       const from = Math.max(a.offsetMs, b.offsetMs)
-      const to = Math.min(a.offsetMs + a.durationMs, b.offsetMs + b.durationMs)
+      const to = Math.min(endOf(a, windowMs), endOf(b, windowMs))
       if (to <= from) continue
 
       conflicts.push({
@@ -82,6 +83,7 @@ export function findOverlaps(
 export function findSettingConflicts(
   outputs: EventOutput[],
   labelFor: (deviceId: string) => string,
+  windowMs?: number,
 ): OutputConflict[] {
   const enabled = outputs.filter((output) => output.enabled && output.settings.quality)
   const conflicts: OutputConflict[] = []
@@ -94,7 +96,7 @@ export function findSettingConflicts(
       if (a.settings.quality === b.settings.quality) continue
 
       const from = Math.max(a.offsetMs, b.offsetMs)
-      const to = Math.min(a.offsetMs + a.durationMs, b.offsetMs + b.durationMs)
+      const to = Math.min(endOf(a, windowMs), endOf(b, windowMs))
       if (to <= from) continue
 
       conflicts.push({
@@ -130,6 +132,7 @@ export function findSettingConflicts(
 export function findDestinationConflicts(
   outputs: EventOutput[],
   destinationFor: (id: string) => { label: string; sharesOneStream: boolean } | undefined,
+  windowMs?: number,
 ): OutputConflict[] {
   const enabled = outputs.filter((output) => output.enabled && output.destinationId)
   const conflicts: OutputConflict[] = []
@@ -155,7 +158,7 @@ export function findDestinationConflicts(
       }
 
       const from = Math.max(a.offsetMs, b.offsetMs)
-      const to = Math.min(a.offsetMs + a.durationMs, b.offsetMs + b.durationMs)
+      const to = Math.min(endOf(a, windowMs), endOf(b, windowMs))
       if (to <= from) continue
 
       conflicts.push({
@@ -191,11 +194,31 @@ export function overlapsForSeries(db: Db, seriesId: string): OutputConflict[] {
     return { label: row.label, sharesOneStream: config.reusableStream !== false }
   }
 
+  const series = db.prepare('SELECT duration_ms FROM event_series WHERE id = ?').get(seriesId) as
+    { duration_ms: number } | undefined
+  const windowMs = series?.duration_ms
+
   return [
-    ...findOverlaps(outputs, labelFor),
-    ...findSettingConflicts(outputs, labelFor),
-    ...findDestinationConflicts(outputs, destinationFor),
+    ...findOverlaps(outputs, labelFor, windowMs),
+    ...findSettingConflicts(outputs, labelFor, windowMs),
+    ...findDestinationConflicts(outputs, destinationFor, windowMs),
   ]
+}
+
+/**
+ * Where an output ends, from the window's start.
+ *
+ * One that follows the window ends with it, whatever length it was stored
+ * with: that stored length is only what it goes back to if the option is
+ * turned off. Measured by its stored length, a stream running to the end of
+ * the window looked as if it stopped long before the next one started on
+ * the same encoder, and the clash was never reported.
+ */
+function endOf(output: EventOutput, windowMs: number | undefined): number {
+  if (output.followsWindow && windowMs !== undefined) {
+    return Math.max(output.offsetMs, windowMs)
+  }
+  return output.offsetMs + output.durationMs
 }
 
 /** One line a human can act on. */

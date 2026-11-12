@@ -302,10 +302,20 @@ export function clearPlanOccurrences(db: Db, seriesId: string, now: number): num
  * broadcast that is already getting ready.
  */
 export function isFrozen(
-  occurrence: { scheduled_start: number },
+  occurrence: { scheduled_start: number; status?: string },
   series: { prepare_lead_ms: number },
   now: number,
 ): boolean {
+  // An occurrence already taken in hand — prepared ahead with Prepare now,
+  // say — is frozen whatever the clock says. Its broadcast was made for the
+  // time it had; moving it would leave the encoder firing at one time and
+  // the broadcast scheduled for another.
+  if (
+    occurrence.status !== undefined &&
+    occurrence.status !== 'pending' &&
+    occurrence.status !== 'skipped'
+  )
+    return true
   return now >= occurrence.scheduled_start - series.prepare_lead_ms
 }
 

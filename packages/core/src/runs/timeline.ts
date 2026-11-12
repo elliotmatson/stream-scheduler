@@ -1,14 +1,22 @@
 import type { Db } from '../db/index.js'
-import { outputsForOccurrence, type EventOutput } from '../events/outputs.js'
+import { deviceFor, outputsForOccurrence, type EventOutput } from '../events/outputs.js'
 import type { OutputTemplates } from '../events/outputs.js'
 import { parseOverrides } from '../events/occurrence-overrides.js'
 
 /** When one output goes on and comes off, in absolute time. */
 export interface OutputWindow {
   output: EventOutput
-  /** The nominal start. Preroll is applied on top by the engine. */
+  /** The nominal start, as the event says. */
   startsAt: number
   endsAt: number
+  /**
+   * When the engine actually starts and stops it: the nominal times with
+   * preroll and postroll applied, and shortened at a handover so one
+   * output's postroll never runs into the next one's preroll on the same
+   * device. See `handOver`.
+   */
+  startAt: number
+  stopAt: number
 }
 
 /**
@@ -99,7 +107,7 @@ export function timelineFor(
   // only some of them honoured would be worse than one that none did.
   const overrides = parseOverrides(row.overrides)
 
-  const outputs = outputsForOccurrence(db, occurrenceId)
+  const nominal = outputsForOccurrence(db, occurrenceId)
     .filter((output) => output.enabled)
     .map((output) => ({
       output,
@@ -113,6 +121,7 @@ export function timelineFor(
         ? Math.max(windowStart + output.offsetMs, row.scheduled_end + shift)
         : windowStart + output.offsetMs + output.durationMs,
     }))
+  const outputs = handOver(nominal, row.preroll_ms, row.postroll_ms)
 
   return {
     occurrenceId,
@@ -136,6 +145,53 @@ export function timelineFor(
       : { plan: planDetailOf(row.external_detail)! }),
     ...(options.forcedAt === undefined ? {} : { forcedAt: options.forcedAt }),
   }
+}
+
+/**
+ * Applies preroll and postroll, and settles each handover.
+ *
+ * Two outputs back to back on one device — the 9:00 service ending at 10:15
+ * and the 10:30 starting on the same encoder — would otherwise overlap by
+ * their roll: the 10:30 is pointed at its broadcast and started at 10:28,
+ * and then the 9:00's postroll ends at 10:30 by stopping the encoder that
+ * is now carrying the 10:30. The device reports stopped, which is true, and
+ * the second service is off air with nothing to say so.
+ *
+ * So at a handover the roll is shared out instead: the first stops no later
+ * than the second's preroll begins (but never before its own nominal end),
+ * and the second starts no earlier than the first has stopped. Only for a
+ * real handover — two of the same kind on the same device and node, the
+ * second starting at or after the first ends. A true overlap is a conflict,
+ * reported when the event is saved, and is not quietly rearranged here.
+ */
+function handOver(
+  windows: Omit<OutputWindow, 'startAt' | 'stopAt'>[],
+  prerollMs: number,
+  postrollMs: number,
+): OutputWindow[] {
+  const result: OutputWindow[] = windows.map((entry) => ({
+    ...entry,
+    startAt: entry.startsAt - prerollMs,
+    stopAt: entry.endsAt + postrollMs,
+  }))
+  const lanes = new Map<string, OutputWindow[]>()
+  for (const entry of result) {
+    const device = deviceFor(entry.output)
+    if (!device) continue
+    const lane = `${entry.output.kind}:${device.deviceId}:${device.nodeId}`
+    lanes.set(lane, [...(lanes.get(lane) ?? []), entry])
+  }
+  for (const lane of lanes.values()) {
+    lane.sort((a, b) => a.startsAt - b.startsAt)
+    for (let i = 1; i < lane.length; i++) {
+      const before = lane[i - 1]!
+      const after = lane[i]!
+      if (after.startsAt < before.endsAt) continue // an overlap, not a handover
+      before.stopAt = Math.min(before.stopAt, Math.max(before.endsAt, after.startAt))
+      after.startAt = Math.max(after.startAt, before.stopAt)
+    }
+  }
+  return result
 }
 
 /**

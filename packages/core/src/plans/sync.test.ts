@@ -295,6 +295,21 @@ describe('what must not be disturbed', () => {
     expect(occurrences()[0]?.scheduled_start).toBe(SUNDAY_9)
   })
 
+  it('will not move one prepared ahead of time, days out', async () => {
+    // Prepare now on Wednesday made the broadcast for 9:00. Moving the
+    // occurrence on Thursday would leave the encoder firing at the new time
+    // and the broadcast waiting at the old one.
+    published = [service({ externalId: 'nine' })]
+    await syncSeries(deps(), seriesId)
+    db.prepare("UPDATE occurrence SET status = 'running'").run()
+
+    published = [service({ externalId: 'nine', startsAt: SUNDAY_9 + 2 * HOUR })]
+    const result = await syncSeries(deps(), seriesId)
+
+    expect(result.frozen).toBe(1)
+    expect(occurrences()[0]?.scheduled_start).toBe(SUNDAY_9)
+  })
+
   it('still follows the plan right up to the prepare point', async () => {
     published = [service({ externalId: 'nine' })]
     await syncSeries(deps(), seriesId)

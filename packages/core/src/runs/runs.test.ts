@@ -1114,6 +1114,100 @@ describe('winding a run down', () => {
   })
 })
 
+describe('a rehearsal does not cost the service', () => {
+  const ONE_SERVICE: OutputSpec[] = [
+    { label: 'Main', offsetMs: 0, durationMs: HOUR, destination: true },
+  ]
+
+  it('schedules a date again when Prepare now fails days ahead', async () => {
+    const occurrenceId = seedOccurrence({ outputs: ONE_SERVICE })
+    const world = new FakeBroadcastService()
+    // The token is expired on Wednesday, and fixed by Sunday.
+    const engine = engineFor(plannerFor(world, { failAt: 'Main.prepare', failTimes: 3 }))
+
+    clock.set(START - 4 * 24 * HOUR)
+    const early = await engine.prepareNow(occurrenceId)
+    expect(store.getRun(early).state).toBe('failed')
+    expect(occurrenceStatus(occurrenceId)).toBe('pending')
+
+    clock.set(START - 30 * MINUTE)
+    const report = await engine.tick()
+    expect(report.created).toHaveLength(1)
+    const sunday = store.getRun(report.created[0]!)
+    expect(sunday.attempt).toBe(2)
+    expect(sunday.state).toBe('ready')
+  })
+
+  it('schedules a date again after a Start now and Stop now test', async () => {
+    const occurrenceId = seedOccurrence({ outputs: ONE_SERVICE })
+    const world = new FakeBroadcastService()
+    const engine = engineFor(plannerFor(world))
+
+    clock.set(START - 4 * 24 * HOUR)
+    const test = await engine.startNow(occurrenceId)
+    await engine.advance(test)
+    expect(world.log).toContain('start Main')
+    await engine.cancel(test, 'Just checking the encoder')
+    expect(occurrenceStatus(occurrenceId)).toBe('pending')
+
+    clock.set(START)
+    await engine.tick()
+    expect(world.log.filter((entry) => entry === 'start Main')).toHaveLength(2)
+  })
+
+  it('does not schedule a date again once it was due', async () => {
+    const occurrenceId = seedOccurrence({ outputs: ONE_SERVICE })
+    const engine = engineFor(plannerFor(new FakeBroadcastService(), { failAt: 'Main.prepare' }))
+
+    clock.set(START - 30 * MINUTE)
+    await engine.tick()
+    expect(occurrenceStatus(occurrenceId)).toBe('failed')
+    clock.set(START - 25 * MINUTE)
+    expect((await engine.tick()).created).toHaveLength(0)
+  })
+})
+
+describe('handing an encoder from one service to the next', () => {
+  it('stops the first before the second starts, roll and all', async () => {
+    seedOccurrence({
+      prerollMs: 5 * MINUTE,
+      postrollMs: 5 * MINUTE,
+      graceMs: 8 * HOUR,
+      outputs: [
+        { label: 'First', offsetMs: 0, durationMs: HOUR },
+        { label: 'Second', offsetMs: HOUR, durationMs: HOUR },
+      ],
+    })
+    const world = new FakeBroadcastService()
+    const engine = engineFor(plannerFor(world))
+
+    for (let at = START - 30 * MINUTE; at <= START + 2 * HOUR + 10 * MINUTE; at += MINUTE) {
+      clock.set(at)
+      await engine.tick()
+    }
+
+    // Without the handover, the second starts at 0:55 on its preroll and the
+    // first's postroll stops the encoder under it at 1:05.
+    expect(world.log).toEqual(['start First', 'stop First', 'start Second', 'stop Second'])
+  })
+
+  it('keeps the full roll where there is no handover', () => {
+    const occurrenceId = seedOccurrence({
+      prerollMs: 5 * MINUTE,
+      postrollMs: 5 * MINUTE,
+      outputs: [
+        { label: 'Stream', offsetMs: 0, durationMs: HOUR },
+        { label: 'Archive', kind: 'recording', offsetMs: 0, durationMs: HOUR, deviceId: 'deck' },
+      ],
+    })
+    const timeline = timelineFor(db, occurrenceId)
+    for (const entry of timeline.outputs) {
+      expect(entry.startAt).toBe(START - 5 * MINUTE)
+      expect(entry.stopAt).toBe(START + HOUR + 5 * MINUTE)
+    }
+  })
+})
+
 describe('one driver per run', () => {
   it('refuses a second run in progress for one occurrence', () => {
     const occurrenceId = seedOccurrence()
