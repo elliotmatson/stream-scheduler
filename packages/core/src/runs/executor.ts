@@ -1,7 +1,7 @@
 import type { Clock, JsonObject } from '@scheduler/plugin-sdk'
 import type { Logger } from '../log.js'
 import { silentLogger } from '../log.js'
-import type { RunFailure, RunStore } from './store.js'
+import type { RunFailure, RunStore, StepRecord } from './store.js'
 import type { RunPhase } from './state-machine.js'
 import type { RunPlan, Sleeper, StepContext, StepDefinition } from './steps.js'
 import { realSleeper } from './steps.js'
@@ -11,9 +11,26 @@ export interface ExecutorDeps {
   clock: Clock
   sleeper?: Sleeper
   logger?: Logger
+  /**
+   * Asks the executor to stop at the next safe point: before a step, before
+   * an attempt, or after a backoff. Never mid-call — a call that is in
+   * flight finishes and is recorded. A step stopped this way is left
+   * `pending`, so whoever takes over runs it rather than reconciling it.
+   */
+  signal?: AbortSignal
 }
 
-export type PhaseResult = { ok: true } | { ok: false; failure: RunFailure }
+export type PhaseResult =
+  | { ok: true }
+  | { ok: false; failure: RunFailure; aborted?: false }
+  /** Stopped because the signal fired. Not a failure: nothing broke. */
+  | { ok: false; aborted: true; failure: RunFailure }
+
+const ABORTED: PhaseResult = {
+  ok: false,
+  aborted: true,
+  failure: { code: 'aborted', message: 'Stopped so another action could take over.' },
+}
 
 const DEFAULT_MAX_ATTEMPTS = 3
 const DEFAULT_BACKOFF_MS = 1_000
@@ -58,11 +75,24 @@ export async function executeSteps(
 
   for (const [seq, step] of plan.entries()) {
     if (!select(step, seq)) continue
+    if (deps.signal?.aborted) return ABORTED
 
-    const record = store.step(runId, seq)
+    // Matched by kind, not position. A plan rebuilt after an edit can have
+    // its steps in different places, and running "stop the 9:00 service"
+    // against the row that records the recorder is the worst thing this
+    // could do.
+    const record = recordFor(store, runId, seq, step)
+    if (!record) continue // added since the run was committed: not part of it
     if (record.state === 'done' || record.state === 'compensated') continue
+    if (record.state === 'running') {
+      // Something was in this call and never recorded the outcome. Ask the
+      // world rather than doing it again blind.
+      const resolved = await reconcileStep(runId, record, step, deps, logger)
+      if (resolved === 'done') continue
+      if (resolved === 'failed') return failedResult(store, runId, record.seq, step)
+    }
 
-    const result = await executeStep(runId, seq, step, deps, logger)
+    const result = await executeStep(runId, record.seq, step, deps, logger)
     if (!result.ok) return result
   }
   return { ok: true }
@@ -98,6 +128,12 @@ async function executeStep(
   let lastError: unknown
   let attempts = 0
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    if (deps.signal?.aborted) {
+      // Between attempts: the previous one failed and was not recorded as
+      // such, so put the step back where the next holder will pick it up.
+      if (attempt > 1) store.resetStep(runId, seq)
+      return ABORTED
+    }
     attempts = attempt
     // Committed before the call, so a crash mid-call is distinguishable from
     // a crash before it.
@@ -143,57 +179,76 @@ export async function reconcileRun(
 
   for (const record of store.steps(runId)) {
     if (record.state !== 'running') continue
-    const step = plan[record.seq]
+    const step = definitionFor(plan, record)
     if (!step) {
       store.markStepFailed(runId, record.seq, 'The plan no longer contains this step.')
       continue
     }
+    await reconcileStep(runId, record, step, deps, logger)
+  }
+}
 
-    const ctx = contextFor(runId, record.seq, step, deps, logger)
+/**
+ * Settles one step whose outcome was never recorded.
+ *
+ * Returns what it became: `done` when the work is found to have landed,
+ * `pending` when it can safely be done again, `failed` when neither can be
+ * known.
+ */
+async function reconcileStep(
+  runId: string,
+  record: StepRecord,
+  step: StepDefinition,
+  deps: ExecutorDeps,
+  logger: Logger,
+): Promise<'done' | 'pending' | 'failed'> {
+  const { store } = deps
+  const ctx = contextFor(runId, record.seq, step, deps, logger)
 
-    if (!step.reconcile) {
-      // Nothing can tell us whether this landed. Redo it only when the step
-      // declares itself safe to repeat.
-      if (step.retryable ?? true) {
-        store.resetStep(runId, record.seq)
-        logger.info('retrying an interrupted step', { kind: step.kind, seq: record.seq })
-      } else {
-        store.markStepFailed(
-          runId,
-          record.seq,
-          'Interrupted mid-call and cannot be safely repeated. Check the destination by hand before retrying.',
-        )
-      }
-      continue
+  if (!step.reconcile) {
+    // Nothing can tell us whether this landed. Redo it only when the step
+    // declares itself safe to repeat.
+    if (step.retryable ?? true) {
+      store.resetStep(runId, record.seq)
+      logger.info('retrying an interrupted step', { kind: step.kind, seq: record.seq })
+      return 'pending'
     }
+    store.markStepFailed(
+      runId,
+      record.seq,
+      'Interrupted mid-call and cannot be safely repeated. Check the destination by hand before retrying.',
+    )
+    return 'failed'
+  }
 
-    try {
-      const existing = await step.reconcile(ctx)
-      if (existing) {
-        store.markStepDone(runId, record.seq, existing)
-        logger.info('adopted work an interrupted step had already done', {
-          kind: step.kind,
-          seq: record.seq,
-          externalId: existing.externalId ?? null,
-        })
-      } else {
-        store.resetStep(runId, record.seq)
-        logger.info('interrupted step never landed; will retry', {
-          kind: step.kind,
-          seq: record.seq,
-        })
-      }
-    } catch (error) {
-      logger.error('could not reconcile an interrupted step', {
+  try {
+    const existing = await step.reconcile(ctx)
+    if (existing) {
+      store.markStepDone(runId, record.seq, existing)
+      logger.info('adopted work an interrupted step had already done', {
         kind: step.kind,
-        error: describe(error),
+        seq: record.seq,
+        externalId: existing.externalId ?? null,
       })
-      store.markStepFailed(
-        runId,
-        record.seq,
-        `Could not determine whether this step landed: ${describe(error)}`,
-      )
+      return 'done'
     }
+    store.resetStep(runId, record.seq)
+    logger.info('interrupted step never landed; will retry', {
+      kind: step.kind,
+      seq: record.seq,
+    })
+    return 'pending'
+  } catch (error) {
+    logger.error('could not reconcile an interrupted step', {
+      kind: step.kind,
+      error: describe(error),
+    })
+    store.markStepFailed(
+      runId,
+      record.seq,
+      `Could not determine whether this step landed: ${describe(error)}`,
+    )
+    return 'failed'
   }
 }
 
@@ -222,7 +277,7 @@ async function compensateSelected(
 
   for (const record of [...store.steps(runId)].reverse()) {
     if (record.state !== 'done') continue
-    const step = plan[record.seq]
+    const step = definitionFor(plan, record)
     if (!step?.compensate || !select(step)) continue
     try {
       await step.compensate(contextFor(runId, record.seq, step, deps, logger))
@@ -238,6 +293,47 @@ async function compensateSelected(
       })
     }
   }
+}
+
+/**
+ * The committed row a plan step refers to.
+ *
+ * The row at the same position when its kind agrees, which is every case
+ * but one; otherwise the row with that kind, wherever it is. A step with no
+ * row at all was added to the event after the run committed its plan.
+ */
+export function recordFor(
+  store: RunStore,
+  runId: string,
+  seq: number,
+  step: StepDefinition,
+): StepRecord | undefined {
+  const records = store.steps(runId)
+  const atSeq = records[seq]
+  if (atSeq?.kind === step.kind) return atSeq
+  return records.find((record) => record.kind === step.kind)
+}
+
+/** The plan's definition for a committed row, matched by kind. */
+export function definitionFor(plan: RunPlan, record: StepRecord): StepDefinition | undefined {
+  const atSeq = plan[record.seq]
+  if (atSeq?.kind === record.kind) return atSeq
+  return plan.find((step) => step.kind === record.kind)
+}
+
+function failedResult(
+  store: RunStore,
+  runId: string,
+  seq: number,
+  step: StepDefinition,
+): PhaseResult {
+  const failure: RunFailure = {
+    code: 'step-failed',
+    message: store.step(runId, seq).error ?? 'Interrupted and could not be resolved.',
+    step: step.kind,
+  }
+  store.recordFailure(runId, failure)
+  return { ok: false, failure }
 }
 
 function contextFor(

@@ -13,7 +13,7 @@ import type { SecretVault } from '../secrets/vault.js'
 import { renderTemplateOrThrow, sanitizeFilename } from '../template/index.js'
 import type { TemplateContext } from '../template/render.js'
 import { RecordingLedger } from './artifacts.js'
-import type { RunPlan, RunPlanner, StepDefinition } from './steps.js'
+import type { CommittedStep, RunPlan, RunPlanner, StepContext, StepDefinition } from './steps.js'
 import { timelineFor, type EventTimeline, type OutputWindow } from './timeline.js'
 
 export interface EventPlannerDeps {
@@ -257,20 +257,58 @@ export class EventPlanner implements RunPlanner {
           await destination.dispose()
         }
       },
-      compensate: async (ctx) => {
-        const externalId = ctx.outputs[`${output.id}.prepare`]?.externalId
-        // The vault entry goes either way: an abandoned run must not leave
-        // a live stream key behind.
-        this.deps.vault.delete(keyRef(ctx.runId, output.id))
-        if (!externalId) return
-        const destination = await registry.open(destinationId, { runId: ctx.runId })
-        try {
-          await destination.discard({ externalId })
-        } finally {
-          await destination.dispose()
-        }
-      },
+      compensate: (ctx) => this.discardPrepared(registry, destinationId, output.id, ctx),
     }
+  }
+
+  /** Undoes a prepare: the broadcast it made, and the key it stored. */
+  private async discardPrepared(
+    registry: DestinationRegistry,
+    destinationId: string,
+    outputId: string,
+    ctx: StepContext,
+  ): Promise<void> {
+    const externalId = ctx.outputs[`${outputId}.prepare`]?.externalId
+    // The vault entry goes either way: an abandoned run must not leave
+    // a live stream key behind.
+    this.deps.vault.delete(keyRef(ctx.runId, outputId))
+    if (!externalId) return
+    const destination = await registry.open(destinationId, { runId: ctx.runId })
+    try {
+      await destination.discard({ externalId })
+    } finally {
+      await destination.dispose()
+    }
+  }
+
+  orphans(records: readonly CommittedStep[]): StepDefinition[] {
+    const definitions: StepDefinition[] = []
+    for (const record of records) {
+      const dot = record.kind.lastIndexOf('.')
+      if (dot <= 0) continue
+      const outputId = record.kind.slice(0, dot)
+      const phase = PHASE_OF_ACTION[record.kind.slice(dot + 1)]
+      if (!phase) continue
+      const definition: StepDefinition = {
+        kind: record.kind,
+        phase,
+        outputId,
+        label: record.label ?? record.kind,
+        execute: async () => {
+          throw new Error('This output was removed from the event while the run was going.')
+        },
+      }
+      // The one step that leaves something behind. It recorded which
+      // service it made the broadcast on, which is all undoing it needs.
+      const destinationId = destinationOf(record.request)
+      if (phase === 'prepare' && destinationId && this.deps.destinations) {
+        const registry = this.deps.destinations
+        definition.compensate = (ctx) =>
+          this.discardPrepared(registry, destinationId, outputId, ctx)
+      }
+      definitions.push(definition)
+    }
+    return definitions
   }
 
   private destinationFinalizeStep(
@@ -582,6 +620,27 @@ export class EventPlanner implements RunPlanner {
 const DEFAULT_FILENAME_TEMPLATE = '{{date "yyyy-MM-dd"}} {{event.name}}'
 
 /** Where an output's issued stream key lives for the length of one run. */
+/** Which phase each kind of step the planner makes belongs to. */
+const PHASE_OF_ACTION: Record<string, StepDefinition['phase']> = {
+  prepare: 'prepare',
+  applyStreamTarget: 'start',
+  startStreaming: 'start',
+  startRecording: 'start',
+  stopStreaming: 'stop',
+  stopRecording: 'stop',
+  finalize: 'complete',
+}
+
+function destinationOf(request: string | null): string | undefined {
+  if (!request) return undefined
+  try {
+    const parsed = JSON.parse(request) as { destination?: unknown }
+    return typeof parsed.destination === 'string' ? parsed.destination : undefined
+  } catch {
+    return undefined
+  }
+}
+
 function keyRef(runId: string, outputId: string): string {
   return `run-ingest:${runId}:${outputId}`
 }

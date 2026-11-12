@@ -335,6 +335,30 @@ describe('failure and recovery', () => {
     expect(vault.has(`run-ingest:${runId}:${outputId}`)).toBe(false)
   })
 
+  for (const removal of [
+    { how: 'switched off', sql: 'UPDATE event_output SET enabled = 0 WHERE id = ?' },
+    { how: 'deleted', sql: 'DELETE FROM event_output WHERE id = ?' },
+  ]) {
+    it(`deletes the broadcast of an output ${removal.how} after it was prepared`, async () => {
+      const { engine, outputId } = await fullPipeline()
+
+      clock.set(START - 30 * MINUTE)
+      const runId = (await engine.tick()).created[0]!
+      expect(youtube.liveBroadcastCount).toBe(1)
+      expect(vault.has(`run-ingest:${runId}:${outputId}`)).toBe(true)
+
+      db.prepare(removal.sql).run(outputId)
+      clock.set(START - 20 * MINUTE)
+      await engine.tick()
+
+      // It never went on air, so it is litter: gone from the channel, and
+      // its stream key gone from the vault.
+      expect(store.getRun(runId).state).toBe('failed')
+      expect(youtube.liveBroadcastCount).toBe(0)
+      expect(vault.has(`run-ingest:${runId}:${outputId}`)).toBe(false)
+    })
+  }
+
   it('adopts the broadcast a crashed prepare had already created', async () => {
     const { engine, planner, occurrenceId } = await fullPipeline()
 

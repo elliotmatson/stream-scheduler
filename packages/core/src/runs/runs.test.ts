@@ -129,6 +129,8 @@ class FakeBroadcastService {
   readonly broadcasts = new Map<string, { id: string; tag: string; deleted: boolean }>()
   /** Every start and stop, in order, labelled by output. */
   readonly log: string[] = []
+  /** Every output closed out at the end, in order. */
+  readonly finalized: string[] = []
   private next = 1
 
   create(tag: string): string {
@@ -157,6 +159,26 @@ interface PlanOptions {
   failAt?: string
   failTimes?: number
   nonRetryable?: string
+  /** Holds the named step inside its call until the gate is opened. */
+  gate?: Gate
+}
+
+/** A step held mid-call, so a test can act while it is in flight. */
+class Gate {
+  private release!: () => void
+  private arrive!: () => void
+  readonly opened = new Promise<void>((resolve) => (this.release = resolve))
+  /** Resolves once the step has reached the gate. */
+  readonly reached = new Promise<void>((resolve) => (this.arrive = resolve))
+  constructor(readonly at: string) {}
+  async pass(key: string): Promise<void> {
+    if (key !== this.at) return
+    this.arrive()
+    await this.opened
+  }
+  open(): void {
+    this.release()
+  }
 }
 
 /**
@@ -195,6 +217,7 @@ function plannerFor(world: FakeBroadcastService, options: PlanOptions = {}): Run
               label: at('prepare'),
               request: { title: output.label, streamKey: 'live_should-not-be-logged' },
               async execute(ctx) {
+                await options.gate?.pass(at('prepare'))
                 maybeFail(at('prepare'))
                 return { externalId: world.create(ctx.idempotencyKey) }
               },
@@ -217,6 +240,7 @@ function plannerFor(world: FakeBroadcastService, options: PlanOptions = {}): Run
             outputId: output.id,
             label: at('start'),
             async execute() {
+              await options.gate?.pass(at('start'))
               maybeFail(at('start'))
               world.log.push(`start ${output.label}`)
             },
@@ -241,11 +265,31 @@ function plannerFor(world: FakeBroadcastService, options: PlanOptions = {}): Run
             label: at('finalize'),
             async execute() {
               maybeFail(at('finalize'))
+              world.finalized.push(output.label)
             },
           })
         }
       }
       return steps
+    },
+    // Like the real planner: a removed output's prepare can still be undone,
+    // because the broadcast it made is found by the key it was made with.
+    orphans(records) {
+      return records
+        .filter((record) => record.kind.endsWith('.prepare'))
+        .map((record) => ({
+          kind: record.kind,
+          phase: 'prepare' as const,
+          outputId: record.kind.slice(0, -'.prepare'.length),
+          label: record.label ?? record.kind,
+          async execute() {
+            throw new Error('removed')
+          },
+          async compensate(ctx) {
+            const id = world.findByTag(ctx.idempotencyKey)
+            if (id) world.delete(id)
+          },
+        }))
     },
   }
 }
@@ -948,6 +992,11 @@ describe('RunEngine', () => {
     // The 11:00 service never started, so there is nothing to stop.
     expect(world.log).not.toContain('stop Main // 11:00')
     expect(occurrenceStatus(occurrenceId)).toBe('cancelled')
+    // What aired is closed out and kept; the 11:00 broadcast, which never
+    // aired, is not left on the channel as an empty scheduled entry.
+    expect(world.finalized).toContain('Main // 9:00')
+    expect(world.finalized).not.toContain('Main // 11:00')
+    expect(world.liveCount).toBe(1)
   })
 
   it('compensates rather than stopping when cancelling before air', async () => {
@@ -1001,6 +1050,166 @@ describe('RunEngine', () => {
  * every step boundary, in both the "call landed" and "call never landed"
  * cases, and assert exactly one broadcast per service afterwards.
  */
+describe('winding a run down', () => {
+  it('finalizes every output even when one will not close, and deletes nothing', async () => {
+    seedOccurrence()
+    const world = new FakeBroadcastService()
+    const engine = engineFor(plannerFor(world, { failAt: 'Main // 9:00.finalize' }))
+
+    clock.set(START - 30 * MINUTE)
+    const runId = (await engine.tick()).created[0]!
+    await runTheMorning(engine)
+
+    const run = store.getRun(runId)
+    expect(run.state).toBe('failed')
+    expect(JSON.parse(run.failure!).code).toBe('finalize_failed')
+    expect(world.finalized).toContain('Main // 11:00')
+    // Both services aired, so both broadcasts stay.
+    expect(world.liveCount).toBe(2)
+  })
+
+  it('keeps the broadcast of a lone output whose stop failed', async () => {
+    seedOccurrence({
+      outputs: [{ label: 'Main', offsetMs: 0, durationMs: HOUR, destination: true }],
+    })
+    const world = new FakeBroadcastService()
+    const engine = engineFor(plannerFor(world, { failAt: 'Main.stop' }))
+
+    clock.set(START - 30 * MINUTE)
+    const runId = (await engine.tick()).created[0]!
+    for (const at of [START, START + HOUR, START + WINDOW]) {
+      clock.set(at)
+      await engine.tick()
+    }
+
+    // It went out to people; deleting it because the encoder did not
+    // acknowledge the stop would take away the recording of the service.
+    expect(world.log).toContain('start Main')
+    expect(world.finalized).toContain('Main')
+    expect(world.liveCount).toBe(1)
+    expect(store.getRun(runId).state).toBe('completed')
+  })
+
+  it('leaves what aired alone when the event is restructured mid-run', async () => {
+    seedOccurrence({ graceMs: 8 * HOUR })
+    const world = new FakeBroadcastService()
+    const engine = engineFor(plannerFor(world))
+
+    clock.set(START) // the recorder is rolling; both services are prepared
+    const runId = (await engine.tick()).created[0]!
+    expect(world.liveCount).toBe(2)
+
+    db.prepare("UPDATE event_output SET enabled = 0 WHERE label = 'Main // 9:00'").run()
+    clock.set(START + MINUTE)
+    await engine.tick()
+
+    const failure = JSON.parse(store.getRun(runId).failure!)
+    expect(failure.code).toBe('plan_changed')
+    // The recorder that was rolling is named and was not touched.
+    expect(failure.remediation).toMatch(/Archive/)
+    expect(world.log).not.toContain('stop Archive')
+    // Neither service aired, so neither broadcast is left on the channel —
+    // including the 9:00's, though that output is no longer in the event.
+    expect(world.liveCount).toBe(0)
+  })
+})
+
+describe('one driver per run', () => {
+  it('refuses a second run in progress for one occurrence', () => {
+    const occurrenceId = seedOccurrence()
+    const plan = plannerFor(new FakeBroadcastService()).plan(occurrenceId) as RunPlan
+    const first = store.createRun(occurrenceId, plan)
+    expect(() => store.createRun(occurrenceId, plan, { attempt: 2 })).toThrow(/UNIQUE/)
+
+    // Once the first has ended, another attempt is fine.
+    store.transition(first.id, 'cancelled')
+    expect(() => store.createRun(occurrenceId, plan, { attempt: 2 })).not.toThrow()
+  })
+
+  it('prepares once when Start now and the tick reach a run together', async () => {
+    const occurrenceId = seedOccurrence()
+    const world = new FakeBroadcastService()
+    const gate = new Gate('Main // 9:00.prepare')
+    const engine = engineFor(plannerFor(world, { gate }))
+
+    clock.set(START - 10 * MINUTE)
+    const runId = await engine.startNow(occurrenceId)
+    const advancing = engine.advance(runId)
+    await gate.reached
+    const ticking = engine.tick()
+    const again = engine.advance(runId)
+    gate.open()
+    await Promise.all([advancing, ticking, again])
+
+    // One broadcast per service, not one per caller.
+    expect(world.broadcasts.size).toBe(2)
+  })
+
+  it('leaves a run to a tick that overran rather than driving it twice', async () => {
+    seedOccurrence()
+    const world = new FakeBroadcastService()
+    const gate = new Gate('Main // 9:00.prepare')
+    const engine = engineFor(plannerFor(world, { gate }))
+
+    clock.set(START - 30 * MINUTE)
+    const stuck = engine.tick()
+    await gate.reached
+    // The app gives up waiting on the first tick and starts another.
+    const report = await engine.tick()
+    expect(report.created).toHaveLength(0)
+    expect(report.advanced).toHaveLength(0)
+
+    gate.open()
+    await stuck
+    expect(world.broadcasts.size).toBe(2)
+  })
+
+  it('stops a stream that was coming up when Stop now was pressed', async () => {
+    seedOccurrence({ graceMs: 8 * HOUR })
+    const world = new FakeBroadcastService()
+    const gate = new Gate('Main // 9:00.start')
+    const engine = engineFor(plannerFor(world, { gate }))
+
+    clock.set(START)
+    const runId = (await engine.tick()).created[0]!
+    clock.set(START + 2 * HOUR)
+    const ticking = engine.tick()
+    await gate.reached
+
+    const cancelling = engine.cancel(runId)
+    gate.open()
+    await Promise.all([ticking, cancelling])
+
+    expect(store.getRun(runId).state).toBe('cancelled')
+    // The start in flight finished, and was then stopped — not left on air
+    // under a run that says it was cancelled.
+    expect(world.log.indexOf('stop Main // 9:00')).toBeGreaterThan(
+      world.log.indexOf('start Main // 9:00'),
+    )
+    expect(world.log).not.toContain('start Main // 11:00')
+    // The 11:00 broadcast never aired, so it is not left behind.
+    expect(world.liveCount).toBe(1)
+  })
+
+  it('carries out a Stop now recorded before a restart', async () => {
+    seedOccurrence({ graceMs: 8 * HOUR })
+    const world = new FakeBroadcastService()
+    const engine = engineFor(plannerFor(world))
+
+    clock.set(START + 2 * HOUR)
+    const runId = (await engine.tick()).created[0]!
+    store.requestCancel(runId, 'Stopped from the booth')
+
+    // A fresh engine, as after a restart, finds the request and acts on it.
+    await engineFor(plannerFor(world)).tick()
+    const run = store.getRun(runId)
+    expect(run.state).toBe('cancelled')
+    expect(JSON.parse(run.failure!).message).toBe('Stopped from the booth')
+    expect(world.log).toContain('stop Main // 9:00')
+    expect(run.cancel_requested_at).toBeNull()
+  })
+})
+
 describe('a run that cannot be planned', () => {
   /** A second occurrence of the same event, an hour after the first. */
   function laterOccurrence(of: string): string {

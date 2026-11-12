@@ -79,6 +79,24 @@ export interface RunPlanner {
    * other instead of the first three being instantly in the past.
    */
   plan(occurrenceId: string, options?: { forcedAt?: number }): Promise<RunPlan> | RunPlan
+  /**
+   * Definitions for committed steps whose output has left the event — switched
+   * off or deleted while the run was going — rebuilt from what each step
+   * recorded when it ran.
+   *
+   * Only enough to clean up: the phase and output a step belongs to, and the
+   * compensation that undoes what it made. Without this, a broadcast prepared
+   * for an output removed mid-run would be left on the channel for good,
+   * because nothing else still knows where it was made.
+   */
+  orphans?(records: readonly CommittedStep[]): StepDefinition[]
+}
+
+/** What a committed step row says about itself. */
+export interface CommittedStep {
+  kind: string
+  label: string | null
+  request: string | null
 }
 
 export function stepsForPhase(plan: RunPlan, phase: RunPhase): StepDefinition[] {
