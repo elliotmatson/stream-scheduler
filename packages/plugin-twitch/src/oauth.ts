@@ -123,6 +123,12 @@ export class RefreshingTokenSource implements TokenSource {
   private accessTokenValue: string | undefined
   private expiresAt = 0
   private refreshTokenValue: string
+  /**
+   * One refresh at a time. Two at once would both spend the same refresh
+   * token, Twitch would honour one and invalidate the other, and whichever
+   * lost would report the account as needing reconnecting.
+   */
+  private inflight: Promise<string> | undefined
 
   constructor(
     private readonly client: OAuthClient,
@@ -140,7 +146,18 @@ export class RefreshingTokenSource implements TokenSource {
     if (this.accessTokenValue && this.now() < this.expiresAt - 60_000) {
       return this.accessTokenValue
     }
+    this.inflight ??= this.refresh().finally(() => {
+      this.inflight = undefined
+    })
+    return this.inflight
+  }
 
+  /** The refresh token this source will spend next. */
+  get currentRefreshToken(): string {
+    return this.refreshTokenValue
+  }
+
+  private async refresh(): Promise<string> {
     const response = await this.fetchImpl(TOKEN_ENDPOINT, {
       method: 'POST',
       headers: { 'content-type': 'application/x-www-form-urlencoded' },
@@ -153,7 +170,14 @@ export class RefreshingTokenSource implements TokenSource {
     })
 
     const text = await response.text()
-    if (!response.ok) throw new ReauthRequiredError(describeTokenError(text))
+    if (!response.ok) {
+      // A server error or a rate limit is Twitch having a bad minute, and
+      // is retried. Only a refused grant needs somebody to reconnect.
+      if (response.status >= 500 || response.status === 429) {
+        throw new TokenEndpointError(response.status, describeTokenError(text))
+      }
+      throw new ReauthRequiredError(describeTokenError(text))
+    }
 
     const tokens = JSON.parse(text) as TokenResponse
     this.accessTokenValue = tokens.access_token
@@ -167,6 +191,18 @@ export class RefreshingTokenSource implements TokenSource {
     }
 
     return this.accessTokenValue
+  }
+}
+
+/** Twitch's token service is down or busy, as opposed to refusing the grant. */
+export class TokenEndpointError extends Error {
+  readonly code = 'token-endpoint-unavailable'
+  readonly retryable = true
+  readonly remediation =
+    "Twitch's sign-in service did not answer properly. This is usually brief; it is retried automatically."
+  constructor(status: number, detail: string) {
+    super(`Twitch's token endpoint answered ${status}: ${detail}`)
+    this.name = 'TokenEndpointError'
   }
 }
 

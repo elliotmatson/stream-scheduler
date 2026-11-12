@@ -228,6 +228,34 @@ describe('tokens', () => {
     expect(twitch.calls.filter((call) => call.url.includes('/oauth2/token'))).toHaveLength(2)
   })
 
+  it('refreshes once when two instances want a token at the same moment', async () => {
+    // The scheduler and somebody's browser, say. Two refreshes would spend
+    // the same refresh token twice, and Twitch would reject the second.
+    const shared = provider()
+    const [a, b] = await Promise.all([
+      shared.createDestination(context()),
+      shared.createDestination(context()),
+    ])
+    await Promise.all([a.prepare(prepareInput()), b.prepare(prepareInput('Same time'))])
+
+    expect(twitch.calls.filter((call) => call.url.includes('/oauth2/token'))).toHaveLength(1)
+  })
+
+  it('treats Twitch being down as temporary, not as a dead grant', async () => {
+    const dest = await twitchProvider({
+      fetchImpl: async (url, init) =>
+        url.includes('/oauth2/token')
+          ? { ok: false, status: 503, text: async () => 'Service Unavailable' }
+          : twitch.fetch(url, init),
+      resolveClient: async () => ({ client: CLIENT, refreshToken: 'rt-1' }),
+      saveRefreshToken: async () => {},
+    }).createDestination(context())
+
+    const error = await dest.prepare(prepareInput()).catch((caught: unknown) => caught)
+    expect(error).not.toBeInstanceOf(ReauthRequiredError)
+    expect(error).toMatchObject({ retryable: true })
+  })
+
   it('asks for the account to be reconnected when the grant is dead', async () => {
     // What a regenerated client secret looks like from in here.
     saved.push({ accountRef: 'acct-1', refreshToken: 'rt-stale' })

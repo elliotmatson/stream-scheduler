@@ -41,6 +41,7 @@ import {
   takeScheduledBackup,
 } from './backup/schedule.js'
 import { backupFailed } from './notify/backup-events.js'
+import { destinationOfStep, markAccountReauth } from './destinations/reauth.js'
 import { recordingsSweptNotification } from './notify/retention-events.js'
 
 /**
@@ -381,6 +382,13 @@ export class Application {
         // Read at send time, not at startup: by the time a run fails, the
         // app may have learnt where it is really being reached.
         notifier.enqueue(runFailedNotification(db, event, links.origin))
+        // A refused authorization is the account's problem, not this run's:
+        // every later event to it will fail the same way until somebody
+        // reconnects, so the account is marked and that is said once.
+        if (event.failure.code === 'reauth-required') {
+          const destinationId = destinationOfStep(db, event.failure.step)
+          if (destinationId) markAccountReauth(db, notifier, destinationId)
+        }
       },
       // Queued on the same terms as a failure, and reaching nobody unless
       // a channel asked for these by name: they are the "it worked"

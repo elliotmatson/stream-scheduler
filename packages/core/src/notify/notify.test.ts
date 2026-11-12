@@ -290,6 +290,61 @@ describe('the outbox', () => {
   })
 })
 
+describe('one channel going wrong', () => {
+  it('does not stop the alerts queued behind a channel whose secret cannot be read', async () => {
+    const n = notifier()
+    const chat = n.create({
+      kind: 'google-chat',
+      label: 'Tech team',
+      config: { webhookUrl: CHAT_WEBHOOK },
+    })
+    n.create({
+      kind: 'slack',
+      label: 'AV channel',
+      config: { webhookUrl: 'https://hooks.slack.com/services/T/B/xyz' },
+    })
+    // As after a restore under a different key: the reference leads nowhere.
+    db.prepare('UPDATE notification_channel SET config = ? WHERE id = ?').run(
+      JSON.stringify({ webhookUrl: 'secret:gone' }),
+      chat,
+    )
+    n.enqueue(failure())
+
+    await n.flush()
+    expect(requests.some((r) => r.url.startsWith('https://hooks.slack.com'))).toBe(true)
+  })
+
+  it('sends each message once when two flushes overlap', async () => {
+    let release!: () => void
+    const held = new Promise<void>((resolve) => (release = resolve))
+    const n = notifier({
+      fetchImpl: async (url, init) => {
+        await held
+        return fetchImpl(url, init)
+      },
+    })
+    n.create({ kind: 'webhook', label: 'Ops', config: { url: 'https://example.test/hook' } })
+    n.enqueue(failure())
+
+    const first = n.flush()
+    const second = n.flush()
+    release()
+    await Promise.all([first, second])
+    expect(requests).toHaveLength(1)
+  })
+
+  it('does not let a backlog on a paced channel hold up another', async () => {
+    const n = notifier()
+    n.create({ kind: 'google-chat', label: 'Tech team', config: { webhookUrl: CHAT_WEBHOOK } })
+    for (let i = 0; i < 12; i++) n.enqueue(failure({ dedupeKey: `backlog-${i}` }))
+    n.create({ kind: 'webhook', label: 'Ops', config: { url: 'https://example.test/hook' } })
+    n.enqueue(failure({ dedupeKey: 'the-new-one' }))
+
+    await n.flush()
+    expect(requests.some((r) => r.url === 'https://example.test/hook')).toBe(true)
+  })
+})
+
 describe('the generic webhook', () => {
   it('posts the notification as fields, not prose', async () => {
     const n = notifier()
@@ -321,6 +376,41 @@ describe('Slack', () => {
     expect(body.text).toContain('Sunday Service failed to run')
     expect(body.blocks[0].type).toBe('header')
     expect(body.blocks.some((b: { type: string }) => b.type === 'actions')).toBe(true)
+  })
+})
+
+describe('Slack, with an unusually long alert', () => {
+  it('keeps every field inside what Slack accepts', async () => {
+    const n = notifier()
+    n.create({
+      kind: 'slack',
+      label: 'AV channel',
+      config: { webhookUrl: 'https://hooks.slack.com/services/T/B/xyz' },
+    })
+    n.enqueue(failure({ facts: [{ label: 'Reason', value: '<html>'.repeat(1_000) }] }))
+    await n.flush()
+
+    const fields = requests[0]!.body.blocks.flatMap(
+      (block: { fields?: { text: string }[] }) => block.fields ?? [],
+    )
+    expect(fields.every((field: { text: string }) => field.text.length <= 2_000)).toBe(true)
+  })
+
+  it('sends it as plain text when Slack will not take the layout', async () => {
+    let calls = 0
+    respond = () =>
+      calls++ === 0 ? { ok: false, status: 400, text: 'invalid_blocks' } : { ok: true, status: 200 }
+    const n = notifier()
+    n.create({
+      kind: 'slack',
+      label: 'AV channel',
+      config: { webhookUrl: 'https://hooks.slack.com/services/T/B/xyz' },
+    })
+    n.enqueue(failure())
+
+    expect(await n.flush()).toEqual({ sent: 1, failed: 0 })
+    expect(requests[1]!.body.blocks).toBeUndefined()
+    expect(requests[1]!.body.text).toContain('Sunday Service failed to run')
   })
 })
 

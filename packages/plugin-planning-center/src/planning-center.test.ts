@@ -11,10 +11,14 @@ import { planningCenterSource } from './source.js'
 
 let pco: FakePlanningCenter
 
+/** Before every plan the fake has, so all of them are upcoming. */
+const TODAY = Date.parse('2026-09-01T12:00:00Z')
+
 const api = (over: { applicationId?: string; secret?: string } = {}) =>
   new PlanningCenterApi(
     { applicationId: over.applicationId ?? 'app-id', secret: over.secret ?? 'app-secret' },
     pco.fetch,
+    () => TODAY,
   )
 
 beforeEach(() => {
@@ -71,6 +75,19 @@ describe('reading the schedule', () => {
     expect(times[0]?.plan.seriesTitle).toBe('Romans')
     expect(times[0]?.time.name).toBe('9:00 Service')
     expect(times[1]?.time.name).toBe('11:00 Service')
+  })
+
+  it('still lists the 11:00 service once the 9:00 has started', async () => {
+    // At 09:30 the plan's date — its first time — is in the past. Asking for
+    // "future" plans dropped it, and sync then deleted the 11:00.
+    pco.now = () => Date.parse('2026-09-20T14:30:00Z')
+    const midService = new PlanningCenterApi(
+      { applicationId: 'app-id', secret: 'app-secret' },
+      pco.fetch,
+      () => Date.parse('2026-09-20T14:30:00Z'),
+    )
+    const times = await midService.serviceTimes('1024')
+    expect(times.map((entry) => entry.time.name)).toContain('11:00 Service')
   })
 
   it('leaves rehearsals out of the schedule', async () => {
@@ -195,6 +212,7 @@ describe('as a plan source', () => {
     planningCenterSource({
       resolveCredentials: async () => credentials,
       fetchImpl: pco.fetch,
+      now: () => TODAY,
     })
 
   const good = { applicationId: 'app-id', secret: 'app-secret' }
@@ -266,6 +284,7 @@ describe('folders', () => {
     planningCenterSource({
       resolveCredentials: async () => ({ applicationId: 'app-id', secret: 'app-secret' }),
       fetchImpl: pco.fetch,
+      now: () => TODAY,
     })
 
   it('reports where each service type sits, outermost folder first', async () => {

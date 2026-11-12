@@ -18,6 +18,8 @@ export interface PlanningCenterOptions {
    */
   resolveCredentials: () => Promise<Credentials | undefined>
   fetchImpl?: Fetch
+  /** The clock the date filter is read against. */
+  now?: () => number
 }
 
 /**
@@ -32,7 +34,7 @@ export function planningCenterSource(options: PlanningCenterOptions): PlanSource
   const api = async (): Promise<PlanningCenterApi | undefined> => {
     const credentials = await options.resolveCredentials()
     if (!credentials?.applicationId || !credentials.secret) return undefined
-    return new PlanningCenterApi(credentials, options.fetchImpl)
+    return new PlanningCenterApi(credentials, options.fetchImpl, options.now)
   }
 
   const required = async (): Promise<PlanningCenterApi> => {

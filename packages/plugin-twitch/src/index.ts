@@ -223,6 +223,7 @@ export interface TwitchPluginOptions {
 }
 
 export function twitchProvider(options: TwitchPluginOptions): DestinationProvider {
+  const tokenSources = new Map<string, { issuedWith: string; source: RefreshingTokenSource }>()
   const now = options.now ?? Date.now
 
   return {
@@ -260,15 +261,29 @@ export function twitchProvider(options: TwitchPluginOptions): DestinationProvide
       if (!accountRef) throw new ReauthRequiredError('no account is connected to this destination')
 
       const { client, refreshToken } = await options.resolveClient(accountRef)
-      const tokens = new RefreshingTokenSource(
-        client,
-        refreshToken,
-        // Twitch hands back a new refresh token on refresh and invalidates
-        // the old one. Not writing it back is an outage a week later.
-        (next) => options.saveRefreshToken(accountRef, next),
-        now,
-        options.fetchImpl,
-      )
+      // One token source per account, shared by every instance. A fresh one
+      // each time would refresh on its first call, and two opened together
+      // — the scheduler and somebody's browser — would spend the same
+      // refresh token twice. Replaced only when the stored token is one it
+      // did not issue: the account was reconnected.
+      const shared = tokenSources.get(accountRef)
+      const tokens =
+        shared &&
+        (shared.issuedWith === refreshToken || shared.source.currentRefreshToken === refreshToken)
+          ? shared.source
+          : new RefreshingTokenSource(
+              client,
+              refreshToken,
+              // Twitch hands back a new refresh token on refresh and
+              // invalidates the old one. Not writing it back is an outage a
+              // week later.
+              (next) => options.saveRefreshToken(accountRef, next),
+              now,
+              options.fetchImpl,
+            )
+      if (tokens !== shared?.source) {
+        tokenSources.set(accountRef, { issuedWith: refreshToken, source: tokens })
+      }
       const api = new TwitchApi(client.clientId, tokens, options.fetchImpl)
 
       // Asked rather than stored: the watch URL needs the login name, which
@@ -292,4 +307,4 @@ export function twitchProvider(options: TwitchPluginOptions): DestinationProvide
 }
 
 export { MAX_TITLE, pickIngest, TwitchApi, TwitchApiError, RateLimitedError } from './api.js'
-export { ReauthRequiredError, SCOPES } from './oauth.js'
+export { ReauthRequiredError, SCOPES, TokenEndpointError } from './oauth.js'

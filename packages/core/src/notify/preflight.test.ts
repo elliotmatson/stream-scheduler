@@ -280,6 +280,50 @@ describe('pre-flight', () => {
     expect(sent[1]!.body.summary).toContain('One problem')
   })
 
+  it('speaks up again when the same thing goes wrong in a different way', async () => {
+    const encoder = addDevice({ kind: 'encoder' })
+    await connections.open(encoder)
+    seed({ source: encoder, destinationId: addDestination() })
+    destinationState = { state: 'quota_exhausted', quotaRemaining: 0 }
+
+    const preflight = checker()
+    await preflight.run()
+    await notifier.flush()
+    expect(sent).toHaveLength(1)
+
+    // The same destination, now refusing its authorization: news, not a repeat.
+    destinationState = { state: 'reauth_required', message: 'Token has been expired or revoked.' }
+    clock.advance(3_600_000)
+    await preflight.run()
+    await notifier.flush()
+    expect(sent.filter((s) => s.body.event === 'preflight.problem')).toHaveLength(2)
+  })
+
+  it('marks the account as needing reconnecting, and says so once', async () => {
+    const encoder = addDevice({ kind: 'encoder' })
+    await connections.open(encoder)
+    const destinationId = addDestination()
+    db.prepare(
+      `INSERT INTO account (id, provider, external_id, display_name, secret_ref, scopes, created_at)
+       VALUES ('acct', 'youtube', 'chan', 'Grace Worship', 'ref', '[]', 0)`,
+    ).run()
+    db.prepare("UPDATE destination SET account_id = 'acct' WHERE id = ?").run(destinationId)
+    seed({ source: encoder, destinationId })
+    destinationState = { state: 'reauth_required', message: 'Token has been expired or revoked.' }
+
+    const preflight = checker()
+    await preflight.run()
+    clock.advance(3_600_000)
+    await preflight.run()
+    await notifier.flush()
+
+    const status = db.prepare("SELECT status FROM account WHERE id = 'acct'").get() as {
+      status: string
+    }
+    expect(status.status).toBe('reauth_required')
+    expect(sent.filter((s) => s.body.event === 'account.reauth_required')).toHaveLength(1)
+  })
+
   it('only says all-clear when asked to', async () => {
     const encoder = addDevice({ kind: 'encoder' })
     await connections.open(encoder)

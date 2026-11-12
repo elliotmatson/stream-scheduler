@@ -57,6 +57,8 @@ export class FakePlanningCenter {
   parentAsAttribute = false
   /** Make the folders endpoint fail, leaving only the service types. */
   foldersFail = false
+  /** The fake's clock, for the date filters. */
+  now: () => number = Date.now
 
   /** Plans by service type id. */
   plans = new Map<string, FakePlan[]>([
@@ -156,8 +158,28 @@ export class FakePlanningCenter {
 
     const plansMatch = /^\/service_types\/([^/]+)\/plans$/.exec(path)
     if (plansMatch) {
-      const plans = this.plans.get(decodeURIComponent(plansMatch[1]!))
-      if (!plans) return json(404, { errors: [{ detail: 'Resource not found.' }] })
+      const all = this.plans.get(decodeURIComponent(plansMatch[1]!))
+      if (!all) return json(404, { errors: [{ detail: 'Resource not found.' }] })
+      // A plan's date is its first time, as Planning Center sorts and
+      // filters them. `future` is modelled the strict way: once the first
+      // service has started, the plan is no longer in the future.
+      const dateOf = (plan: FakePlan) =>
+        Math.min(
+          ...plan.times
+            .map((time) => Date.parse(time.startsAt))
+            .filter((at) => Number.isFinite(at)),
+        )
+      const filter = parsed.searchParams.get('filter')
+      const after = parsed.searchParams.get('after')
+      const filtered = all.filter((plan) => {
+        if (filter === 'future') return dateOf(plan) >= this.now()
+        if (filter === 'after' && after) return dateOf(plan) >= Date.parse(after)
+        return true
+      })
+      if (parsed.searchParams.get('order') === 'sort_date') {
+        filtered.sort((a, b) => dateOf(a) - dateOf(b))
+      }
+      const plans = this.page(parsed, filtered)
       return json(200, {
         data: plans.map((plan) => ({
           type: 'Plan',
