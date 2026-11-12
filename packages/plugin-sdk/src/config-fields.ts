@@ -91,7 +91,14 @@ export function validateConfig(
           issues.push({ field: field.id, message: `${field.label} must be true or false` })
         break
       case 'dropdown':
-        if (!field.choices.some((c) => c.id === value))
+        // Choices read off a live account (a channel's playlists) are not
+        // in the declaration — it says `choices: []` — so checking against
+        // it refused every one of them. They can only be checked for shape
+        // here; the service itself says whether the id is real.
+        if (field.choicesFrom !== undefined) {
+          if (typeof value !== 'string')
+            issues.push({ field: field.id, message: `${field.label} must be text` })
+        } else if (!field.choices.some((c) => c.id === value))
           issues.push({
             field: field.id,
             message: `${field.label} is not one of the available choices`,

@@ -101,6 +101,31 @@ describe('validateConfig', () => {
   })
 })
 
+describe('a dropdown whose choices come from the account', () => {
+  // The YouTube playlist picker, as declared: no choices of its own.
+  const fields: ConfigField[] = [
+    {
+      type: 'dropdown',
+      id: 'playlistId',
+      label: 'Add finished videos to playlist',
+      choices: [],
+      choicesFrom: 'playlists',
+    },
+  ]
+
+  it('accepts a playlist read off the channel', () => {
+    expect(validateConfig(fields, { playlistId: 'PLabc123' })).toEqual([])
+  })
+
+  it('accepts no playlist at all', () => {
+    expect(validateConfig(fields, {})).toEqual([])
+  })
+
+  it('still refuses something that is not an id', () => {
+    expect(validateConfig(fields, { playlistId: 42 })[0]?.message).toMatch(/must be text/)
+  })
+})
+
 describe('isSerializable', () => {
   it('accepts plain JSON shapes', () => {
     expect(isSerializable({ a: 1, b: [true, null, { c: 'x' }] })).toBe(true)
