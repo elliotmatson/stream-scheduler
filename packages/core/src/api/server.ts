@@ -857,39 +857,53 @@ function registerRoutes(fastify: FastifyInstance, app: Application): void {
     const parsed = seriesBody.parse(request.body)
     const body = { ...parsed, dtstart: resolveDtstart(parsed) }
     assertSchedulable(body)
+    // What it streams and records, sent with it so the event is made in one
+    // go from one form. Every one is checked before anything is written: a
+    // bad third output must not leave an event with two.
+    const outputs = z
+      .array(outputBody)
+      .default([])
+      .parse((request.body as { outputs?: unknown } | undefined)?.outputs)
+    for (const output of outputs) {
+      assertDeliverable(output)
+      assertRightKindOfDevice(app, output)
+    }
 
     const id = randomUUID()
     const now = app.clock.now()
-    db.prepare(
-      `INSERT INTO event_series
+    db.transaction(() => {
+      db.prepare(
+        `INSERT INTO event_series
          (id, label, timezone, rrule, dtstart, duration_ms, exdates,
           prepare_lead_ms, preroll_ms, postroll_ms, late_start_grace_ms, templates, version, enabled,
           plan_source_id, plan_group_id, created_at, updated_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?)`,
-    ).run(
-      id,
-      body.label,
-      body.timezone,
-      body.rrule,
-      body.dtstart,
-      body.durationMs,
-      JSON.stringify(body.exdates),
-      body.prepareLeadMs,
-      body.prerollMs,
-      body.postrollMs,
-      body.lateStartGraceMs,
-      JSON.stringify(body.templates),
-      body.enabled ? 1 : 0,
-      pairingColumns(app, body).sourceId,
-      pairingColumns(app, body).groupId,
-      now,
-      now,
-    )
+      ).run(
+        id,
+        body.label,
+        body.timezone,
+        body.rrule,
+        body.dtstart,
+        body.durationMs,
+        JSON.stringify(body.exdates),
+        body.prepareLeadMs,
+        body.prerollMs,
+        body.postrollMs,
+        body.lateStartGraceMs,
+        JSON.stringify(body.templates),
+        body.enabled ? 1 : 0,
+        pairingColumns(app, body).sourceId,
+        pairingColumns(app, body).groupId,
+        now,
+        now,
+      )
+      for (const [position, output] of outputs.entries()) insertOutput(id, output, position)
+    })()
     materializeSeries(db, id, { clock: app.clock })
     // Fetched now rather than at the next hourly tick: a paired series with
     // an empty calendar for an hour reads as broken.
     await syncNewPairing(app, id)
-    return reply.code(201).send({ id })
+    return reply.code(201).send({ id, ...outputsResponse(id) })
   })
 
   fastify.patch('/api/series/:id', async (request) => {
@@ -1025,6 +1039,40 @@ function registerRoutes(fastify: FastifyInstance, app: Application): void {
     position: z.number().int().nonnegative().optional(),
   })
 
+  /** Writes one output row. Validation is the caller's. */
+  const insertOutput = (
+    seriesId: string,
+    body: z.infer<typeof outputBody>,
+    position: number,
+  ): string => {
+    const outputId = randomUUID()
+    db.prepare(
+      `INSERT INTO event_output
+         (id, series_id, kind, label, position, offset_ms, duration_ms, follows_window,
+          destination_id, credential_id,
+          device_id, node_id, templates, settings, enabled, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      outputId,
+      seriesId,
+      body.kind,
+      body.label,
+      position,
+      body.offsetMs,
+      body.durationMs,
+      body.followsWindow ? 1 : 0,
+      body.destinationId,
+      body.credentialId,
+      body.deviceId,
+      body.nodeId,
+      JSON.stringify(body.templates),
+      JSON.stringify(body.settings),
+      body.enabled ? 1 : 0,
+      app.clock.now(),
+    )
+    return outputId
+  }
+
   const outputsResponse = (seriesId: string) => ({
     outputs: outputsForSeries(db, seriesId),
     conflicts: overlapsForSeries(db, seriesId).map((conflict) => ({
@@ -1056,31 +1104,7 @@ function registerRoutes(fastify: FastifyInstance, app: Application): void {
         }
       ).p + 1
 
-    const outputId = randomUUID()
-    db.prepare(
-      `INSERT INTO event_output
-         (id, series_id, kind, label, position, offset_ms, duration_ms, follows_window,
-          destination_id, credential_id,
-          device_id, node_id, templates, settings, enabled, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    ).run(
-      outputId,
-      id,
-      body.kind,
-      body.label,
-      next,
-      body.offsetMs,
-      body.durationMs,
-      body.followsWindow ? 1 : 0,
-      body.destinationId,
-      body.credentialId,
-      body.deviceId,
-      body.nodeId,
-      JSON.stringify(body.templates),
-      JSON.stringify(body.settings),
-      body.enabled ? 1 : 0,
-      app.clock.now(),
-    )
+    const outputId = insertOutput(id, body, next)
     // An output changes what the event does, so occurrences already
     // materialized are now out of date in the same way a schedule edit
     // makes them.
