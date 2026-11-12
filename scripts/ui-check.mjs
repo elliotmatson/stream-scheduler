@@ -639,6 +639,9 @@ async function makeSkipAndRemoveAnEvent(browser, base) {
   await create.waitFor({ timeout: TIMEOUT })
   check('Create says what it is about to make', true)
   await create.click()
+  // Saving keeps the form open on the new event, so its outputs can still
+  // be changed; the list catches up once it is closed.
+  await page.getByRole('button', { name: 'Done', exact: true }).click()
 
   const card = page.locator('.card', { has: page.locator('h2', { hasText: NAME }) })
   await card.first().waitFor({ timeout: TIMEOUT })
