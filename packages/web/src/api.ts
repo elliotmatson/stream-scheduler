@@ -18,6 +18,8 @@ export interface Occurrence {
   overrides: OccurrenceOverrides
   runId: string | null
   runState: string | null
+  /** The devices its outputs use. */
+  deviceIds?: string[]
 }
 
 /** What somebody changed about one occurrence, and nothing else. */

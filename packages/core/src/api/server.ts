@@ -1157,6 +1157,7 @@ function registerRoutes(fastify: FastifyInstance, app: Application): void {
       .parse(request.query)
     const from = query.from ?? app.clock.now() - 7 * 86_400_000
     const to = query.to ?? app.clock.now() + 60 * 86_400_000
+    const devicesBySeries: Record<string, string[]> = {}
 
     return (
       db
@@ -1171,7 +1172,17 @@ function registerRoutes(fastify: FastifyInstance, app: Application): void {
         .all(from, to) as OccurrenceRowShape[]
     ).map((row) => {
       const overrides = parseOverrides(row.overrides)
+      // Which devices it uses, so the calendar can be narrowed to one
+      // encoder's mornings. Read per series, which is where outputs live.
+      const deviceIds = (devicesBySeries[row.series_id] ??= (
+        db
+          .prepare(
+            'SELECT DISTINCT device_id FROM event_output WHERE series_id = ? AND enabled = 1 AND device_id IS NOT NULL',
+          )
+          .all(row.series_id) as { device_id: string }[]
+      ).map((output) => output.device_id))
       return {
+        deviceIds,
         id: row.id,
         seriesId: row.series_id,
         seriesLabel: row.series_label,

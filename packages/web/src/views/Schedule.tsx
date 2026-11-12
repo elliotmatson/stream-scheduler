@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import type { ReactNode } from 'react'
+import type { CSSProperties, ReactNode } from 'react'
 import { api, useLiveRefresh, useResource, type Occurrence } from '../api.ts'
 import {
   Card,
@@ -11,6 +11,7 @@ import {
   StatusPill,
   toneFor,
 } from '../components.tsx'
+import { OccurrencePopover } from './OccurrencePopover.tsx'
 import {
   dateTimeIn,
   dayLabel,
@@ -26,7 +27,7 @@ import {
   weekLabel,
 } from '../format.ts'
 
-type View = 'month' | 'week' | 'list'
+type View = 'day' | 'week' | 'month' | 'list'
 
 export function Schedule({ navigate }: { navigate: (path: string) => void }): ReactNode {
   const [view, setView] = useState<View>('month')
@@ -36,16 +37,19 @@ export function Schedule({ navigate }: { navigate: (path: string) => void }): Re
   const [anchor, setAnchor] = useState(() => new Date())
 
   const weekStart = startOfWeek(anchor)
+  const dayStart = new Date(anchor.getFullYear(), anchor.getMonth(), anchor.getDate())
   // A month's worth either side in the month view, a few days in the week
   // view: a calendar cell for an event in another timezone must never be
   // missing just because the UTC instant fell outside the range.
   const range =
-    view === 'week'
-      ? { from: addDays(weekStart, -2).getTime(), to: addDays(weekStart, 9).getTime() }
-      : {
-          from: Date.UTC(anchor.getFullYear(), anchor.getMonth() - 1, 1),
-          to: Date.UTC(anchor.getFullYear(), anchor.getMonth() + 2, 1),
-        }
+    view === 'day'
+      ? { from: addDays(dayStart, -2).getTime(), to: addDays(dayStart, 3).getTime() }
+      : view === 'week'
+        ? { from: addDays(weekStart, -2).getTime(), to: addDays(weekStart, 9).getTime() }
+        : {
+            from: Date.UTC(anchor.getFullYear(), anchor.getMonth() - 1, 1),
+            to: Date.UTC(anchor.getFullYear(), anchor.getMonth() + 2, 1),
+          }
   const { data, error, reload } = useResource(
     () => api.occurrences(range.from, range.to),
     [range.from, range.to],
@@ -56,13 +60,26 @@ export function Schedule({ navigate }: { navigate: (path: string) => void }): Re
 
   const shift = (by: number): void =>
     setAnchor((current) =>
-      view === 'week'
-        ? addDays(current, by * 7)
-        : new Date(current.getFullYear(), current.getMonth() + by, 1),
+      view === 'day'
+        ? addDays(current, by)
+        : view === 'week'
+          ? addDays(current, by * 7)
+          : new Date(current.getFullYear(), current.getMonth() + by, 1),
     )
 
-  const select = (occurrence: Occurrence): void =>
-    navigate(occurrence.runId ? `/runs/${occurrence.runId}` : `/occurrences/${occurrence.id}`)
+  // Narrowed to one device's mornings: which events need the main encoder
+  // this month is a question people ask about the gear, not the events.
+  const devices = useResource(() => api.devices(), []).data ?? []
+  const [deviceFilter, setDeviceFilter] = useState('')
+  const shown = (data ?? []).filter(
+    (occurrence) => !deviceFilter || (occurrence.deviceIds ?? []).includes(deviceFilter),
+  )
+
+  // A click opens a summary with the things people do to one date, rather
+  // than going straight to a page: most of the time a glance is the point.
+  const [picked, setPicked] = useState<{ occurrence: Occurrence; x: number; y: number }>()
+  const select = (occurrence: Occurrence, at?: { x: number; y: number }): void =>
+    setPicked({ occurrence, x: at?.x ?? 0, y: at?.y ?? 0 })
 
   const move = useMove(reload)
 
@@ -73,7 +90,24 @@ export function Schedule({ navigate }: { navigate: (path: string) => void }): Re
         subtitle="Every date each event falls on, and what became of it."
         actions={
           <>
+            {devices.length > 1 ? (
+              <select
+                aria-label="Show events using"
+                value={deviceFilter}
+                onChange={(event) => setDeviceFilter(event.target.value)}
+              >
+                <option value="">All devices</option>
+                {devices.map((device) => (
+                  <option key={device.id} value={device.id}>
+                    {device.label}
+                  </option>
+                ))}
+              </select>
+            ) : null}
             <div className="toggle">
+              <button aria-pressed={view === 'day'} onClick={() => setView('day')}>
+                Day
+              </button>
               <button aria-pressed={view === 'month'} onClick={() => setView('month')}>
                 Month
               </button>
@@ -88,18 +122,32 @@ export function Schedule({ navigate }: { navigate: (path: string) => void }): Re
               <div className="row">
                 <button
                   onClick={() => shift(-1)}
-                  aria-label={view === 'week' ? 'Previous week' : 'Previous month'}
+                  aria-label={
+                    view === 'day'
+                      ? 'Previous day'
+                      : view === 'week'
+                        ? 'Previous week'
+                        : 'Previous month'
+                  }
                 >
                   ←
                 </button>
                 <strong style={{ minWidth: 150, textAlign: 'center' }}>
-                  {view === 'week'
-                    ? weekLabel(weekStart)
-                    : monthLabel(anchor.getFullYear(), anchor.getMonth())}
+                  {view === 'day'
+                    ? dayStart.toLocaleDateString(undefined, {
+                        weekday: 'long',
+                        month: 'long',
+                        day: 'numeric',
+                      })
+                    : view === 'week'
+                      ? weekLabel(weekStart)
+                      : monthLabel(anchor.getFullYear(), anchor.getMonth())}
                 </strong>
                 <button
                   onClick={() => shift(1)}
-                  aria-label={view === 'week' ? 'Next week' : 'Next month'}
+                  aria-label={
+                    view === 'day' ? 'Next day' : view === 'week' ? 'Next week' : 'Next month'
+                  }
                 >
                   →
                 </button>
@@ -112,19 +160,50 @@ export function Schedule({ navigate }: { navigate: (path: string) => void }): Re
 
       <ErrorBanner error={error ?? move.problem} />
 
+      {data !== undefined && data.length === 0 ? (
+        // An empty calendar is a blank grid; it says nothing about what to
+        // do next. This does.
+        <div className="banner info">
+          Nothing is scheduled yet.{' '}
+          <button className="link" onClick={() => navigate('/events')}>
+            Add an event
+          </button>
+        </div>
+      ) : null}
+
       {view === 'month' ? (
         <CalendarGrid
           year={anchor.getFullYear()}
           month={anchor.getMonth()}
-          occurrences={data ?? []}
+          occurrences={shown}
           onSelect={select}
           move={move}
         />
-      ) : view === 'week' ? (
-        <WeekGrid start={weekStart} occurrences={data ?? []} onSelect={select} move={move} />
+      ) : view === 'week' || view === 'day' ? (
+        <WeekGrid
+          start={view === 'day' ? dayStart : weekStart}
+          dayCount={view === 'day' ? 1 : 7}
+          occurrences={shown}
+          onSelect={select}
+          move={move}
+        />
       ) : (
-        <ScheduleList occurrences={data ?? []} navigate={navigate} reload={reload} />
+        <ScheduleList occurrences={shown} navigate={navigate} reload={reload} />
       )}
+
+      {picked ? (
+        <OccurrencePopover
+          devices={devices}
+          occurrence={picked.occurrence}
+          at={picked}
+          navigate={navigate}
+          onClose={() => setPicked(undefined)}
+          onChanged={() => {
+            setPicked(undefined)
+            reload()
+          }}
+        />
+      ) : null}
     </>
   )
 }
@@ -243,7 +322,7 @@ function CalendarGrid({
   year: number
   month: number
   occurrences: Occurrence[]
-  onSelect: (occurrence: Occurrence) => void
+  onSelect: (occurrence: Occurrence, at?: { x: number; y: number }) => void
   move: Move
 }): ReactNode {
   const byDay = useMemo(() => {
@@ -304,7 +383,7 @@ function CalendarGrid({
                 className={`event ${occurrence.runState === 'running' ? 'live' : ''} ${occurrence.status}${
                   move.dragging?.id === occurrence.id ? ' dragging' : ''
                 }`}
-                onClick={() => onSelect(occurrence)}
+                onClick={(event) => onSelect(occurrence, { x: event.clientX, y: event.clientY })}
                 title={describeChip(occurrence, move.movable(occurrence))}
                 {...dragProps(occurrence, move)}
               >
@@ -370,22 +449,25 @@ function describeChip(occurrence: Occurrence, movable = false): string {
 
 function WeekGrid({
   start,
+  dayCount = 7,
   occurrences,
   onSelect,
   move,
 }: {
   start: Date
+  /** 7 for a week, 1 for the day view. */
+  dayCount?: number
   occurrences: Occurrence[]
-  onSelect: (occurrence: Occurrence) => void
+  onSelect: (occurrence: Occurrence, at?: { x: number; y: number }) => void
   move: Move
 }): ReactNode {
   // Keyed on the week itself, not on the array: a fresh array every render
   // would make every memo below recompute and defeat the point of them.
   const weekKey = keyOf(start)
   const days = useMemo(
-    () => Array.from({ length: 7 }, (_, index) => addDays(start, index)),
+    () => Array.from({ length: dayCount }, (_, index) => addDays(start, index)),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [weekKey],
+    [weekKey, dayCount],
   )
   const shown = useMemo(() => new Set(days.map(keyOf)), [days])
 
@@ -429,10 +511,16 @@ function WeekGrid({
 
   const hours = Array.from({ length: window.to - window.from }, (_, index) => window.from + index)
   const todayKey = keyOf(new Date())
+  const nowMinutes = new Date().getHours() * 60 + new Date().getMinutes()
   const offset = (minutes: number): number => (minutes / 60 - window.from) * HOUR_PX
 
   return (
-    <div className="week" role="region" aria-label="Scheduled events by time of day">
+    <div
+      className="week"
+      role="region"
+      aria-label="Scheduled events by time of day"
+      style={{ '--days': dayCount } as CSSProperties}
+    >
       <div className="week-head">
         <div className="week-gutter" />
         {days.map((day) => (
@@ -476,6 +564,13 @@ function WeekGrid({
                   : undefined
               }
             >
+              {key === todayKey &&
+              nowMinutes >= window.from * 60 &&
+              nowMinutes <= window.to * 60 ? (
+                // Where the day has got to, as in any calendar: the line
+                // between what has happened and what is still coming.
+                <div className="now-line" style={{ top: offset(nowMinutes) }} aria-hidden="true" />
+              ) : null}
               {(laid.get(key) ?? []).map((placed) => (
                 <button
                   key={placed.occurrence.id}
@@ -492,7 +587,9 @@ function WeekGrid({
                     left: `${(placed.lane / placed.lanes) * 100}%`,
                     width: `${(1 / placed.lanes) * 100}%`,
                   }}
-                  onClick={() => onSelect(placed.occurrence)}
+                  onClick={(event) =>
+                    onSelect(placed.occurrence, { x: event.clientX, y: event.clientY })
+                  }
                   title={describeChip(placed.occurrence, move.movable(placed.occurrence))}
                 >
                   <span className="event-time">

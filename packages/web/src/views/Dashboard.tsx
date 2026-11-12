@@ -123,9 +123,16 @@ export function Dashboard({ navigate }: { navigate: (path: string) => void }): R
           </Card>
         ))}
 
+        <WeekStrip next={data.next} now={data.now} onOpen={() => navigate('/schedule')} />
+
         <Card title="Up next">
           {data.next.length === 0 ? (
-            <Empty>Nothing scheduled in the next week.</Empty>
+            <Empty>
+              Nothing scheduled in the next week.{' '}
+              <button className="link" onClick={() => navigate('/events')}>
+                Add an event
+              </button>
+            </Empty>
           ) : (
             <div className="table-wrap">
               <table>
@@ -511,6 +518,59 @@ function Output({ output, now }: { output: DashboardOutput; now: number }): Reac
           </span>
         ) : null}
       </div>
+    </div>
+  )
+}
+
+/**
+ * The next seven days at a glance, a dot on each day with something on.
+ *
+ * Read before the table below it: "is there anything this week, and when"
+ * is the first question, and a row of days answers it without reading.
+ */
+function WeekStrip({
+  next,
+  now,
+  onOpen,
+}: {
+  next: { scheduledStart: number }[]
+  now: number
+  onOpen: () => void
+}): ReactNode {
+  const today = new Date(now)
+  const days = Array.from(
+    { length: 7 },
+    (_, index) => new Date(today.getFullYear(), today.getMonth(), today.getDate() + index),
+  )
+  const keyOf = (date: Date): string => `${date.getFullYear()}-${date.getMonth()}-${date.getDate()}`
+  const busy = new Map<string, number>()
+  for (const item of next) {
+    const key = keyOf(new Date(item.scheduledStart))
+    busy.set(key, (busy.get(key) ?? 0) + 1)
+  }
+
+  return (
+    <div className="week-strip card" role="list" aria-label="The next seven days">
+      {days.map((day, index) => {
+        const count = busy.get(keyOf(day)) ?? 0
+        return (
+          <button
+            key={keyOf(day)}
+            role="listitem"
+            className={`week-strip-day${index === 0 ? ' today' : ''}`}
+            onClick={onOpen}
+            aria-label={`${day.toLocaleDateString(undefined, { weekday: 'long' })}: ${
+              count === 0 ? 'nothing' : `${count} event${count === 1 ? '' : 's'}`
+            }`}
+          >
+            <span className="muted small">
+              {day.toLocaleDateString(undefined, { weekday: 'short' })}
+            </span>
+            <strong>{day.getDate()}</strong>
+            <span className={count > 0 ? 'week-strip-dot' : 'week-strip-dot empty'} />
+          </button>
+        )
+      })}
     </div>
   )
 }

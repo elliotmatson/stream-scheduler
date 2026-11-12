@@ -1238,7 +1238,7 @@ input[type='checkbox'] {
 .week-head,
 .week-body {
   display: grid;
-  grid-template-columns: 56px repeat(7, minmax(0, 1fr));
+  grid-template-columns: 56px repeat(var(--days, 7), minmax(0, 1fr));
 }
 
 .week-head {
@@ -2017,4 +2017,69 @@ button.link:hover {
 /* "Card:" before "23h left", quieter than the value it names. */
 .fact-label {
   opacity: 0.7;
+}
+
+/* The event summary that opens where a calendar date was clicked. */
+.popover {
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.35);
+  padding: 12px 14px;
+}
+
+/* Where today has got to, across today's column. */
+.now-line {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 0;
+  border-top: 2px solid var(--bad, #e5484d);
+  z-index: 2;
+  pointer-events: none;
+}
+.now-line::before {
+  content: '';
+  position: absolute;
+  left: -5px;
+  top: -6px;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--bad, #e5484d);
+}
+
+/* The next seven days on Now. */
+.week-strip {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 4px;
+  padding: 8px;
+}
+.week-strip {
+  align-items: start;
+}
+.week-strip-day {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 2px;
+  height: auto;
+  min-height: 0;
+  padding: 6px 0;
+  background: transparent;
+  border: 0;
+}
+.week-strip-day > * {
+  flex: none;
+}
+.week-strip-day.today strong {
+  color: var(--accent);
+}
+.week-strip-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+.week-strip-dot.empty {
+  background: transparent;
 }
