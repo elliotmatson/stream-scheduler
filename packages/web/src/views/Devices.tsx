@@ -393,14 +393,16 @@ function DevicePanel({
             value={device.lastSeenAt ? relative(device.lastSeenAt) : 'never'}
             tip="When this device last answered."
           />
-          <Fact
-            label="Firmware"
-            value={device.capabilities?.firmware ?? '—'}
-            tip="The version the device reported when it connected."
-          />
+          {firmwareOf(device.capabilities?.firmware) ? (
+            <Fact
+              label="Firmware"
+              value={firmwareOf(device.capabilities?.firmware)!}
+              tip="The version the device reported when it connected."
+            />
+          ) : null}
           <Fact
             label="Can do"
-            value={device.capabilities?.features.join(', ') || '—'}
+            value={describeFeatures(device.capabilities?.features ?? []) || 'nothing yet'}
             tip="What this model told us it supports. An event can only ask for these."
           />
         </div>
@@ -618,7 +620,7 @@ function NodeControls({ device, node }: { device: Device; node: DeviceNode }): R
       }}
     >
       <summary title="Open to see what this part of the device is doing, and to drive it by hand.">
-        {node.label} <span className="muted">· {node.roles.join(', ')}</span>
+        {node.label}
       </summary>
 
       <div className="stack" style={{ marginTop: 10 }}>
@@ -690,7 +692,7 @@ function NodeControls({ device, node }: { device: Device; node: DeviceNode }): R
                   tip="What the device says it is sending right now."
                   value={
                     streaming === undefined
-                      ? '—'
+                      ? 'not read yet'
                       : streaming.active
                         ? `on${streaming.bitrateBps ? ` · ${Math.round(streaming.bitrateBps / 1000)} kbps` : ''}`
                         : 'off'
@@ -703,7 +705,7 @@ function NodeControls({ device, node }: { device: Device; node: DeviceNode }): R
                   tip="What it is writing right now, and under what name."
                   value={
                     recording === undefined
-                      ? '—'
+                      ? 'not read yet'
                       : recording.active
                         ? (recording.filename ?? 'on')
                         : 'off'
@@ -920,6 +922,17 @@ function NodeControls({ device, node }: { device: Device; node: DeviceNode }): R
                 ] as [ManualAction, string][]
               )
                 .filter(([action]) => node.supports.includes(action))
+                // Start or stop, whichever applies: both side by side made
+                // the one that does something easy to miss. Both while the
+                // state is not known yet.
+                .filter(([action]) => {
+                  const on =
+                    action === 'startStreaming' || action === 'stopStreaming'
+                      ? streaming?.active
+                      : recording?.active
+                  if (on === undefined) return true
+                  return action.startsWith('start') ? !on : on
+                })
                 .map(([action, label]) =>
                   // Stopping something a scheduled event is running is the
                   // one click here that takes a service off air: asked twice.
@@ -1110,4 +1123,20 @@ function DeviceForm({
 /** Less than an hour of headroom before a service is worth shouting about. */
 function lowOn(slot: { remainingMs?: number }): boolean {
   return slot.remainingMs !== undefined && slot.remainingMs < 3_600_000
+}
+
+/**
+ * A firmware version as a person would read it.
+ *
+ * Some devices have none worth showing: a switcher reports the protocol it
+ * speaks, which is not its firmware and means nothing to anybody here.
+ */
+function firmwareOf(raw: string | undefined): string | undefined {
+  if (!raw || /^protocol\b/i.test(raw)) return undefined
+  return raw
+}
+
+/** "streaming, recording" — without the counts and internals some report. */
+function describeFeatures(features: string[]): string {
+  return features.filter((feature) => !feature.includes(':')).join(', ')
 }

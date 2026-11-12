@@ -33,9 +33,7 @@ export function PlanSourceCard({ timezone }: { timezone: string }): ReactNode {
     <Card>
       <h2 style={{ marginTop: 0 }}>Where the schedule comes from</h2>
       <p className="muted" style={{ marginTop: 0 }}>
-        Connect Planning Center and an event can follow its service times instead of a repeating
-        rule — including the weeks that are not normal, when there is one service instead of two, or
-        three instead of one.
+        Let an event follow Planning Center's service times instead of a repeating rule.
       </p>
 
       <ErrorBanner error={error} />

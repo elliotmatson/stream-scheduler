@@ -90,7 +90,8 @@ export function RunDetail({
         back={{ to: '/', label: 'Back to Now', onNavigate: navigate }}
         subtitle={
           <span title="A run is retried from the start if it fails early enough to be worth retrying.">
-            Attempt {run.attempt} · started {run.startedAt ? relative(run.startedAt) : 'not yet'}
+            {run.attempt > 1 ? `Retry ${run.attempt - 1} · ` : ''}
+            started {run.startedAt ? relative(run.startedAt) : 'not yet'}
           </span>
         }
         actions={

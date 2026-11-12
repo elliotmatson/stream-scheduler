@@ -1626,15 +1626,25 @@ ol.preview-list li::marker {
   .nav-links::-webkit-scrollbar {
     display: none;
   }
-  /* Icon-only, so square and big enough to hit with a thumb. */
+  /* Icon with a small word under it, so nobody has to guess which icon
+     is Runs and which is Notifications. Big enough to hit with a thumb. */
   .nav-link {
+    flex-direction: column;
     justify-content: center;
-    min-width: 40px;
-    min-height: 40px;
+    gap: 2px;
+    min-width: 52px;
+    min-height: 44px;
+    padding: 4px 6px;
   }
-  .brand,
   .nav-link span {
+    font-size: 10px;
+    line-height: 1;
+  }
+  .brand {
     display: none;
+  }
+  .theme-toggle {
+    width: auto;
   }
   .sidebar-foot {
     margin-top: 0;
@@ -1653,9 +1663,6 @@ ol.preview-list li::marker {
      a problem — reconnecting, or a run on air — not the absence of one. */
   .when-wide {
     display: none;
-  }
-  .theme-toggle {
-    width: auto;
   }
   .content {
     padding: 16px;
@@ -2005,4 +2012,9 @@ button.link:hover {
   margin: 20vh auto 0;
   padding: 0 16px;
   text-align: center;
+}
+
+/* "Card:" before "23h left", quieter than the value it names. */
+.fact-label {
+  opacity: 0.7;
 }

@@ -320,10 +320,10 @@ function Security({
     <Card title="Password">
       <p className="muted" style={{ marginTop: 0 }}>
         {session.required
-          ? 'One password, shared by everyone who runs this. Changing it signs everybody out, including you on your other devices.'
+          ? 'One shared password. Changing it signs everyone out.'
           : session.trustedNetwork
-            ? 'No password is set here, because this install is configured to trust whatever can reach it — a network with no way in from outside, or something that signs people in before they get this far. The warning about being reachable from the network is switched off to match.'
-            : 'No password is set, so anyone who can reach this address can start a broadcast and drive your devices. On a booth machine nobody else can reach, that is a reasonable way to run it.'}
+            ? 'No password: this install trusts whatever can reach it.'
+            : 'No password: anyone who can reach this address can drive your devices.'}
       </p>
 
       {/* Where somebody wondering why there is no nag will look. Worth
@@ -332,10 +332,8 @@ function Security({
           leave open. */}
       {session.trustedNetwork ? (
         <p className="muted" style={{ marginTop: 0 }}>
-          <code>SCHEDULER_TRUSTED_NETWORK</code> is set, so this app has been told that anything
-          able to reach it is already trusted. It adds no protection of its own — whatever can open
-          this address can drive your devices — so it is worth being sure that is only what you
-          think it is. Unset the variable and restart to put the warnings back.
+          Set by <code>SCHEDULER_TRUSTED_NETWORK</code>. Make sure only people you trust can reach
+          it.
         </p>
       ) : null}
 
@@ -345,9 +343,8 @@ function Security({
           before you make it rather than after. */}
       {session.seededFromEnvironment && session.required ? (
         <p className="muted" style={{ marginTop: 0 }}>
-          This password started out as <code>SCHEDULER_UI_PASSWORD</code>. It was copied here the
-          first time the app started and that variable is no longer read, so changing it here is
-          what counts from now on.
+          First set from <code>SCHEDULER_UI_PASSWORD</code>, which is no longer read. Change it
+          here.
         </p>
       ) : null}
 
@@ -430,9 +427,7 @@ function Schedule({
     <div style={{ marginTop: 20 }}>
       <h3 style={{ margin: '0 0 4px' }}>On a schedule</h3>
       <p className="muted" style={{ marginTop: 0 }}>
-        Written to <code>{schedule.directory}</code>. What these are worth depends on where that
-        actually is: on the same disk as the database they will bring you back from a bad restore,
-        and go down with the drive.
+        Written to <code>{schedule.directory}</code>. Keep that on a different disk from the app.
       </p>
 
       <ErrorBanner error={error} />
