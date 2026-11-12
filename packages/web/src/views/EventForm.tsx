@@ -237,7 +237,7 @@ export function EventForm({ series, onDone }: { series?: Series; onDone: () => v
               hint={
                 fromPlan
                   ? 'Only used for a service time with no end time in the plan.'
-                  : 'Doors open to doors shut. Streams and recordings sit inside it.'
+                  : `Ends at ${clockPlus(draft.time, draft.durationMinutes)}.`
               }
             >
               <input
@@ -348,7 +348,11 @@ export function EventForm({ series, onDone }: { series?: Series; onDone: () => v
           <div className="row">
             <Field
               label="Start early (min)"
-              hint="Air before the event opens, for a countdown or a settling shot."
+              hint={
+                fromPlan
+                  ? 'Air before each service starts.'
+                  : `On air from ${clockPlus(draft.time, -draft.prerollMinutes)}.`
+              }
             >
               <input
                 type="number"
@@ -359,7 +363,11 @@ export function EventForm({ series, onDone }: { series?: Series; onDone: () => v
             </Field>
             <Field
               label="Keep going after (min)"
-              hint="Air past the end, so an overrun does not cut the stream off mid-sentence."
+              hint={
+                fromPlan
+                  ? 'Air after each service ends.'
+                  : `Off air at ${clockPlus(draft.time, draft.durationMinutes + draft.postrollMinutes)}.`
+              }
             >
               <input
                 type="number"
@@ -372,7 +380,11 @@ export function EventForm({ series, onDone }: { series?: Series; onDone: () => v
 
           <Field
             label="Prepare early (min)"
-            hint="How far ahead the broadcast is created and the encoders are pointed at it. Not when it goes on air."
+            hint={
+              fromPlan
+                ? 'Broadcasts are made this long before each service.'
+                : `Broadcasts are made at ${clockPlus(draft.time, -draft.prepareLeadMinutes)}. Nothing goes on air then.`
+            }
           >
             <input
               type="number"
@@ -415,7 +427,7 @@ export function EventForm({ series, onDone }: { series?: Series; onDone: () => v
               disabled={saving || !draft.label}
               onClick={() => void save()}
             >
-              {saving ? 'Saving…' : saved ? 'Save' : 'Create'}
+              {saving ? 'Saving…' : saved ? 'Save' : 'Next: add streams and recordings'}
             </button>
             <button onClick={onDone}>{saved ? 'Done' : 'Cancel'}</button>
           </div>
@@ -441,7 +453,7 @@ export function EventForm({ series, onDone }: { series?: Series; onDone: () => v
         </div>
       ) : (
         <p className="muted" style={{ marginBottom: 0 }}>
-          Create the event first. Its outputs — what it streams and records, and when — appear here.
+          Streams and recordings are added here, on this page, once the times above are saved.
         </p>
       )}
     </Card>
@@ -812,4 +824,19 @@ function zoneChoices(current: string): string[] {
       ? Intl.supportedValuesOf('timeZone')
       : [Intl.DateTimeFormat().resolvedOptions().timeZone]
   return supported.includes(current) ? supported : [current, ...supported]
+}
+
+/**
+ * A wall-clock time moved by some minutes: "9:00" plus 90 is "10:30".
+ *
+ * Shown beside the boxes so nobody has to do the arithmetic to know when
+ * the encoder actually starts or when the broadcast gets made.
+ */
+function clockPlus(time: string, minutes: number): string {
+  const [hour, minute] = time.split(':').map(Number)
+  if (hour === undefined || minute === undefined || Number.isNaN(hour) || Number.isNaN(minute))
+    return '—'
+  const total = (((hour * 60 + minute + minutes) % 1440) + 1440) % 1440
+  const date = new Date(2000, 0, 1, Math.floor(total / 60), total % 60)
+  return date.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })
 }

@@ -362,6 +362,14 @@ describe('deleting what holds a secret', () => {
   })
 })
 
+describe('the calendar', () => {
+  it('says which devices each date uses, so it can be narrowed to one', async () => {
+    const { deviceId } = await seedEverything()
+    const list = await get(`/api/occurrences?from=${START - MINUTE}&to=${START + 60 * MINUTE}`)
+    expect(list.json[0].deviceIds).toEqual([deviceId])
+  })
+})
+
 describe('scheduling a date again', () => {
   async function firstOccurrence(): Promise<string> {
     await seedEverything()
