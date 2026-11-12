@@ -569,6 +569,33 @@ CREATE INDEX occurrence_external ON occurrence (series_id, external_ref);
 ALTER TABLE event_output ADD COLUMN follows_window INTEGER NOT NULL DEFAULT 0;
 `,
   },
+  {
+    id: 15,
+    name: 'one-run-at-a-time',
+    sql: `
+-- Stop now, written down. Pressed while a device call is still in flight,
+-- the stop waits for it rather than racing it; recording the request means
+-- a restart in that window still stops the run.
+ALTER TABLE run ADD COLUMN cancel_requested_at INTEGER;
+ALTER TABLE run ADD COLUMN cancel_reason TEXT;
+
+-- At most one run in progress per occurrence. Two at once is two broadcasts
+-- for one service. Any duplicates an older version left behind are settled
+-- first, keeping the newest.
+UPDATE run
+   SET state = 'cancelled', ended_at = COALESCE(ended_at, created_at)
+ WHERE state NOT IN ('completed', 'failed', 'cancelled')
+   AND EXISTS (
+     SELECT 1 FROM run newer
+      WHERE newer.occurrence_id = run.occurrence_id
+        AND newer.state NOT IN ('completed', 'failed', 'cancelled')
+        AND (newer.created_at > run.created_at
+             OR (newer.created_at = run.created_at AND newer.id > run.id))
+   );
+CREATE UNIQUE INDEX run_one_active_per_occurrence
+  ON run (occurrence_id) WHERE state NOT IN ('completed', 'failed', 'cancelled');
+`,
+  },
 ]
 
 interface GraphNode {

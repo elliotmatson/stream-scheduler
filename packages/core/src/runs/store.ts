@@ -19,6 +19,9 @@ export interface RunRecord {
   failure: string | null
   /** Set when an operator started this run by hand; see RunEngine.startNow. */
   forced_at: number | null
+  /** Set when Stop now was pressed and the run has not yet been wound down. */
+  cancel_requested_at: number | null
+  cancel_reason: string | null
 }
 
 export interface StepRecord {
@@ -206,6 +209,21 @@ export class RunStore {
   }
 
   /** Resets a step left mid-flight by a crash so it can be retried. */
+  /** Records that the run is to be stopped, so a restart still stops it. */
+  requestCancel(runId: string, reason: string): void {
+    this.db
+      .prepare(
+        'UPDATE run SET cancel_requested_at = COALESCE(cancel_requested_at, ?), cancel_reason = ? WHERE id = ?',
+      )
+      .run(this.clock.now(), reason, runId)
+  }
+
+  clearCancelRequest(runId: string): void {
+    this.db
+      .prepare('UPDATE run SET cancel_requested_at = NULL, cancel_reason = NULL WHERE id = ?')
+      .run(runId)
+  }
+
   resetStep(runId: string, seq: number): void {
     this.db
       .prepare(

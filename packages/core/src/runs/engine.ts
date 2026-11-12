@@ -4,12 +4,13 @@ import { silentLogger, type Logger } from '../log.js'
 import {
   compensateOutput,
   compensateRun,
-  executePhase,
   executeSteps,
   reconcileRun,
+  recordFor,
   type ExecutorDeps,
+  type PhaseResult,
 } from './executor.js'
-import { isOnAir, isTerminal, type RunState } from './state-machine.js'
+import { isTerminal, type RunState } from './state-machine.js'
 import type { RunFailure, RunRecord, RunStore } from './store.js'
 import type { RunPlan, RunPlanner, Sleeper } from './steps.js'
 import { timelineEnd, timelineFor, type EventTimeline, type OutputWindow } from './timeline.js'
@@ -80,6 +81,16 @@ export class RunEngine {
   private readonly logger: Logger
   /** The last error logged for each run that would not advance. */
   private readonly reportedErrors = new Map<string, string>()
+  /**
+   * Who is driving each run, or creating a run for each occurrence, right
+   * now. One process, so a map is enough.
+   *
+   * Without it the tick, a Start now, a Stop now and an overrunning tick
+   * that was given up on can all be working on the same run at once — and
+   * the result is two broadcasts for one service, or a stream that comes up
+   * after the run was marked cancelled and is never stopped.
+   */
+  private readonly holders = new Map<string, { done: Promise<void>; abort: AbortController }>()
 
   constructor(private readonly deps: EngineDeps) {
     this.logger = deps.logger ?? silentLogger
@@ -95,7 +106,7 @@ export class RunEngine {
       // One run that cannot be reconciled must not leave the rest
       // unreconciled, nor stop the app from starting at all.
       try {
-        await reconcileRun(run.id, await this.planFor(run), this.executorDeps())
+        await reconcileRun(run.id, await this.planFor(run), this.executorDeps(run.id))
         recovered.push(run.id)
         this.logger.info('recovered a run interrupted by a restart', {
           runId: run.id,
@@ -117,27 +128,32 @@ export class RunEngine {
     const now = this.deps.clock.now()
 
     for (const occurrenceId of this.dueOccurrences(now)) {
-      let plan: RunPlan | undefined
-      let planError: unknown
-      try {
-        plan = await this.deps.planner.plan(occurrenceId)
-      } catch (error) {
-        planError = error
-      }
-      // An occurrence that cannot be planned still gets a run, failed on
-      // the spot. That puts it on the Runs page and in an alert rather
-      // than in a log line repeated every five seconds, and it stops the
-      // occurrence being due again on the next tick.
-      const run = this.deps.store.createRun(occurrenceId, plan ?? [])
-      this.deps.db
-        .prepare("UPDATE occurrence SET status = 'running' WHERE id = ?")
-        .run(occurrenceId)
-      report.created.push(run.id)
-      this.logger.info('created a run', { runId: run.id, occurrenceId })
-      if (planError !== undefined) {
-        await this.fail(run, [], planFailure(planError))
-        report.failed.push(run.id)
-      }
+      // Skipped when an operator is creating a run for it this instant;
+      // the next tick sees theirs.
+      await this.exclusive(occurrenceKey(occurrenceId), { wait: false }, async () => {
+        if (this.activeRunFor(occurrenceId)) return
+        let plan: RunPlan | undefined
+        let planError: unknown
+        try {
+          plan = await this.deps.planner.plan(occurrenceId)
+        } catch (error) {
+          planError = error
+        }
+        // An occurrence that cannot be planned still gets a run, failed on
+        // the spot. That puts it on the Runs page and in an alert rather
+        // than in a log line repeated every five seconds, and it stops the
+        // occurrence being due again on the next tick.
+        const run = this.deps.store.createRun(occurrenceId, plan ?? [])
+        this.deps.db
+          .prepare("UPDATE occurrence SET status = 'running' WHERE id = ?")
+          .run(occurrenceId)
+        report.created.push(run.id)
+        this.logger.info('created a run', { runId: run.id, occurrenceId })
+        if (planError !== undefined) {
+          await this.fail(run, [], planFailure(planError))
+          report.failed.push(run.id)
+        }
+      })
     }
 
     for (const run of this.deps.store.listActiveRuns()) {
@@ -147,7 +163,13 @@ export class RunEngine {
       // stayed bad.
       try {
         const before = run.state
-        const after = await this.advance(run.id)
+        // A run somebody else is driving — an operator's Start now, a Stop
+        // now, or a tick that overran and is still going — is left to them.
+        const outcome = await this.exclusive(run.id, { wait: false }, (signal) =>
+          this.drive(run.id, signal),
+        )
+        if (!outcome.ran) continue
+        const after = outcome.value
         if (after !== before) report.advanced.push(run.id)
         if (after === 'failed') report.failed.push(run.id)
         if (after === 'completed') report.completed.push(run.id)
@@ -167,8 +189,19 @@ export class RunEngine {
     return report
   }
 
-  /** Drives one run as far as the clock currently allows. */
+  /**
+   * Drives one run as far as the clock currently allows, waiting for
+   * whoever is driving it now to finish first.
+   */
   async advance(runId: string): Promise<RunState> {
+    const outcome = await this.exclusive(runId, { wait: true }, (signal) =>
+      this.drive(runId, signal),
+    )
+    return outcome.ran ? outcome.value : this.deps.store.getRun(runId).state
+  }
+
+  /** The body of `advance`, for a caller that already holds the run. */
+  private async drive(runId: string, signal: AbortSignal): Promise<RunState> {
     // A single tick can cross several boundaries — a run whose whole window
     // elapsed while the machine was asleep has to prepare, start, stop and
     // complete in one go — so keep going while progress is being made.
@@ -178,6 +211,7 @@ export class RunEngine {
     // recording anything is a bug, and spinning on it forever inside a tick
     // would take the scheduler down with it.
     for (let pass = 0; pass < MAX_PASSES; pass++) {
+      if (signal.aborted) return this.deps.store.getRun(runId).state
       if (!(await this.step(runId))) return this.deps.store.getRun(runId).state
       const state = this.deps.store.getRun(runId).state
       if (isTerminal(state)) return state
@@ -190,6 +224,13 @@ export class RunEngine {
   private async step(runId: string): Promise<boolean> {
     const run = this.deps.store.getRun(runId)
     if (isTerminal(run.state)) return false
+
+    // A Stop now that could not wait for the run to be free, or that was
+    // pressed just before a restart. It comes before everything else.
+    if (run.cancel_requested_at !== null) {
+      await this.closeCancelled(run, run.cancel_reason ?? 'Stopped by an operator')
+      return true
+    }
 
     const timeline = this.timelineFor(run)
     let plan: RunPlan
@@ -219,7 +260,7 @@ export class RunEngine {
 
     const drift = this.planDrift(run.id, plan)
     if (drift) {
-      await this.fail(run, plan, drift)
+      await this.fail(run, plan, drift, 'drift')
       return true
     }
 
@@ -280,7 +321,7 @@ export class RunEngine {
       (state) => state === 'pending' || state === 'started',
     )
     if (!outstanding && now >= timelineEnd(timeline) + timeline.postrollMs) {
-      return this.complete(run, plan, timeline, progress)
+      return this.complete(run, plan, timeline)
     }
     return false
   }
@@ -304,10 +345,11 @@ export class RunEngine {
         run.id,
         plan,
         (step) => step.outputId === entry.output.id && step.phase === 'prepare',
-        this.executorDeps(),
+        this.executorDeps(run.id),
         { phase: 'prepare', outputId: entry.output.id },
       )
       if (result.ok) prepared++
+      else if (result.aborted) return false
       else await this.failOutput(run, plan, entry, result.failure)
     }
 
@@ -342,9 +384,10 @@ export class RunEngine {
       run.id,
       plan,
       (step) => step.outputId === entry.output.id && phases.includes(step.phase),
-      this.executorDeps(),
+      this.executorDeps(run.id),
       { phase, outputId: entry.output.id },
     )
+    if (!result.ok && result.aborted) return
     if (result.ok) {
       this.logger.info(phase === 'start' ? 'output is live' : 'output has stopped', {
         runId: run.id,
@@ -361,24 +404,50 @@ export class RunEngine {
     await this.failOutput(run, plan, entry, result.failure, { onAir: phase === 'stop' })
   }
 
-  private async complete(
-    run: RunRecord,
-    plan: RunPlan,
-    timeline: EventTimeline,
-    progress: Map<string, OutputProgress>,
-  ): Promise<boolean> {
+  private async complete(run: RunRecord, plan: RunPlan, timeline: EventTimeline): Promise<boolean> {
     this.deps.store.transition(run.id, 'completing')
-    // Every output's closing work, including the ones that failed: a
-    // broadcast that went out has to be ended on the channel whether or not
-    // the encoder came off cleanly. An output that was compensated has no
-    // external id left, so its finalize is a no-op.
-    const result = await executePhase(run.id, plan, 'complete', this.executorDeps())
-    if (!result.ok) {
-      await this.fail(run, plan, result.failure)
+    // Every output's closing work, each on its own: one broadcast that will
+    // not end cleanly is no reason to leave the others open. An output that
+    // was compensated has no external id left, so its finalize is a no-op.
+    const failures: { label: string; failure: RunFailure }[] = []
+    for (const entry of timeline.outputs) {
+      const result = await executeSteps(
+        run.id,
+        plan,
+        (step) => step.outputId === entry.output.id && step.phase === 'complete',
+        this.executorDeps(run.id),
+        { phase: 'complete', outputId: entry.output.id },
+      )
+      if (!result.ok && result.aborted) return false
+      if (!result.ok) failures.push({ label: entry.output.label, failure: result.failure })
+    }
+    const shared = await executeSteps(
+      run.id,
+      plan,
+      (step) => step.outputId === undefined && step.phase === 'complete',
+      this.executorDeps(run.id),
+      { phase: 'complete' },
+    )
+    if (!shared.ok && shared.aborted) return false
+    if (!shared.ok) failures.push({ label: timeline.label, failure: shared.failure })
+
+    if (failures.length > 0) {
+      // Not compensated: these broadcasts carried a service. Deleting them
+      // because closing one out failed would throw away what people watched.
+      const first = failures[0]!
+      this.finish(run, 'failed', {
+        code: 'finalize_failed',
+        message:
+          `${first.label}: ${first.failure.message}` +
+          (failures.length > 1 ? ` (and ${failures.length - 1} more)` : ''),
+        remediation:
+          first.failure.remediation ??
+          'Everything that aired has been kept. End the broadcast on the service by hand if it is still open.',
+      })
       return true
     }
 
-    const delivered = [...progress.values()].some((state) => state === 'stopped')
+    const delivered = timeline.outputs.some((entry) => this.aired(run.id, plan, entry.output.id))
     if (!delivered) {
       await this.failWholeRun(run, plan, {
         code: 'nothing_aired',
@@ -417,7 +486,8 @@ export class RunEngine {
     failure: RunFailure,
     options: { onAir?: boolean } = {},
   ): Promise<void> {
-    if (!options.onAir) await compensateOutput(run.id, plan, entry.output.id, this.executorDeps())
+    if (!options.onAir)
+      await compensateOutput(run.id, plan, entry.output.id, this.executorDeps(run.id))
     this.logger.error('an output failed; the rest of the event carries on', {
       runId: run.id,
       output: entry.output.label,
@@ -464,14 +534,15 @@ export class RunEngine {
 
     for (const [seq, step] of plan.entries()) {
       if (step.outputId !== entry.output.id || step.phase !== 'start') continue
-      if (this.deps.store.step(run.id, seq).state !== 'pending') continue
-      this.deps.store.markStepFailed(run.id, seq, message)
+      const record = recordFor(this.deps.store, run.id, seq, step)
+      if (record?.state !== 'pending') continue
+      this.deps.store.markStepFailed(run.id, record.seq, message)
     }
     // It never got on air, so the broadcast prepared for it is litter. Left
     // in place it would be closed out at the end of the event as though it
     // had carried a service, and the channel would collect an empty public
     // entry every time the app was late.
-    await compensateOutput(run.id, plan, entry.output.id, this.executorDeps())
+    await compensateOutput(run.id, plan, entry.output.id, this.executorDeps(run.id))
     this.logger.warn('skipped an output the clock had run past', {
       runId: run.id,
       output: entry.output.label,
@@ -535,8 +606,8 @@ export class RunEngine {
         'The event was edited while this run was going: an output was added, removed or switched off, so the ' +
         'steps no longer line up with what was committed when the run started.',
       remediation:
-        'Anything already on air has been left alone — check the encoder. Start the event again if it is ' +
-        'still wanted, and make structural changes between events rather than during one.',
+        'Start the event again if it is still wanted, and make structural changes between events rather ' +
+        'than during one.',
     }
   }
 
@@ -550,15 +621,138 @@ export class RunEngine {
     }
   }
 
-  private async fail(run: RunRecord, plan: RunPlan, failure: RunFailure): Promise<void> {
-    await compensateRun(run.id, plan, this.executorDeps())
+  /**
+   * Ends a run that went wrong.
+   *
+   * What happens to each output depends on whether it reached air, never on
+   * why the run failed: what aired is closed out and kept, because people
+   * watched it; what never aired is undone, because an empty scheduled
+   * broadcast is litter on the channel. When the plan no longer matches
+   * what was committed (`drift`), nothing that aired is touched at all.
+   */
+  private async fail(
+    run: RunRecord,
+    plan: RunPlan,
+    failure: RunFailure,
+    mode: 'fail' | 'drift' = 'fail',
+  ): Promise<void> {
+    const leftOnAir = await this.closeOut(run, plan, mode)
+    this.finish(
+      run,
+      'failed',
+      mode === 'drift' && leftOnAir.length > 0
+        ? {
+            ...failure,
+            remediation:
+              `Left as they were: ${leftOnAir.join(', ')} — check the encoder, it may still be streaming. ` +
+              (failure.remediation ?? ''),
+          }
+        : failure,
+    )
+  }
+
+  /** Records how a run ended and tells whoever listens. */
+  private finish(run: RunRecord, to: 'failed' | 'cancelled', failure: RunFailure): void {
     this.deps.store.recordFailure(run.id, failure)
-    this.deps.store.transition(run.id, 'failed')
-    this.deps.db
-      .prepare("UPDATE occurrence SET status = 'failed' WHERE id = ?")
-      .run(run.occurrence_id)
-    this.logger.error('run failed', { runId: run.id, code: failure.code, message: failure.message })
-    this.notify({ runId: run.id, occurrenceId: run.occurrence_id, failure, attempt: run.attempt })
+    this.deps.store.transition(run.id, to)
+    this.deps.store.clearCancelRequest(run.id)
+    this.deps.db.prepare('UPDATE occurrence SET status = ? WHERE id = ?').run(to, run.occurrence_id)
+    if (to === 'failed') {
+      this.logger.error('run failed', {
+        runId: run.id,
+        code: failure.code,
+        message: failure.message,
+      })
+      this.notify({ runId: run.id, occurrenceId: run.occurrence_id, failure, attempt: run.attempt })
+    } else {
+      this.logger.info('run cancelled', { runId: run.id, reason: failure.message })
+    }
+  }
+
+  /**
+   * Winds every output down according to whether it aired.
+   *
+   * Returns the labels of outputs that aired, for whoever reports the end.
+   */
+  private async closeOut(
+    run: RunRecord,
+    plan: RunPlan,
+    mode: 'fail' | 'cancel' | 'drift',
+  ): Promise<string[]> {
+    const deps = this.executorDeps(run.id)
+    const timeline = this.timelineFor(run)
+    const aired = timeline.outputs.filter((entry) => this.aired(run.id, plan, entry.output.id))
+    const neverAired = timeline.outputs.filter((entry) => !aired.includes(entry))
+
+    if (mode === 'cancel') {
+      // Told to stop rather than left running: what is on air is taken off.
+      const progress = this.progressOf(run.id, plan, timeline)
+      for (const entry of aired) {
+        if (progress.get(entry.output.id) !== 'started') continue
+        const result = await executeSteps(
+          run.id,
+          plan,
+          (step) => step.outputId === entry.output.id && step.phase === 'stop',
+          deps,
+          { phase: 'stop', outputId: entry.output.id },
+        )
+        this.logIfFailed(run, entry, 'stopping', result)
+      }
+    }
+
+    if (mode !== 'drift') {
+      for (const entry of aired) {
+        const result = await executeSteps(
+          run.id,
+          plan,
+          (step) => step.outputId === entry.output.id && step.phase === 'complete',
+          deps,
+          { phase: 'complete', outputId: entry.output.id },
+        )
+        this.logIfFailed(run, entry, 'closing out', result)
+      }
+    }
+
+    if (aired.length === 0) {
+      // Nothing reached air, so everything the run made is litter —
+      // including steps that belong to no single output.
+      await compensateRun(run.id, plan, deps)
+    } else {
+      for (const entry of neverAired) await compensateOutput(run.id, plan, entry.output.id, deps)
+    }
+    return aired.map((entry) => entry.output.label)
+  }
+
+  private logIfFailed(
+    run: RunRecord,
+    entry: OutputWindow,
+    doing: string,
+    result: PhaseResult,
+  ): void {
+    if (result.ok) return
+    this.logger.error(`${doing} an output failed while the run was wound down`, {
+      runId: run.id,
+      output: entry.output.label,
+      message: result.failure.message,
+    })
+  }
+
+  /**
+   * Whether an output ever reached air.
+   *
+   * Every start step done; or the last one was in flight, which means the
+   * device may well have gone live before anything was recorded; or the
+   * output was told to stop. Anything less never aired.
+   */
+  private aired(runId: string, plan: RunPlan, outputId: string): boolean {
+    const records = this.deps.store.steps(runId)
+    const recordOf = (kind: string) => records.find((record) => record.kind === kind)
+    const ofOutput = plan.filter((step) => step.outputId === outputId)
+    const starts = ofOutput.filter((step) => step.phase === 'start').map((s) => recordOf(s.kind))
+    const stops = ofOutput.filter((step) => step.phase === 'stop').map((s) => recordOf(s.kind))
+    if (starts.length > 0 && starts.every((record) => record?.state === 'done')) return true
+    if (starts.at(-1)?.state === 'running') return true
+    return stops.some((record) => record !== undefined && record.attempts > 0)
   }
 
   private notify(event: {
@@ -589,35 +783,35 @@ export class RunEngine {
   async cancel(runId: string, reason = 'Stopped by an operator'): Promise<RunState> {
     const run = this.deps.store.getRun(runId)
     if (isTerminal(run.state)) return run.state
-    const plan = await this.planFor(run)
 
-    if (isOnAir(run.state)) {
-      // Something may be streaming: run the stop steps of everything that
-      // actually started, so the encoder is told to stop rather than the row
-      // just being marked cancelled.
-      const timeline = this.timelineFor(run)
-      const progress = this.progressOf(run.id, plan, timeline)
-      for (const entry of timeline.outputs) {
-        if (progress.get(entry.output.id) !== 'started') continue
-        await executeSteps(
-          runId,
-          plan,
-          (step) => step.outputId === entry.output.id && step.phase === 'stop',
-          this.executorDeps(),
-          { phase: 'stop', outputId: entry.output.id },
-        )
-      }
-    } else {
-      await compensateRun(runId, plan, this.executorDeps())
+    // Written down first, so a restart before it is acted on still stops
+    // the run, and so whoever is driving it acts on it if this cannot wait.
+    this.deps.store.requestCancel(runId, reason)
+    // Ask whoever is driving the run to stop at its next safe point — not
+    // mid-call, so a start in flight finishes and is recorded, then stopped.
+    this.holders.get(runId)?.abort.abort()
+
+    const cancelling = this.exclusive(runId, { wait: true }, async () => {
+      const current = this.deps.store.getRun(runId)
+      if (!isTerminal(current.state)) await this.closeCancelled(current, reason)
+    })
+    // A device that never answers must not hang the stop button. Past the
+    // wait, the request stands and is carried out when the run is free.
+    const settled = await Promise.race([
+      cancelling.then(() => true),
+      delay(CANCEL_WAIT_MS).then(() => false),
+    ])
+    if (!settled) {
+      this.logger.warn('stop requested; waiting for a device call to finish first', { runId })
     }
+    return this.deps.store.getRun(runId).state
+  }
 
-    this.deps.store.recordFailure(runId, { code: 'cancelled', message: reason })
-    this.deps.store.transition(runId, 'cancelled')
-    this.deps.db
-      .prepare("UPDATE occurrence SET status = 'cancelled' WHERE id = ?")
-      .run(run.occurrence_id)
-    this.logger.info('run cancelled', { runId, reason })
-    return 'cancelled'
+  /** Stops what is on air, keeps what aired, undoes what did not. */
+  private async closeCancelled(run: RunRecord, reason: string): Promise<void> {
+    const plan = await this.planFor(run)
+    await this.closeOut(run, plan, 'cancel')
+    this.finish(run, 'cancelled', { code: 'cancelled', message: reason })
   }
 
   /**
@@ -629,48 +823,63 @@ export class RunEngine {
    * start times — this brings the preparation forward, not the service.
    */
   async prepareNow(occurrenceId: string): Promise<string> {
-    const existing = this.deps.store.findRunForOccurrence(occurrenceId)
-    if (existing && !isTerminal(existing.state)) {
-      // Already has a run: prepare it if it has not been, and otherwise
-      // leave it be. Pressing the button twice must not cost a broadcast.
-      if (existing.state === 'scheduled' || existing.state === 'preparing') {
-        await this.prepare(existing, await this.planFor(existing), this.timelineFor(existing))
-      }
-      return existing.id
-    }
-
-    // Planned with its real times: this brings the preparation forward, not
-    // the service. The outputs still go on air when they were going to.
-    const run = this.deps.store.createRun(
-      occurrenceId,
-      await this.deps.planner.plan(occurrenceId),
-      {
-        attempt: (existing?.attempt ?? 0) + 1,
+    const outcome = await this.exclusive(
+      occurrenceKey(occurrenceId),
+      { wait: true },
+      async (): Promise<string> => {
+        const existing = this.deps.store.findRunForOccurrence(occurrenceId)
+        if (existing && !isTerminal(existing.state)) return existing.id
+        // Planned with its real times: this brings the preparation forward,
+        // not the service. The outputs still go on air when they were going to.
+        const run = this.deps.store.createRun(
+          occurrenceId,
+          await this.deps.planner.plan(occurrenceId),
+          { attempt: (existing?.attempt ?? 0) + 1 },
+        )
+        this.deps.db
+          .prepare("UPDATE occurrence SET status = 'running' WHERE id = ?")
+          .run(occurrenceId)
+        return run.id
       },
     )
-    this.deps.db.prepare("UPDATE occurrence SET status = 'running' WHERE id = ?").run(occurrenceId)
+    if (!outcome.ran) throw new Error('unreachable: waited for the occurrence')
+    const runId = outcome.value
 
     // Run the prepare phase here rather than waiting for the clock: the
-    // whole point is that it happens now. Everything after it stays on the
-    // timeline, driven by the tick like any other run.
-    const record = this.deps.store.getRun(run.id)
-    await this.prepare(record, await this.planFor(record), this.timelineFor(record))
-    this.logger.info('prepared a run ahead of its lead time', { runId: run.id, occurrenceId })
-    return run.id
+    // whole point is that it happens now. Pressing the button twice must
+    // not cost a broadcast, so a run already past preparing is left be.
+    // Everything after it stays on the timeline, driven by the tick.
+    await this.exclusive(runId, { wait: true }, async () => {
+      const record = this.deps.store.getRun(runId)
+      if (record.state !== 'scheduled' && record.state !== 'preparing') return
+      await this.prepare(record, await this.planFor(record), this.timelineFor(record))
+    })
+    this.logger.info('prepared a run ahead of its lead time', { runId, occurrenceId })
+    return runId
   }
 
   /** Creates a run for an occurrence right now, ignoring its prepare lead. */
   async startNow(occurrenceId: string): Promise<string> {
-    const existing = this.deps.store.findRunForOccurrence(occurrenceId)
-    if (existing && !isTerminal(existing.state)) return existing.id
-    const forcedAt = this.deps.clock.now()
-    const plan = await this.deps.planner.plan(occurrenceId, { forcedAt })
-    const run = this.deps.store.createRun(occurrenceId, plan, {
-      attempt: (existing?.attempt ?? 0) + 1,
-      forcedAt,
-    })
-    this.deps.db.prepare("UPDATE occurrence SET status = 'running' WHERE id = ?").run(occurrenceId)
-    return run.id
+    const outcome = await this.exclusive(
+      occurrenceKey(occurrenceId),
+      { wait: true },
+      async (): Promise<string> => {
+        const existing = this.deps.store.findRunForOccurrence(occurrenceId)
+        if (existing && !isTerminal(existing.state)) return existing.id
+        const forcedAt = this.deps.clock.now()
+        const plan = await this.deps.planner.plan(occurrenceId, { forcedAt })
+        const run = this.deps.store.createRun(occurrenceId, plan, {
+          attempt: (existing?.attempt ?? 0) + 1,
+          forcedAt,
+        })
+        this.deps.db
+          .prepare("UPDATE occurrence SET status = 'running' WHERE id = ?")
+          .run(occurrenceId)
+        return run.id
+      },
+    )
+    if (!outcome.ran) throw new Error('unreachable: waited for the occurrence')
+    return outcome.value
   }
 
   // -- reading the run ----------------------------------------------------
@@ -686,16 +895,15 @@ export class RunEngine {
     const records = this.deps.store.steps(runId)
     const progress = new Map<string, OutputProgress>()
 
+    const stateByKind = new Map(records.map((record) => [record.kind, record.state]))
     for (const entry of timeline.outputs) {
-      const seqs = plan
-        .map((step, seq) => ({ step, seq }))
-        .filter(({ step }) => step.outputId === entry.output.id)
+      const steps = plan.filter((step) => step.outputId === entry.output.id)
       const stateOf = (phase: string): ('done' | 'other')[] =>
-        seqs
-          .filter(({ step }) => step.phase === phase)
-          .map(({ seq }) => (records[seq]?.state === 'done' ? 'done' : 'other'))
+        steps
+          .filter((step) => step.phase === phase)
+          .map((step) => (stateByKind.get(step.kind) === 'done' ? 'done' : 'other'))
 
-      if (seqs.some(({ seq }) => records[seq]?.state === 'failed')) {
+      if (steps.some((step) => stateByKind.get(step.kind) === 'failed')) {
         progress.set(entry.output.id, 'failed')
         continue
       }
@@ -759,19 +967,65 @@ export class RunEngine {
     return run.forced_at === null ? {} : { forcedAt: run.forced_at }
   }
 
-  private executorDeps(): ExecutorDeps {
+  private executorDeps(runId: string): ExecutorDeps {
     const deps: ExecutorDeps = {
       store: this.deps.store,
       clock: this.deps.clock,
       logger: this.logger,
     }
     if (this.deps.sleeper) deps.sleeper = this.deps.sleeper
+    const signal = this.holders.get(runId)?.abort.signal
+    if (signal) deps.signal = signal
     return deps
+  }
+
+  private activeRunFor(occurrenceId: string): RunRecord | undefined {
+    const run = this.deps.store.findRunForOccurrence(occurrenceId)
+    return run && !isTerminal(run.state) ? run : undefined
+  }
+
+  /**
+   * Runs `work` as the only thing driving `key` — a run's id, or an
+   * occurrence's key while a run is being created for it.
+   *
+   * With `wait`, queues behind whoever holds it; without, gives up and
+   * reports that nothing ran, which is what the tick wants.
+   */
+  private async exclusive<T>(
+    key: string,
+    options: { wait: boolean },
+    work: (signal: AbortSignal) => Promise<T>,
+  ): Promise<{ ran: true; value: T } | { ran: false }> {
+    for (;;) {
+      const held = this.holders.get(key)
+      if (!held) break
+      if (!options.wait) return { ran: false }
+      await held.done
+    }
+    const abort = new AbortController()
+    let release!: () => void
+    const done = new Promise<void>((resolve) => (release = resolve))
+    this.holders.set(key, { done, abort })
+    try {
+      return { ran: true, value: await work(abort.signal) }
+    } finally {
+      this.holders.delete(key)
+      release()
+    }
   }
 }
 
 /** Enough for a full day's outputs to prepare, start, stop and close out. */
 const MAX_PASSES = 500
+
+/** How long Stop now waits for a device call in flight before answering. */
+const CANCEL_WAIT_MS = 30_000
+
+const occurrenceKey = (occurrenceId: string): string => `occurrence:${occurrenceId}`
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms).unref?.())
+}
 
 function describeError(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
