@@ -504,10 +504,19 @@ tr.is-picked td {
 }
 
 /* Stays put while the rest of the panel scrolls: the close control and the
-   device's name are what somebody reaches for after scrolling down it. */
+   device's name are what somebody reaches for after scrolling down it.
+
+   `top` is negative because a sticky box parks against the scrollport's
+   padding edge, not the border edge, and the drawer has 18px of padding.
+   At `top: 0` the head therefore stopped 18px short of the top and left a
+   strip of drawer above it — through which the scrolling content showed
+   and was then clipped by the drawer's own edge. What that looks like is
+   a row of labels sliced in half along its length, which is what was
+   reported. Cancelling the padding sticks it flush, and the only thing
+   that can pass under it now is covered. */
 .drawer-head {
   position: sticky;
-  top: 0;
+  top: -18px;
   z-index: 1;
   margin: -18px -18px 10px;
   padding: 14px 18px;

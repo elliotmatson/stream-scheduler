@@ -436,6 +436,24 @@ async function theDeviceList(browser, base) {
     `banner ${bannerTop}, tags ${tagsTop}`,
   )
 
+  // A sticky box parks against the scrollport's *padding* edge rather than
+  // its border edge, so `top: 0` on a drawer with 18px of padding left a
+  // strip of panel above the head. Content scrolled up through that strip
+  // and was clipped by the drawer's own edge, which on screen is a row of
+  // labels sliced in half along its length. Nothing in CSS complains about
+  // this and no unit test can see it, so it is measured here.
+  const headOffset = await drawer.evaluate((panel) => {
+    const head = panel.querySelector('.drawer-head')
+    panel.scrollTop = 40
+    return Math.round(head.getBoundingClientRect().top - panel.getBoundingClientRect().top)
+  })
+  check(
+    'the drawer head covers the top of the panel while it scrolls',
+    headOffset === 0,
+    `head sits ${headOffset}px below the top of the drawer`,
+  )
+  if (headOffset !== 0) await shoot(page, 'drawer-head-not-flush')
+
   check('device list: no console errors', problems.length === 0, problems.slice(0, 3).join(' | '))
   await context.close()
 }
