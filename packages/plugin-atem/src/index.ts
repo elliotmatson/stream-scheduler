@@ -16,6 +16,7 @@ import {
   connectFtp as realConnectFtp,
   ftpPath,
   mediaDirectory,
+  parentOf,
   type FtpConnect,
   type FtpSession,
 } from '@scheduler/device-ftp'
@@ -288,10 +289,14 @@ class AtemDevice {
          * HyperDeck's card is, which is also the only place a file's size
          * and date exist.
          */
-        listMedia: async () => {
+        listMedia: async ({ path }) => {
           const session = await this.connectFtp({ host: this.host })
           try {
-            const directory = await this.mediaDirectoryFor(session)
+            // A path means somebody is walking the drive and has said
+            // where; without one this still answers "wherever the
+            // recordings are", which is what retention and every other
+            // caller wants and must keep getting.
+            const directory = path ?? (await this.mediaDirectoryFor(session))
             const files = await session.list(directory)
             // Where it looked, not just what it found: an empty disk and a
             // listing of the wrong directory read identically on a screen.
@@ -299,14 +304,18 @@ class AtemDevice {
               directory,
               files: files.length,
             })
-            return files.map((file) => ({
-              name: file.name,
-              // A folder's reported size describes the directory entry,
-              // not the take inside it, so it is left off rather than
-              // shown as a recording that is four kilobytes long.
-              ...(file.isDirectory ? { isFolder: true } : { bytes: file.size }),
-              ...(file.modifiedAt === undefined ? {} : { recordedAt: file.modifiedAt }),
-            }))
+            return {
+              directory,
+              ...(parentOf(directory) === undefined ? {} : { parent: parentOf(directory) }),
+              items: files.map((file) => ({
+                name: file.name,
+                // A folder's reported size describes the directory entry,
+                // not the take inside it, so it is left off rather than
+                // shown as a recording that is four kilobytes long.
+                ...(file.isDirectory ? { isFolder: true } : { bytes: file.size }),
+                ...(file.modifiedAt === undefined ? {} : { recordedAt: file.modifiedAt }),
+              })),
+            }
           } finally {
             await session.close().catch(() => {})
           }
@@ -318,18 +327,20 @@ class AtemDevice {
          * about a delete that did not happen, and reporting success on a
          * file still on the drive is worse than failing.
          */
-        deleteMedia: async ({ name }) => {
+        deleteMedia: async ({ name, path }) => {
           const session = await this.connectFtp({ host: this.host })
           try {
-            const directory = await this.mediaDirectoryFor(session)
+            // The directory the caller was looking at when it picked this,
+            // not whichever one the resolver would land on now.
+            const directory = path ?? (await this.mediaDirectoryFor(session))
             // Asked rather than assumed: in ISO mode the recording is a
             // folder, and DELE on a directory is refused by every server.
             // Which verb to use is a property of the thing being removed,
             // and the listing is the only place that says.
             const target = (await session.list(directory)).find((file) => file.name === name)
-            const path = ftpPath(directory, name)
-            if (target?.isDirectory) await session.removeDirectory(path)
-            else await session.remove(path)
+            const fullPath = ftpPath(directory, name)
+            if (target?.isDirectory) await session.removeDirectory(fullPath)
+            else await session.remove(fullPath)
             const left = await session.list(directory)
             if (left.some((file) => file.name === name)) {
               throw new DeviceError(

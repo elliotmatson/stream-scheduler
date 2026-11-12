@@ -52,15 +52,33 @@ export function DeviceFiles({
   const [open, setOpen] = useState(false)
   const [picked, setPicked] = useState<Set<string>>(new Set())
   const [sort, setSort] = useState<'name' | 'size' | 'recorded'>('recorded')
+  // Undefined is "wherever the recordings are", which is where this opens
+  // and what every other caller of the endpoint means. A path only ever
+  // comes from a folder the device itself listed, never from us building
+  // one out of names.
+  const [path, setPath] = useState<string>()
   const [pending, setPending] = useState<{ confirm: string; files: string[] }>()
   const [result, setResult] = useState<{ removed: string[]; failed: { name: string }[] }>()
   const [busy, setBusy] = useState(false)
   const [problem, setProblem] = useState<string>()
 
   const { data, error, reload } = useResource(
-    () => (open ? api.media(deviceId, nodeId, slot) : Promise.resolve({ files: [] })),
-    [deviceId, nodeId, slot, open],
+    () => (open ? api.media(deviceId, nodeId, slot, path) : Promise.resolve({ files: [] })),
+    [deviceId, nodeId, slot, open, path],
   )
+
+  const here = data?.directory
+  const parent = data?.parent
+
+  // Walking into a folder is a different list, so nothing picked on the
+  // way in should still be ticked on the way out — least of all with a
+  // delete button next to it.
+  const goTo = (next: string | undefined): void => {
+    setPicked(new Set())
+    setResult(undefined)
+    setPending(undefined)
+    setPath(next)
+  }
 
   const files = useMemo(() => sorted(data?.files ?? [], sort), [data, sort])
   const allPicked = files.length > 0 && files.every((file) => picked.has(file.name))
@@ -75,6 +93,14 @@ export function DeviceFiles({
     } finally {
       setBusy(false)
     }
+  }
+
+  // A path belongs to the card it came from, so choosing another card has
+  // to start at the top of that one rather than asking it for a directory
+  // off the previous card.
+  const chooseSlot = (next: number): void => {
+    goTo(undefined)
+    setChosen(next)
   }
 
   const toggle = (name: string): void =>
@@ -100,11 +126,7 @@ export function DeviceFiles({
             {slots.length > 1 ? (
               <select
                 value={String(slot ?? '')}
-                onChange={(event) => {
-                  setChosen(Number(event.target.value))
-                  setPicked(new Set())
-                  setResult(undefined)
-                }}
+                onChange={(event) => chooseSlot(Number(event.target.value))}
               >
                 {slots.map((id) => (
                   <option key={id} value={String(id)}>
@@ -153,6 +175,7 @@ export function DeviceFiles({
                         pending.files,
                         pending.confirm,
                         slot,
+                        path,
                       )
                       setResult(done)
                       setPending(undefined)
@@ -184,7 +207,7 @@ export function DeviceFiles({
               onClick={() =>
                 void run(async () => {
                   const names = files.map((f) => f.name).filter((name) => picked.has(name))
-                  setPending(await api.prepareDelete(deviceId, nodeId, names, slot))
+                  setPending(await api.prepareDelete(deviceId, nodeId, names, slot, path))
                 })
               }
             >
@@ -194,6 +217,34 @@ export function DeviceFiles({
               <button onClick={() => setPicked(new Set())}>Clear selection</button>
             ) : null}
           </div>
+
+          {/* Where this listing came from, and the way back out of it.
+              Only shown once the device has said — nothing here invents a
+              path, because the shape of them belongs to the device's own
+              file server and not to this screen. */}
+          {here === undefined ? null : (
+            <div className="row" style={{ gap: 8, alignItems: 'center', marginBottom: 10 }}>
+              <button
+                disabled={busy || parent === undefined}
+                title={
+                  parent === undefined
+                    ? 'This is the top of what the device serves.'
+                    : `Up to ${parent}`
+                }
+                onClick={() => goTo(parent)}
+              >
+                ↑ Up
+              </button>
+              <code className="muted" style={{ fontSize: 12, wordBreak: 'break-all' }}>
+                {here}
+              </code>
+              {path === undefined ? null : (
+                <button disabled={busy} onClick={() => goTo(undefined)}>
+                  Back to the recordings
+                </button>
+              )}
+            </div>
+          )}
 
           <div className="table-wrap">
             <table>
@@ -226,7 +277,26 @@ export function DeviceFiles({
                         onChange={() => toggle(file.name)}
                       />
                     </td>
-                    <td>{file.name}</td>
+                    <td>
+                      {/* A folder is still selectable — an ATEM's ISO
+                          recording is one and deleting it is the point —
+                          but it is also a place, so the name opens it. */}
+                      {file.isFolder && here !== undefined ? (
+                        <button
+                          className="linkish"
+                          disabled={busy}
+                          title={`Open ${file.name}`}
+                          onClick={() =>
+                            goTo(here === '/' ? `/${file.name}` : `${here}/${file.name}`)
+                          }
+                        >
+                          {file.name}
+                          <span aria-hidden="true"> ›</span>
+                        </button>
+                      ) : (
+                        file.name
+                      )}
+                    </td>
                     <td className="muted">{file.bytes === undefined ? '—' : bytes(file.bytes)}</td>
                     <td className="muted">
                       {file.recordedAt === undefined ? '—' : dateTimeIn(file.recordedAt, timezone)}

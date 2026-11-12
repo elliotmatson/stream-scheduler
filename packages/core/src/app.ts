@@ -82,6 +82,29 @@ export interface AppOptions {
    * without touching `process.env`, the same way the master key does it.
    */
   uiPassword?: string | undefined
+  /**
+   * Whether whatever can reach this port is already trusted.
+   *
+   * Two installs say yes for different reasons, and the app cannot tell
+   * them apart: one sits on a church LAN with no route in from outside,
+   * the other behind Cloudflare Access or a proxy that signs people in
+   * before forwarding. In both, "no password" is the configuration
+   * somebody chose rather than a thing they forgot — and a warning that
+   * says otherwise is then both wrong and permanent, which is how people
+   * learn to ignore warnings.
+   *
+   * So this does not claim to know which it is. It records that the
+   * decision was made, and nothing more: it adds no protection, and it
+   * never unlocks an install that has a password of its own.
+   *
+   * A statement about where the thing is deployed rather than a
+   * preference, which is why it comes from the environment on every boot
+   * and is not a setting somebody can tick. Moving it onto a network you
+   * do not trust means editing the compose file, and the warning has to
+   * come back when it does; a stored flag would survive exactly the
+   * change that makes it untrue.
+   */
+  trustedNetwork?: boolean
   /** How long a signed-in session lasts. */
   sessionTtlMs?: number
 }
@@ -139,6 +162,7 @@ export class Application {
   private readonly tickListeners = new Set<() => void>()
   private timer: NodeJS.Timeout | undefined
   private reachableFromNetwork = false
+  private readonly trustsNetwork: boolean
   private ticking = false
   /** When the in-flight tick began, for the overrun deadline. */
   private tickStartedAt = 0
@@ -170,6 +194,7 @@ export class Application {
     clock: Clock
     tickIntervalMs: number
     horizonMs: number
+    trustedNetwork: boolean
     links: { origin: string; configured: boolean }
     restored?: RestoreApplied
   }) {
@@ -222,6 +247,7 @@ export class Application {
     this.logger = init.logger
     this.clock = init.clock
     this.tickIntervalMs = init.tickIntervalMs
+    this.trustsNetwork = init.trustedNetwork
     this.horizonMs = init.horizonMs
     this.links = init.links
     this.restored = init.restored
@@ -245,6 +271,15 @@ export class Application {
 
   setExposed(exposed: boolean): void {
     this.reachableFromNetwork = exposed
+  }
+
+  /**
+   * True when the operator has said that whatever can reach this port is
+   * already trusted, so an install with no password of its own is a
+   * decision rather than an oversight.
+   */
+  get trustedNetwork(): boolean {
+    return this.trustsNetwork
   }
 
   /**
@@ -418,6 +453,7 @@ export class Application {
       clock,
       tickIntervalMs: options.tickIntervalMs ?? 5_000,
       horizonMs: options.horizonMs ?? DEFAULT_HORIZON_MS,
+      trustedNetwork: options.trustedNetwork === true,
       links,
     })
   }

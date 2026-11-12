@@ -323,11 +323,37 @@ class MockDevice {
             throw new DeviceError('not-found', `There is no file called "${name}" on this device.`)
           }
         },
-        listMedia: async ({ slot }) =>
-          this.clips
-            .filter((clip) => slot === undefined || clip.slot === slot)
-            .filter((clip) => !this.blanked.has(clip.slot))
-            .map((clip) => ({ ...clip })),
+        /**
+         * A card, served the way a real one is: a directory per slot at
+         * the root with the clips inside it.
+         *
+         * Flat would have been less code and would have agreed with a
+         * browser that never left the top — which is exactly the shape of
+         * fake that let the "list the card, not the list of cards" bug
+         * ship in the first place.
+         */
+        listMedia: async ({ slot, path }) => {
+          const cardOf = (id: number): string => `/card${id}`
+          const cards = [...new Set(this.clips.map((clip) => clip.slot))].sort((a, b) => a - b)
+
+          if (path === '/') {
+            return {
+              directory: '/',
+              items: cards.map((id) => ({ name: `card${id}`, slot: id, isFolder: true })),
+            }
+          }
+
+          const asked = path === undefined ? undefined : cards.find((id) => cardOf(id) === path)
+          const here = asked ?? slot ?? cards[0] ?? 1
+          return {
+            directory: cardOf(here),
+            parent: '/',
+            items: this.clips
+              .filter((clip) => clip.slot === here)
+              .filter((clip) => !this.blanked.has(clip.slot))
+              .map((clip) => ({ ...clip })),
+          }
+        },
         // Two steps, like the deck this stands in for: preparing hands back
         // a token and erases nothing, and only that token erases the card.
         formatStorage: async ({ slot, confirm }) => {

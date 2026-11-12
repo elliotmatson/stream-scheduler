@@ -30,6 +30,15 @@ services:
       # change it in Settings afterwards and it will stick. Leaving this
       # here does not undo that.
       # SCHEDULER_UI_PASSWORD: change-me
+      # Say that whatever can reach this port is already trusted, so the
+      # app stops warning that it has no password. Two quite different
+      # installs want this: one on a church LAN with no route in from
+      # outside, and one behind something that signs people in first, such
+      # as Cloudflare Access. It adds no protection in either case — it
+      # only stops the app insisting on a lock of its own, so set it
+      # because you have checked what can reach this address, not to quiet
+      # the warning.
+      # SCHEDULER_TRUSTED_NETWORK: "true"
       # Where scheduled backups are written, inside the container. What it
       # is worth depends on where the volume below actually lives.
       SCHEDULER_BACKUP_DIR: /backups

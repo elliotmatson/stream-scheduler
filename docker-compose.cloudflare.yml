@@ -35,7 +35,11 @@
 # on this machine, anyone who can reach the loopback port the base file
 # publishes — skips Access entirely and finds the app exactly as it is.
 #
-# So this file refuses to start without SCHEDULER_UI_PASSWORD. Turning the
+# So this file refuses to start without SCHEDULER_UI_PASSWORD. If you mean
+# to run with no password anyway, use the base docker-compose.yml with
+# SCHEDULER_TRUSTED_NETWORK=true instead — the deliberate way to say you
+# have checked what can reach this port, and a setting that adds nothing
+# but silence. Turning the
 # app's own password off is safe only when you are certain nothing can reach
 # the container except through Cloudflare, and on a machine that also runs
 # your production gear that is a strong claim to make.

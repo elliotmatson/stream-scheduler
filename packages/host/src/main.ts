@@ -20,6 +20,10 @@ export async function startHost(): Promise<{ stop: () => Promise<void>; url: str
     // open, which is right for a loopback install and shouted about at
     // startup for anything wider.
     uiPassword: process.env.SCHEDULER_UI_PASSWORD,
+    // Read every start rather than stored: it describes where the
+    // container sits, and moving it somewhere less trusted has to bring
+    // the warning back by itself.
+    trustedNetwork: isTruthy(process.env.SCHEDULER_TRUSTED_NETWORK),
     ...(process.env.SCHEDULER_LOG_LEVEL
       ? { logLevel: process.env.SCHEDULER_LOG_LEVEL as LogLevel }
       : {}),
@@ -87,4 +91,15 @@ if (isDirectRun) {
       process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`)
       process.exit(1)
     })
+}
+
+/**
+ * The spellings people actually put in a compose file.
+ *
+ * Anything else is false, including the empty string, so an unset variable
+ * and one left blank mean the same safe thing.
+ */
+function isTruthy(value: string | undefined): boolean {
+  const normalised = value?.trim().toLowerCase()
+  return normalised === 'true' || normalised === '1' || normalised === 'yes' || normalised === 'on'
 }

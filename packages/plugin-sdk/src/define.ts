@@ -68,10 +68,22 @@ export function defineDevice(spec: DeviceSpec): DeviceInstance {
         if (!actions.listMedia) {
           throw new DeviceError('unsupported-action', `"${nodeId}" cannot list its media.`)
         }
-        const media = await actions.listMedia(
-          typeof args.slot === 'number' ? { slot: args.slot } : {},
-        )
-        return { raw: { media: media as unknown as JsonObject[] } }
+        const result = await actions.listMedia({
+          ...(typeof args.slot === 'number' ? { slot: args.slot } : {}),
+          ...(typeof args.path === 'string' && args.path !== '' ? { path: args.path } : {}),
+        })
+        // Either shape is allowed, and normalising here is the whole
+        // reason it can be: an adapter with nothing to say about
+        // directories keeps returning an array and never learns that
+        // anything changed.
+        const listing = Array.isArray(result) ? { items: result } : result
+        return {
+          raw: {
+            media: listing.items as unknown as JsonObject[],
+            ...(listing.directory === undefined ? {} : { directory: listing.directory }),
+            ...(listing.parent === undefined ? {} : { parent: listing.parent }),
+          },
+        }
       }
 
       const handler = actions[action]
@@ -120,6 +132,10 @@ export function defineDevice(spec: DeviceSpec): DeviceInstance {
           await actions.deleteMedia!({
             name: readString(args, 'name'),
             ...(typeof args.slot === 'number' ? { slot: args.slot } : {}),
+            // Where it was seen. A name alone is ambiguous the moment the
+            // media is a tree, and deleting the right name in the wrong
+            // directory is the kind of mistake nothing undoes.
+            ...(typeof args.path === 'string' && args.path !== '' ? { path: args.path } : {}),
           })
           break
         case 'startStreaming':

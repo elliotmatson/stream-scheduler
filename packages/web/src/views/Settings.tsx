@@ -320,8 +320,23 @@ function Security({
       <p className="muted" style={{ marginTop: 0 }}>
         {session.required
           ? 'One password, shared by everyone who runs this. Changing it signs everybody out, including you on your other devices.'
-          : 'No password is set, so anyone who can reach this address can start a broadcast and drive your devices. On a booth machine nobody else can reach, that is a reasonable way to run it.'}
+          : session.trustedNetwork
+            ? 'No password is set here, because this install is configured to trust whatever can reach it — a network with no way in from outside, or something that signs people in before they get this far. The warning about being reachable from the network is switched off to match.'
+            : 'No password is set, so anyone who can reach this address can start a broadcast and drive your devices. On a booth machine nobody else can reach, that is a reasonable way to run it.'}
       </p>
+
+      {/* Where somebody wondering why there is no nag will look. Worth
+          saying what the assumption rests on, because the failure mode is
+          the same either way: a route to this port that nobody meant to
+          leave open. */}
+      {session.trustedNetwork ? (
+        <p className="muted" style={{ marginTop: 0 }}>
+          <code>SCHEDULER_TRUSTED_NETWORK</code> is set, so this app has been told that anything
+          able to reach it is already trusted. It adds no protection of its own — whatever can open
+          this address can drive your devices — so it is worth being sure that is only what you
+          think it is. Unset the variable and restart to put the warnings back.
+        </p>
+      ) : null}
 
       {/* Said once, where somebody about to change it will read it. The
           variable is almost always still sitting in a compose file, and

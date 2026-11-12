@@ -523,6 +523,18 @@ export interface RemoteFile {
   recordedAt?: number
   durationMs?: number
   codec?: string
+  /** A folder rather than a file: an ATEM's ISO recording is one, and so
+   *  is each card at the root of a deck. Carries no size, because the one
+   *  a server reports for a directory is not the size of what is in it. */
+  isFolder?: boolean
+}
+
+export interface MediaListing {
+  files: RemoteFile[]
+  /** Where the device says it looked. */
+  directory?: string
+  /** One level up, absent at the top of what the device serves. */
+  parent?: string
 }
 
 export interface RetentionCandidate {
@@ -656,6 +668,10 @@ export interface SessionState {
   /** The stored password originally came from SCHEDULER_UI_PASSWORD. It can
    *  still be changed here; that variable is no longer read. */
   seededFromEnvironment: boolean
+  /** Whatever can reach this port is already trusted — a closed network,
+   *  or something that signs people in first — so having no password of
+   *  its own is deliberate. Set by SCHEDULER_TRUSTED_NETWORK at startup. */
+  trustedNetwork: boolean
   minPasswordLength: number
 }
 
@@ -734,15 +750,35 @@ export const api = {
     }),
   retention: () => request<{ outputs: RetentionReport[] }>('/api/retention'),
   /** What is actually on one recorder's media, straight from the device. */
-  media: (deviceId: string, nodeId: string, slot?: number) =>
-    request<{ files: RemoteFile[] }>(
-      `/api/devices/${deviceId}/nodes/${nodeId}/media${slot === undefined ? '' : `?slot=${slot}`}`,
-    ),
+  media: (deviceId: string, nodeId: string, slot?: number, path?: string) => {
+    const query = new URLSearchParams()
+    if (slot !== undefined) query.set('slot', String(slot))
+    // Absent means "wherever the recordings are", which is where this
+    // opens; a path is only ever one the device itself handed back.
+    if (path !== undefined) query.set('path', path)
+    const suffix = query.toString()
+    return request<MediaListing>(
+      `/api/devices/${deviceId}/nodes/${nodeId}/media${suffix === '' ? '' : `?${suffix}`}`,
+    )
+  },
   /** Step one: what a selection would remove, and a token to do it with. */
-  prepareDelete: (deviceId: string, nodeId: string, names: string[], slot?: number) =>
+  prepareDelete: (
+    deviceId: string,
+    nodeId: string,
+    names: string[],
+    slot?: number,
+    path?: string,
+  ) =>
     request<{ deleted: false; confirm: string; files: string[] }>(
       `/api/devices/${deviceId}/nodes/${nodeId}/media/delete`,
-      { method: 'POST', body: JSON.stringify({ names, ...(slot === undefined ? {} : { slot }) }) },
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          names,
+          ...(slot === undefined ? {} : { slot }),
+          ...(path === undefined ? {} : { path }),
+        }),
+      },
     ),
   /** Step two: removes precisely what the confirmation described. */
   confirmDelete: (
@@ -751,12 +787,18 @@ export const api = {
     names: string[],
     confirm: string,
     slot?: number,
+    path?: string,
   ) =>
     request<{ deleted: true; removed: string[]; failed: { name: string; reason: string }[] }>(
       `/api/devices/${deviceId}/nodes/${nodeId}/media/delete`,
       {
         method: 'POST',
-        body: JSON.stringify({ names, confirm, ...(slot === undefined ? {} : { slot }) }),
+        body: JSON.stringify({
+          names,
+          confirm,
+          ...(slot === undefined ? {} : { slot }),
+          ...(path === undefined ? {} : { path }),
+        }),
       },
     ),
   /** Step one: the exact list, and a token to remove it with. */

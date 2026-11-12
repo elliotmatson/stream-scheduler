@@ -21,6 +21,7 @@ import {
   connectFtp as realConnectFtp,
   ftpPath,
   mediaDirectory,
+  parentOf,
   type FtpConnect,
   type FtpSession,
 } from '@scheduler/device-ftp'
@@ -293,7 +294,7 @@ class HyperdeckDevice {
        * what the deck says and lets the host supply the dates from its own
        * record of what it recorded.
        */
-      listMedia: async ({ slot }) => {
+      listMedia: async ({ slot, path }) => {
         const listing = await this.send(new Commands.DiskListCommand(slot?.toString()))
         const slotId = listing.slotId
 
@@ -315,7 +316,10 @@ class HyperdeckDevice {
         // two columns anybody managing files actually sorts by.
         const session = await this.connectFtp({ host: this.host })
         try {
-          const directory = await this.mediaDirectoryFor(session, slotId)
+          // A path means somebody is walking the card and has said where.
+          // Without one this answers "wherever the clips are", which is
+          // what retention and the sweep rely on.
+          const directory = path ?? (await this.mediaDirectoryFor(session, slotId))
           const files = await session.list(directory)
           // Where it looked, not just what it found. An empty card and a
           // listing of the wrong directory read identically on a screen,
@@ -324,13 +328,22 @@ class HyperdeckDevice {
             directory,
             files: files.length,
           })
-          return files.map((file) => ({
-            name: file.name,
-            slot: slotId,
-            bytes: file.size,
-            ...(file.modifiedAt === undefined ? {} : { recordedAt: file.modifiedAt }),
-            ...(described.get(file.name) ?? {}),
-          }))
+          return {
+            directory,
+            ...(parentOf(directory) === undefined ? {} : { parent: parentOf(directory) }),
+            items: files.map((file) => ({
+              name: file.name,
+              slot: slotId,
+              // A folder is a folder wherever it turns up. The deck's own
+              // clips are files, but the card's root is a list of cards
+              // and somebody browsing will meet those first.
+              ...(file.isDirectory ? { isFolder: true } : { bytes: file.size }),
+              ...(file.modifiedAt === undefined ? {} : { recordedAt: file.modifiedAt }),
+              // Only the deck's own clips have these, and only where the
+              // name matches — a folder it knows nothing about gets none.
+              ...(described.get(file.name) ?? {}),
+            })),
+          }
         } finally {
           await session.close().catch(() => {})
         }
@@ -350,11 +363,18 @@ class HyperdeckDevice {
        * success on a file still sitting on the card is worse than one that
        * fails loudly.
        */
-      deleteMedia: async ({ name, slot }) => {
+      deleteMedia: async ({ name, slot, path }) => {
         const session = await this.connectFtp({ host: this.host })
         try {
-          const directory = await this.mediaDirectoryFor(session, slot)
-          await session.remove(ftpPath(directory, name))
+          // The directory it was picked from, not wherever the resolver
+          // would land now.
+          const directory = path ?? (await this.mediaDirectoryFor(session, slot))
+          const target = (await session.list(directory)).find((file) => file.name === name)
+          const fullPath = ftpPath(directory, name)
+          // Browsing can reach a folder on a card, and DELE will not
+          // remove one.
+          if (target?.isDirectory) await session.removeDirectory(fullPath)
+          else await session.remove(fullPath)
 
           const left = await session.list(directory)
           if (left.some((file) => file.name === name)) {

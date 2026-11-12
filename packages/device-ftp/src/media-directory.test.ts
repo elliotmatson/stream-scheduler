@@ -3,6 +3,7 @@ import {
   ftpPath,
   isHousekeeping,
   mediaDirectory,
+  parentOf,
   type FtpSession,
   type RemoteEntry,
 } from './index.js'
@@ -103,5 +104,20 @@ describe('what counts as media', () => {
     })
 
     expect(await mediaDirectory(session, '/')).toBe('/AND-College')
+  })
+})
+
+describe('stepping back up a card', () => {
+  it('knows what is above a directory', () => {
+    expect(parentOf('/AND-College/2026-10-18_08-57-59_and-college-atem')).toBe('/AND-College')
+    expect(parentOf('/AND-College')).toBe('/')
+    expect(parentOf('/AND-College/')).toBe('/')
+  })
+
+  it('stops at the top, because the root has nothing above it', () => {
+    // A way up from `/` would ask the server for the empty string, and no
+    // two FTP servers agree on what that means.
+    expect(parentOf('/')).toBeUndefined()
+    expect(parentOf('')).toBeUndefined()
   })
 })
