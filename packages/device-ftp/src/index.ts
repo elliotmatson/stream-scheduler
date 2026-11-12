@@ -91,12 +91,18 @@ export const connectFtp: FtpConnect = async ({ host, port }) => {
   })
 
   const entries = async (directory: string): Promise<RemoteEntry[]> =>
-    (await client.list(directory)).map((entry) => ({
-      name: entry.name,
-      size: entry.size,
-      isDirectory: entry.isDirectory,
-      ...(entry.modifiedAt === undefined ? {} : { modifiedAt: entry.modifiedAt.getTime() }),
-    }))
+    (await client.list(directory)).map((entry) => {
+      // basic-ftp fills `modifiedAt` only from MLSD. A server that answers
+      // only LIST still gives the date, as text, and dates are why this
+      // path exists at all.
+      const modifiedAt = entry.modifiedAt?.getTime() ?? parseListDate(entry.rawModifiedAt)
+      return {
+        name: entry.name,
+        size: entry.size,
+        isDirectory: entry.isDirectory,
+        ...(modifiedAt === undefined ? {} : { modifiedAt }),
+      }
+    })
 
   return {
     entries,
@@ -192,4 +198,31 @@ export async function mediaDirectory(
     if (match) return ftpPath(root, match.name)
   }
   return ftpPath(root, directories[0]!.name)
+}
+
+const MONTHS = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec']
+
+/**
+ * The date in a Unix-style LIST line: "Nov 12 09:30" this year, or
+ * "Nov 12 2025" for anything older than about six months. Read as this
+ * machine's local time, which is what the device means near enough — a
+ * deck's clock has no timezone to tell us otherwise.
+ */
+export function parseListDate(
+  raw: string | undefined,
+  now: number = Date.now(),
+): number | undefined {
+  const match = /^([a-z]{3})\s+(\d{1,2})\s+(?:(\d{1,2}):(\d{2})|(\d{4}))$/i.exec(raw?.trim() ?? '')
+  if (!match) return undefined
+  const month = MONTHS.indexOf(match[1]!.toLowerCase())
+  if (month === -1) return undefined
+  const day = Number(match[2])
+  if (match[5] !== undefined) return new Date(Number(match[5]), month, day).getTime()
+  const year = new Date(now).getFullYear()
+  const at = new Date(year, month, day, Number(match[3]), Number(match[4])).getTime()
+  // No year means within the last six months, so a date ahead of now is
+  // last year's.
+  return at > now + 86_400_000
+    ? new Date(year - 1, month, day, Number(match[3]), Number(match[4])).getTime()
+    : at
 }

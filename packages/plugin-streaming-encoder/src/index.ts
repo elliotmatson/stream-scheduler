@@ -1,4 +1,10 @@
-import { defineDevice, DeviceError, fingerprint, SDK_API_VERSION } from '@scheduler/plugin-sdk'
+import {
+  defineDevice,
+  DeviceError,
+  fingerprint,
+  sameStreamUrl,
+  SDK_API_VERSION,
+} from '@scheduler/plugin-sdk'
 import type {
   ConfigField,
   DeviceCapabilities,
@@ -48,8 +54,16 @@ const configSchema: ConfigField[] = [
   // the one it has.
 ]
 
-/** The device reports these while it is doing something, or trying to. */
-const ACTIVE_STATUSES = new Set(['Streaming', 'Connecting', 'Interrupted'])
+/**
+ * Only Streaming is streaming.
+ *
+ * Connecting and Interrupted are the encoder trying. Counting them as on
+ * air let a start verify the instant it was sent, so a wrong or expired key
+ * — which leaves the encoder cycling between the two for ever — passed as a
+ * stream that had gone live. The scheduler gives a start time to settle; a
+ * stream coming up gets there within it, and one that never will fails.
+ */
+const ACTIVE_STATUSES = new Set(['Streaming'])
 
 class StreamingEncoderDevice {
   private product = { productName: 'Blackmagic encoder', softwareVersion: '' }
@@ -327,11 +341,7 @@ class StreamingEncoderDevice {
  * the encoder there" path for no reason.
  */
 function sameEndpoint(a: string, b: string): boolean {
-  return normalise(a) === normalise(b)
-}
-
-function normalise(url: string): string {
-  return url.trim().replace(/\/+$/, '').toLowerCase()
+  return sameStreamUrl(a, b)
 }
 
 function describe(error: unknown): string {

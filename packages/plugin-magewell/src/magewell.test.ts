@@ -312,6 +312,25 @@ afterEach(async () => {
   device = undefined
 })
 
+describe('after connecting', () => {
+  it('notices the encoder has gone, rather than reporting it fine for ever', async () => {
+    const options: { unreachable?: boolean } = {}
+    const fake = fakeMagewell(options)
+    let clock = NOW
+    const plugin = magewellPlugin({
+      now: () => clock,
+      createApi: (opts) => createMagewellApi({ ...opts, http: fake.http }),
+    })
+    device = withSerializingTransport(await plugin.createDevice(context()))
+    expect((await device!.health()).state).toBe('connected')
+
+    // Unplugged. Nothing else would have asked it anything.
+    options.unreachable = true
+    clock += 60_000
+    expect((await device!.health()).state).toBe('disconnected')
+  })
+})
+
 describe('connecting', () => {
   it('reports the model and firmware it found', async () => {
     const mw = await connect(fakeMagewell())

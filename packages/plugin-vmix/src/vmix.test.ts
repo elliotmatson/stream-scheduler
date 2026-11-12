@@ -201,6 +201,22 @@ describe('connecting', () => {
   })
 })
 
+describe('after connecting', () => {
+  it('notices vMix has gone, rather than reporting it fine for ever', async () => {
+    const options: { unreachable?: boolean } = {}
+    const fake = fakeVmix(options)
+    let clock = NOW
+    const plugin = vmixPlugin({ now: () => clock, createApi: () => fake.api })
+    device = withSerializingTransport(await plugin.createDevice(context()))
+    expect((await device!.health()).state).toBe('connected')
+
+    // Unplugged. Nothing else would have asked it anything.
+    options.unreachable = true
+    clock += 60_000
+    expect((await device!.health()).state).toBe('disconnected')
+  })
+})
+
 describe('the nodes it offers', () => {
   it('offers one stream destination and a recorder by default', async () => {
     const vmix = await connect(fakeVmix())

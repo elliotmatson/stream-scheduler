@@ -457,3 +457,27 @@ describe('mock plugin', () => {
     await manager.closeAll()
   })
 })
+
+describe('two callers at once', () => {
+  it('opens one connection to a device, not one each', async () => {
+    let created = 0
+    const counting: PluginDefinition = {
+      ...mockPlugin({ now: () => clock.now() }),
+      id: 'counting',
+      async createDevice(ctx) {
+        created += 1
+        // Long enough that the second caller arrives while the first connects.
+        await new Promise((resolve) => setTimeout(resolve, 10))
+        return mockPlugin({ now: () => clock.now() }).createDevice(ctx)
+      },
+    }
+    registry.register(counting)
+    const id = addDevice({ kind: 'encoder' }, { pluginId: 'counting' })
+    const manager = managerFor()
+
+    const [a, b] = await Promise.all([manager.open(id), manager.open(id)])
+    expect(created).toBe(1)
+    expect(a).toBe(b)
+    await manager.closeAll()
+  })
+})

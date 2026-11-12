@@ -1,4 +1,4 @@
-import { fingerprint } from '@scheduler/plugin-sdk'
+import { fingerprint, sameQuality, sameStreamUrl } from '@scheduler/plugin-sdk'
 import type { Clock, DestinationMetadata, JsonObject, NodeState } from '@scheduler/plugin-sdk'
 import type { Db } from '../db/index.js'
 import type { ConnectionManager } from '../devices/connection-manager.js'
@@ -58,7 +58,9 @@ export interface OutputPreview {
 function qualityMatches(state: NodeState, asked: string): boolean {
   const quality = state.options?.quality
   if (!quality) return false
-  return quality.current === asked || (quality.aliases ?? []).includes(asked)
+  return [quality.current, ...(quality.aliases ?? [])].some(
+    (reported) => reported !== undefined && sameQuality(reported, asked),
+  )
 }
 
 export class EventPlanner implements RunPlanner {
@@ -155,7 +157,7 @@ export class EventPlanner implements RunPlanner {
               `${target.url} with key ${fingerprint(target.key)}` +
               (output.settings.quality ? ` at ${output.settings.quality}` : ''),
             satisfiedBy: (state) =>
-              state.streaming?.targetUrl === target.url &&
+              sameStreamUrl(state.streaming?.targetUrl, target.url) &&
               state.streaming?.keyFingerprint === fingerprint(target.key) &&
               // A device reports `current` in the vocabulary it takes, and
               // may take more than one for the same setting — "Streaming

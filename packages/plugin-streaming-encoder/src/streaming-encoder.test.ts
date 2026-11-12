@@ -211,6 +211,8 @@ describe('starting and stopping', () => {
     })
     await enc.invoke('stream', 'startStreaming')
 
+    // A read while it is still connecting, then the one that confirms it.
+    await enc.invoke('stream', 'readState')
     const state = await enc.invoke('stream', 'readState')
     expect(state?.streaming?.active).toBe(true)
     expect(state?.streaming?.bitrateBps).toBe(6_000_000)
@@ -240,13 +242,28 @@ describe('starting and stopping', () => {
     expect((await enc.invoke('stream', 'readState'))?.streaming?.active).toBe(false)
   })
 
-  it('counts connecting as active, so a start verifies immediately', async () => {
+  it('does not count trying to connect as streaming', async () => {
+    // A wrong key leaves the encoder cycling Connecting and Interrupted
+    // for ever. That is not a stream on air.
     const enc = await connect()
     await enc.invoke('stream', 'applyStreamTarget', {
       url: 'rtmps://live.example.com/app',
       key: KEY,
     })
-    encoder.status = 'Connecting'
+    for (const status of ['Connecting', 'Interrupted'] as const) {
+      encoder.status = status
+      expect((await enc.invoke('stream', 'readState'))?.streaming?.active).toBe(false)
+    }
+  })
+
+  it('reports streaming once the encoder has actually connected', async () => {
+    const enc = await connect()
+    await enc.invoke('stream', 'applyStreamTarget', {
+      url: 'rtmps://live.example.com/app',
+      key: KEY,
+    })
+    await enc.invoke('stream', 'startStreaming')
+    expect((await enc.invoke('stream', 'readState'))?.streaming?.active).toBe(false)
     expect((await enc.invoke('stream', 'readState'))?.streaming?.active).toBe(true)
   })
 

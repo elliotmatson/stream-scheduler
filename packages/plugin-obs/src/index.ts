@@ -214,11 +214,14 @@ class ObsDevice {
             streamServiceSettings: { server: url, key },
           })
         },
+        // Already streaming, or already stopped, is the state wanted: a
+        // stream that dropped before its scheduled stop must not turn that
+        // stop into a failure. The read-back after decides what is true.
         startStreaming: async () => {
-          await this.send('StartStream')
+          await this.sendTolerating('StartStream', OUTPUT_RUNNING)
         },
         stopStreaming: async () => {
-          await this.send('StopStream')
+          await this.sendTolerating('StopStream', OUTPUT_NOT_RUNNING)
         },
         readState: async () => this.stateOf('stream'),
       }
@@ -236,12 +239,15 @@ class ObsDevice {
          */
         startRecording: async () => {
           this.recordingPath = undefined
-          await this.send('StartRecord')
+          await this.sendTolerating('StartRecord', OUTPUT_RUNNING)
         },
         stopRecording: async () => {
           // The reply carries the finished file's path, which is the most
           // reliable place the protocol offers it.
-          const result = await this.send<{ outputPath?: string }>('StopRecord')
+          const result = await this.sendTolerating<{ outputPath?: string }>(
+            'StopRecord',
+            OUTPUT_NOT_RUNNING,
+          )
           if (typeof result?.outputPath === 'string' && result.outputPath) {
             this.recordingPath = result.outputPath
           }
@@ -319,6 +325,22 @@ class ObsDevice {
    * scheduler tick wedges — the failure this app has already had once,
    * from a deck that accepted a socket and stopped answering.
    */
+  /** `send`, treating one refusal OBS gives as "already so". */
+  private async sendTolerating<T>(request: string, already: number): Promise<T | undefined> {
+    try {
+      return await this.send<T>(request)
+    } catch (error) {
+      if (
+        error instanceof DeviceError &&
+        error.cause instanceof Object &&
+        codeOf(error.cause) === already
+      ) {
+        return undefined
+      }
+      throw error
+    }
+  }
+
   private async send<T>(request: string, args?: Record<string, unknown>): Promise<T> {
     if (this.disposed) throw new DeviceError('disposed', 'This device has been closed.')
     let timer: ReturnType<typeof setTimeout> | undefined
@@ -343,6 +365,7 @@ class ObsDevice {
       if (error instanceof DeviceError) throw error
       throw new DeviceError('command-failed', `OBS refused ${request}: ${describe(error)}`, {
         retryable: true,
+        cause: error,
       })
     } finally {
       if (timer) clearTimeout(timer)
@@ -381,7 +404,17 @@ export function obsPlugin(options: ObsPluginOptions = {}): PluginDefinition {
       const password = ctx.config.password === undefined ? undefined : String(ctx.config.password)
 
       const device = new ObsDevice(ctx, createClient(), host, port, password, now)
-      await device.connect()
+      try {
+        await device.connect()
+      } catch (error) {
+        // The library client is already running and will keep retrying on
+        // its own — a worker thread for an ATEM, a timer for a HyperDeck —
+        // long after this attempt has been given up on. Every failed
+        // attempt overnight would leave one more behind, all of them
+        // connecting at once when the device comes back.
+        await device.dispose().catch(() => {})
+        throw error
+      }
 
       return defineDevice({
         probe: () => device.probe(),
@@ -392,4 +425,13 @@ export function obsPlugin(options: ObsPluginOptions = {}): PluginDefinition {
       })
     },
   }
+}
+
+/** obs-websocket's request status for "that output is already running". */
+const OUTPUT_RUNNING = 500
+/** …and for "that output is not running". */
+const OUTPUT_NOT_RUNNING = 501
+
+function codeOf(error: object): number | undefined {
+  return 'code' in error && typeof error.code === 'number' ? error.code : undefined
 }

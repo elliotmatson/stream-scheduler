@@ -5,6 +5,7 @@ import { isSerializable } from './json.js'
 import { negotiateLink } from './negotiate.js'
 import type { Port } from './types.js'
 import { defineDevice } from './define.js'
+import { sameQuality, sameStreamUrl } from './matching.js'
 import { SerializationViolation, withSerializingTransport } from './testing.js'
 import { ManualClock } from './clock.js'
 
@@ -176,5 +177,26 @@ describe('ManualClock', () => {
     expect(clock.now()).toBe(Date.parse('2026-03-08T14:00:00Z'))
     clock.advance(60_000)
     expect(clock.now()).toBe(Date.parse('2026-03-08T14:01:00Z'))
+  })
+})
+
+describe('matching what a device reports against what was asked', () => {
+  it('treats the ways people type a quality as one setting', () => {
+    expect(sameQuality('8', '8 Mb/s')).toBe(true)
+    expect(sameQuality('9', '9.0')).toBe(true)
+    expect(sameQuality('Streaming High', 'streaming high')).toBe(true)
+    expect(sameQuality('7-9', '7 - 9')).toBe(true)
+    expect(sameQuality('8', '9')).toBe(false)
+    expect(sameQuality('Streaming High', 'Streaming Low')).toBe(false)
+  })
+
+  it('treats a trailing slash and the case of the host as the same URL', () => {
+    expect(
+      sameStreamUrl('rtmp://A.rtmp.youtube.com/live2/', 'rtmp://a.rtmp.youtube.com/live2'),
+    ).toBe(true)
+    expect(sameStreamUrl('rtmp://host/live2', 'rtmp://host/live')).toBe(false)
+    // The path is the service's, and is compared as given.
+    expect(sameStreamUrl('rtmp://host/App', 'rtmp://host/app')).toBe(false)
+    expect(sameStreamUrl(undefined, 'rtmp://host/live')).toBe(false)
   })
 })

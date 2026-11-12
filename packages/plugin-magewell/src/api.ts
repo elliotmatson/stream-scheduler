@@ -184,7 +184,11 @@ export interface MagewellInfo {
 }
 
 export interface MagewellApi {
-  /** `GET /usapi?method=…`. Throws on a non-zero result. */
+  /**
+   * `GET /usapi?method=…`. Throws when the device cannot be reached; a
+   * non-zero `result` is returned for the caller to read, since some —
+   * already running, say — are answers rather than failures.
+   */
   call<T extends { result: number }>(method: string, params?: Record<string, string>): Promise<T>
   /** `POST /usapi?method=…` with a JSON body. */
   post<T extends { result: number }>(method: string, body: unknown): Promise<T>

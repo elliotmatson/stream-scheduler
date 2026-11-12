@@ -91,6 +91,9 @@ export type ConnectionEvent =
  */
 const PRIME_TIMEOUT_MS = 8_000
 
+/** Longest a probe, a node listing or a health check may take. */
+const CALL_TIMEOUT_MS = 15_000
+
 /** Rejects if the promise has not settled in time. The original is left to
  *  settle on its own; nothing here can cancel it. */
 async function withDeadline<T>(promise: Promise<T>, ms: number, what: string): Promise<T> {
@@ -136,6 +139,13 @@ function saysSomethingAboutTheDevice(state: NodeState): boolean {
  */
 export class ConnectionManager {
   private readonly connections = new Map<string, Connection>()
+  /**
+   * Connects in progress. A second caller waits for the first rather than
+   * opening a second socket to the same device — the tick and a run step
+   * asking at once was enough — and the first connection, overwritten in
+   * the map, was never closed.
+   */
+  private readonly opening = new Map<string, Promise<Connection>>()
   private readonly backoff = new Map<string, { attempts: number; nextAttemptAt: number }>()
   private readonly listeners = new Set<(event: ConnectionEvent) => void>()
   /** Per device, per node: nested so no separator has to be invented for a
@@ -164,7 +174,15 @@ export class ConnectionManager {
   async open(deviceId: string): Promise<Connection> {
     const existing = this.connections.get(deviceId)
     if (existing) return existing
+    const inFlight = this.opening.get(deviceId)
+    if (inFlight) return inFlight
 
+    const attempt = this.connect(deviceId).finally(() => this.opening.delete(deviceId))
+    this.opening.set(deviceId, attempt)
+    return attempt
+  }
+
+  private async connect(deviceId: string): Promise<Connection> {
     const row = this.deviceRow(deviceId)
     const plugin = this.deps.registry.get(row.plugin_id)
     const config = this.resolveConfig(row)
@@ -187,9 +205,24 @@ export class ConnectionManager {
 
       // Capabilities are probed, never trusted from a dropdown: streaming and
       // recording support varies by ATEM model and firmware.
-      const capabilities = await device.probe()
-      const nodes = await device.listNodes()
-      const health = await device.health()
+      // Bounded, like everything else this waits on: a device that accepts
+      // the connection and then never answers must not hold the tick.
+      const label = row.label
+      const capabilities = await withDeadline(
+        device.probe(),
+        CALL_TIMEOUT_MS,
+        `${label} did not describe itself`,
+      )
+      const nodes = await withDeadline(
+        device.listNodes(),
+        CALL_TIMEOUT_MS,
+        `${label} did not list its outputs`,
+      )
+      const health = await withDeadline(
+        device.health(),
+        CALL_TIMEOUT_MS,
+        `${label} did not report its health`,
+      )
 
       const connection: Connection = {
         deviceId,
@@ -363,7 +396,11 @@ export class ConnectionManager {
     for (const connection of this.list()) {
       let health: HealthReport
       try {
-        health = await connection.device.health()
+        health = await withDeadline(
+          connection.device.health(),
+          CALL_TIMEOUT_MS,
+          `${connection.label} did not report its health`,
+        )
       } catch (error) {
         await this.close(connection.deviceId)
         this.noteFailure(connection.deviceId, error)

@@ -43,7 +43,10 @@ class FakeAtem implements AtemClient {
     this.status = AtemConnectionStatus.CLOSED
   }
 
+  destroyed = 0
+
   async destroy(): Promise<void> {
+    this.destroyed += 1
     this.status = AtemConnectionStatus.CLOSED
   }
 
@@ -654,6 +657,17 @@ describe('failure handling', () => {
       code: 'connect-failed',
       retryable: true,
     })
+  })
+
+  it('shuts the library client down when the connection fails', async () => {
+    // Left running, it retries every second in a worker thread for ever —
+    // one more each time the scheduler tries again overnight.
+    const client = new FakeAtem({})
+    client.connectRejectsWith = 'no route to host'
+    await expect(
+      atemPlugin({ createClient: () => client }).createDevice(context()),
+    ).rejects.toThrow()
+    expect(client.destroyed).toBe(1)
   })
 
   it('keeps a failed command retryable', async () => {
