@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { z } from 'zod'
 import { readFileSync, rmSync, writeFileSync } from 'node:fs'
 import type { FastifyInstance } from 'fastify'
@@ -51,7 +51,7 @@ export function registerBackupRoutes(fastify: FastifyInstance, app: Application)
     (_request, body, done) => done(null, body),
   )
 
-  const pending = new Map<string, { at: number }>()
+  const pending = new Map<string, { at: number; digest: string }>()
 
   /**
    * What a backup would contain, and what restoring one would need.
@@ -166,7 +166,9 @@ export function registerBackupRoutes(fastify: FastifyInstance, app: Application)
       const verdict = keyVerdict(manifest, app.vault.keyId)
 
       const token = randomUUID()
-      pending.set(token, { at: app.clock.now() })
+      // The confirmation is for this file and no other: restoring is
+      // refused if what arrives is not byte for byte what was described.
+      pending.set(token, { at: app.clock.now(), digest: digestOf(body) })
       return {
         confirm: token,
         takenAt: manifest.takenAt,
@@ -206,6 +208,11 @@ export function registerBackupRoutes(fastify: FastifyInstance, app: Application)
     const body = request.body
     if (!Buffer.isBuffer(body) || body.length === 0) {
       throw new ConflictError('Send the backup file itself, as application/octet-stream.')
+    }
+    if (digestOf(body) !== agreed.digest) {
+      throw new ConflictError(
+        'This is not the file that was looked at. Upload it again to see what is in it.',
+      )
     }
 
     try {
@@ -278,4 +285,8 @@ function secretsReadable(app: Application): {
       message: error instanceof Error ? error.message : String(error),
     }
   }
+}
+
+function digestOf(bytes: Buffer): string {
+  return createHash('sha256').update(bytes).digest('hex')
 }

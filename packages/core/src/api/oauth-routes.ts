@@ -94,6 +94,31 @@ export function registerOAuthRoutes(fastify: FastifyInstance, app: Application):
     return reply.code(201).send({ id })
   })
 
+  /**
+   * Removes an OAuth client, and its secret with it.
+   *
+   * Refused while an account still uses it: those accounts refresh their
+   * tokens with this client's secret, and would stop working.
+   */
+  fastify.delete('/api/oauth/clients/:id', async (request) => {
+    const { id } = z.object({ id: z.string() }).parse(request.params)
+    const row = app.db.prepare('SELECT secret_ref FROM oauth_client WHERE id = ?').get(id) as
+      { secret_ref: string } | undefined
+    if (!row) throw new NotFoundError(`No OAuth client with id "${id}".`)
+    const users = app.db
+      .prepare('SELECT display_name FROM account WHERE oauth_client_ref = ?')
+      .all(id) as { display_name: string }[]
+    if (users.length > 0) {
+      throw new ConflictError(
+        `${users.map((user) => user.display_name).join(', ')} still sign in with this client. ` +
+          'Disconnect them first.',
+      )
+    }
+    app.db.prepare('DELETE FROM oauth_client WHERE id = ?').run(id)
+    app.vault.delete(row.secret_ref)
+    return { ok: true }
+  })
+
   fastify.post('/api/oauth/:provider/start', async (request) => {
     const { provider: providerId } = z.object({ provider: z.string() }).parse(request.params)
     const { clientRef } = z.object({ clientRef: z.string().min(1) }).parse(request.body)

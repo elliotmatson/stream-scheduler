@@ -266,15 +266,18 @@ empty ever since.
 
 ## Configuration
 
-| Variable                    | Default      | Meaning                                                                                                    |
-| --------------------------- | ------------ | ---------------------------------------------------------------------------------------------------------- |
-| `SCHEDULER_CONFIG_DIR`      | per-platform | Database, logs, master key                                                                                 |
-| `SCHEDULER_SECRET`          | —            | Derives the master key when no keychain or key file is available                                           |
-| `SCHEDULER_HOST`            | `127.0.0.1`  | Listen address. Anything but loopback with no password set logs a warning                                  |
-| `SCHEDULER_PORT`            | `8500`       | Listen port                                                                                                |
-| `SCHEDULER_UI_PASSWORD`     | —            | Sets the first password on a new install. Read once, then the app owns it                                  |
-| `SCHEDULER_TRUSTED_NETWORK` | `false`      | Says whatever can reach this port is already trusted. Silences the no-password warning; adds no protection |
-| `SCHEDULER_LOG_LEVEL`       | `info`       | `debug`, `info`, `warn`, `error`                                                                           |
+| Variable                    | Default      | Meaning                                                                                                                                                                                       |
+| --------------------------- | ------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `SCHEDULER_CONFIG_DIR`      | per-platform | Database, logs, master key                                                                                                                                                                    |
+| `SCHEDULER_SECRET`          | —            | Derives the master key when no keychain or key file is available                                                                                                                              |
+| `SCHEDULER_HOST`            | `127.0.0.1`  | Listen address. Anything but loopback with no password set logs a warning                                                                                                                     |
+| `SCHEDULER_PORT`            | `8500`       | Listen port                                                                                                                                                                                   |
+| `SCHEDULER_UI_PASSWORD`     | —            | Sets the first password on a new install. Read once, then the app owns it                                                                                                                     |
+| `SCHEDULER_TRUSTED_NETWORK` | `false`      | Says whatever can reach this port is already trusted. Silences the no-password warning; adds no protection                                                                                    |
+| `SCHEDULER_LOG_LEVEL`       | `info`       | `debug`, `info`, `warn`, `error`                                                                                                                                                              |
+| `SCHEDULER_PUBLIC_URL`      | —            | The address people reach the app at, e.g. `https://stream.example.org`. Used for links in alerts, and the app then answers to that name. Learnt from the first signed-in page load when unset |
+| `SCHEDULER_TRUSTED_PROXY`   | `false`      | Set behind cloudflared, Tailscale Serve or another reverse proxy, so the login throttle counts each person rather than the proxy                                                              |
+| `SCHEDULER_ALLOWED_HOSTS`   | —            | Comma-separated names the app answers to, besides loopback, IP addresses and the public URL. Once any name is set, requests for other names are refused, which blocks DNS rebinding           |
 
 ## Connecting YouTube
 

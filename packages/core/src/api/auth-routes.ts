@@ -16,27 +16,55 @@ import { originOf } from './origin.js'
 
 export const SESSION_COOKIE = 'scheduler_session'
 
-/** What stays reachable with no session, and why. */
+/**
+ * What stays reachable with no session, and why.
+ *
+ * - `/healthz`: container health checks. Exempt before this was written,
+ *   and the only route that was — which is how a broken lock once passed CI.
+ * - `/api/login`, `/api/session`: signing in, and asking whether you need to.
+ * - `/oauth/callback`: carries a `state` this app issued and stored, which
+ *   is what makes it safe — a forged one is refused there. Open so a
+ *   session that lapsed while the operator was at Google costs a retry
+ *   rather than the authorization code.
+ */
+const OPEN_ROUTES = new Set(['/healthz', '/api/login', '/api/session', '/oauth/callback'])
+
+/** The API and the live socket. Everything else is the app's own files. */
+function isGated(path: string): boolean {
+  return path === '/ws' || path === '/api' || path.startsWith('/api/')
+}
+
+/**
+ * Decided on the route the request will actually reach, not on the URL as
+ * sent.
+ *
+ * The router decodes the path before matching it, so `/%61pi/backup` is
+ * served by `/api/backup`. A check that read the raw URL saw something
+ * outside the API and let it through — the whole database, and the power
+ * to remove the password, to anyone who could reach the port. The matched
+ * route is what will run, so that is what is checked; where nothing
+ * matched, the path is decoded the way the router decodes it.
+ */
 function isOpen(request: FastifyRequest): boolean {
-  const path = request.url.split('?')[0] ?? ''
-
-  // Container health checks. Exempt before this was written, and the only
-  // route that was — which is how a broken lock once passed CI.
-  if (path === '/healthz') return true
-
-  // Signing in, and asking whether you need to.
-  if (path === '/api/login' || path === '/api/session') return true
-
-  // The OAuth callback carries a `state` this app issued and stored, which
-  // is what makes it safe: a forged one is refused there. Leaving it open
-  // also means a session that lapsed while the operator was at Google
-  // costs them a re-try rather than the authorization code.
-  if (path === '/oauth/callback') return true
-
-  // Everything else outside the API is the single-page app and its assets.
+  const route = request.routeOptions?.url
+  if (route !== undefined && route !== '/*' && route !== '*') {
+    return OPEN_ROUTES.has(route) || !isGated(route)
+  }
+  const path = decodedPath(request.url)
+  // A path that cannot be decoded cannot be reasoned about: refused.
+  if (path === undefined) return false
+  // Everything outside the API is the single-page app and its assets.
   // They are public client code, and the login form is part of the bundle:
   // gating them would leave nothing to log in with.
-  return path !== '/ws' && !path.startsWith('/api/')
+  return OPEN_ROUTES.has(path) || !isGated(path)
+}
+
+function decodedPath(url: string): string | undefined {
+  try {
+    return decodeURIComponent(url.split('?')[0] ?? '').replace(/\/{2,}/g, '/')
+  } catch {
+    return undefined
+  }
 }
 
 export function registerAuthGate(fastify: FastifyInstance, app: Application): void {
@@ -170,7 +198,7 @@ function setSessionCookie(
   })
 }
 
-function tokenFrom(request: FastifyRequest): string | undefined {
+export function tokenFrom(request: FastifyRequest): string | undefined {
   const header = request.headers.authorization
   if (header?.startsWith('Bearer ')) return header.slice('Bearer '.length).trim() || undefined
   const cookie = (request.cookies as Record<string, string | undefined> | undefined)?.[

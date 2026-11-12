@@ -24,6 +24,11 @@ export async function startHost(): Promise<{ stop: () => Promise<void>; url: str
     // container sits, and moving it somewhere less trusted has to bring
     // the warning back by itself.
     trustedNetwork: isTruthy(process.env.SCHEDULER_TRUSTED_NETWORK),
+    // Where people reach this app, for links in alerts and for the names it
+    // answers to. Learnt from the first signed-in page load when unset.
+    ...(process.env.SCHEDULER_PUBLIC_URL
+      ? { baseUrl: process.env.SCHEDULER_PUBLIC_URL.replace(/\/+$/, '') }
+      : {}),
     ...(process.env.SCHEDULER_LOG_LEVEL
       ? { logLevel: process.env.SCHEDULER_LOG_LEVEL as LogLevel }
       : {}),
@@ -55,6 +60,13 @@ export async function startHost(): Promise<{ stop: () => Promise<void>; url: str
     app,
     port,
     host,
+    // Set behind cloudflared, Tailscale Serve, nginx: the login throttle
+    // then counts people rather than the proxy.
+    trustProxy: isTruthy(process.env.SCHEDULER_TRUSTED_PROXY),
+    allowedHosts: (process.env.SCHEDULER_ALLOWED_HOSTS ?? '')
+      .split(',')
+      .map((name) => name.trim())
+      .filter(Boolean),
     webRoot: join(dirname(fileURLToPath(import.meta.url)), '..', 'web'),
   })
 

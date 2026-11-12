@@ -48,8 +48,9 @@ import {
   serializeOverrides,
 } from '../events/occurrence-overrides.js'
 import { assertUnreferenced, ConflictError, NotFoundError } from './errors.js'
+import { hostnameOf, registerHostCheck } from './host-check.js'
 import { buildDashboard, outputsOf } from './dashboard.js'
-import { registerAuthGate, registerAuthRoutes } from './auth-routes.js'
+import { registerAuthGate, registerAuthRoutes, tokenFrom } from './auth-routes.js'
 import { registerNotifyRoutes } from './notify-routes.js'
 import { registerBackupRoutes } from './backup-routes.js'
 import { registerOAuthRoutes } from './oauth-routes.js'
@@ -62,12 +63,24 @@ export interface ServerOptions {
   port?: number
   /**
    * Defaults to loopback, so a plain `node main.js` is not reachable from
-   * anywhere else. Binding elsewhere is an explicit act, and there is no
-   * authentication yet — see the warning below.
+   * anywhere else. Binding elsewhere is an explicit act, and warned about
+   * when there is no password — see below.
    */
   host?: string
   /** Directory of built web assets, served at `/` when present. */
   webRoot?: string
+  /**
+   * Names, beyond loopback and bare IP addresses, this app answers to. The
+   * host of the configured public URL is added automatically. See
+   * `registerHostCheck`.
+   */
+  allowedHosts?: string[]
+  /**
+   * Set when a reverse proxy sits in front: `request.ip` is then read from
+   * `X-Forwarded-For`, so the login throttle counts each person rather than
+   * treating everybody as the proxy.
+   */
+  trustProxy?: boolean
 }
 
 const DELETE_CONFIRM_TTL_MS = 5 * 60_000
@@ -118,20 +131,38 @@ export async function createServer(options: ServerOptions): Promise<FastifyInsta
     }
   }
 
-  const fastify = Fastify({ logger: false, bodyLimit: 2 * 1024 * 1024 })
+  const fastify = Fastify({
+    logger: false,
+    bodyLimit: 2 * 1024 * 1024,
+    trustProxy: options.trustProxy === true,
+  })
 
-  // Learn where people actually reach this app, for the links in alerts.
-  // Only page loads count: a container health check curling loopback every
-  // thirty seconds would otherwise keep resetting it to an address that
-  // works on one machine and nowhere else.
-  fastify.addHook('onRequest', async (request) => {
-    if (request.headers.accept?.includes('text/html')) app.setPublicOrigin(originOf(request))
+  // First of all: a request addressed to a name this app does not answer to
+  // is refused before anything else looks at it.
+  const publicHost = app.linksConfigured ? hostnameOf(new URL(app.publicOrigin).host) : undefined
+  registerHostCheck(fastify, {
+    allowedHosts: [...(options.allowedHosts ?? []), ...(publicHost ? [publicHost] : [])],
   })
 
   // Before every route, including the WebSocket upgrade and the static
   // assets: a gate registered later would leave whatever came first open.
   await fastify.register(fastifyCookie)
   registerAuthGate(fastify, app)
+
+  // Learn where people actually reach this app, for the links in alerts.
+  // After the gate, so only somebody who got in can set it: a request with
+  // a forged Host or X-Forwarded-Host would otherwise point every alert at
+  // a lookalike. Only page loads count: a container health check curling
+  // loopback every thirty seconds would otherwise keep resetting it to an
+  // address that works on one machine and nowhere else. Never once a public
+  // URL is configured.
+  fastify.addHook('onRequest', async (request) => {
+    if (!request.headers.accept?.includes('text/html')) return
+    // The page itself is open to everybody — the login form is part of it
+    // — so the gate does not decide this. Somebody signed in does.
+    if (app.auth.required && !app.auth.allows(tokenFrom(request))) return
+    app.setPublicOrigin(originOf(request))
+  })
 
   await fastify.register(websocket)
 
@@ -316,9 +347,13 @@ function registerRoutes(fastify: FastifyInstance, app: Application): void {
   fastify.delete('/api/devices/:id', async (request) => {
     const { id } = z.object({ id: z.string() }).parse(request.params)
     assertUnreferenced(db, 'device_id', id, 'device')
+    const row = deviceOr404(db, id)
     await app.connections.close(id)
     app.tags.clear('device', id)
     db.prepare('DELETE FROM device WHERE id = ?').run(id)
+    // Its password goes with it, rather than staying in the vault and in
+    // every backup taken from now on.
+    forgetSecrets(app, row.plugin_id, JSON.parse(row.config) as ConfigValues)
     return { ok: true }
   })
 
@@ -665,7 +700,11 @@ function registerRoutes(fastify: FastifyInstance, app: Application): void {
   fastify.delete('/api/credentials/:id', async (request) => {
     const { id } = z.object({ id: z.string() }).parse(request.params)
     assertUnreferenced(db, 'credential_id', id, 'stream key')
+    const row = db.prepare('SELECT secret_ref FROM stream_credential WHERE id = ?').get(id) as
+      { secret_ref: string } | undefined
     db.prepare('DELETE FROM stream_credential WHERE id = ?').run(id)
+    // A stream key somebody deleted is gone, not kept in the vault.
+    if (row) app.vault.delete(row.secret_ref)
     return { ok: true }
   })
 
@@ -1814,11 +1853,27 @@ function registerRoutes(fastify: FastifyInstance, app: Application): void {
 }
 
 function registerWebsocket(fastify: FastifyInstance, app: Application): void {
-  const clients = new Set<{ send(data: string): void }>()
+  const clients = new Map<
+    { send(data: string): void; close(code?: number): void },
+    string | undefined
+  >()
 
   const broadcast = (payload: unknown): void => {
     const data = JSON.stringify(payload)
-    for (const client of clients) {
+    for (const [client, token] of clients) {
+      // A socket opened under a session that has since ended — signed out,
+      // signed out everywhere, or the password changed — gets nothing
+      // more, and is closed. Checked here rather than only at the upgrade,
+      // because a socket outlives the request that opened it.
+      if (app.auth.required && !app.auth.allows(token)) {
+        clients.delete(client)
+        try {
+          client.close(4401)
+        } catch {
+          // Already gone.
+        }
+        continue
+      }
       try {
         client.send(data)
       } catch {
@@ -1836,8 +1891,8 @@ function registerWebsocket(fastify: FastifyInstance, app: Application): void {
     }),
   )
 
-  fastify.get('/ws', { websocket: true }, (socket) => {
-    clients.add(socket)
+  fastify.get('/ws', { websocket: true }, (socket, request) => {
+    clients.set(socket, tokenFrom(request))
     socket.on('close', () => clients.delete(socket))
   })
 }
@@ -2256,6 +2311,10 @@ function storeSecrets(
       else out[field.id] = previous
       continue
     }
+    // Cleared or replaced: the old value is no longer anyone's, so it does
+    // not stay in the vault.
+    const previous = existing[field.id]
+    if (typeof previous === 'string' && previous !== '') app.vault.delete(previous)
     if (typeof value !== 'string' || value === '') {
       delete out[field.id]
       continue
@@ -2263,6 +2322,20 @@ function storeSecrets(
     out[field.id] = app.vault.store(value)
   }
   return out
+}
+
+/** Removes the vault entries a config's secret fields point at. */
+function forgetSecrets(app: Application, pluginId: string, config: ConfigValues): void {
+  let schema: ReturnType<Application['registry']['configSchema']>
+  try {
+    schema = app.registry.configSchema(pluginId)
+  } catch {
+    return // a plugin no longer loaded: nothing known about its fields
+  }
+  for (const field of schema) {
+    const ref = config[field.id]
+    if (field.type === 'secret' && typeof ref === 'string' && ref !== '') app.vault.delete(ref)
+  }
 }
 
 const MASKED = '••••••••'

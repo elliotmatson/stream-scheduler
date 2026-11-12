@@ -27,7 +27,13 @@ let app: Application
 let server: FastifyInstance
 
 async function boot(
-  options: { uiPassword?: string; trustedNetwork?: boolean; host?: string } = {},
+  options: {
+    uiPassword?: string
+    trustedNetwork?: boolean
+    host?: string
+    allowedHosts?: string[]
+    baseUrl?: string
+  } = {},
 ): Promise<void> {
   dir = mkdtempSync(join(tmpdir(), 'scheduler-auth-api-'))
   clock = new ManualClock(Date.parse('2026-03-08T14:00:00Z'))
@@ -38,10 +44,12 @@ async function boot(
     plugins: [mockPlugin({ now: () => clock.now() })],
     ...(options.uiPassword === undefined ? {} : { uiPassword: options.uiPassword }),
     ...(options.trustedNetwork === undefined ? {} : { trustedNetwork: options.trustedNetwork }),
+    ...(options.baseUrl === undefined ? {} : { baseUrl: options.baseUrl }),
   })
   server = await createServer({
     app,
     ...(options.host === undefined ? {} : { host: options.host }),
+    ...(options.allowedHosts === undefined ? {} : { allowedHosts: options.allowedHosts }),
   })
 }
 
@@ -57,10 +65,10 @@ const post = (url: string, payload: unknown, headers: Record<string, string> = {
   server.inject({ method: 'POST', url, payload: payload as object, headers })
 
 /** The upgrade is an ordinary GET until it is accepted, so it can be injected. */
-const upgrade = (headers: Record<string, string> = {}) =>
+const upgrade = (headers: Record<string, string> = {}, url = '/ws') =>
   server.inject({
     method: 'GET',
-    url: '/ws',
+    url,
     headers: {
       connection: 'upgrade',
       upgrade: 'websocket',
@@ -137,6 +145,38 @@ describe('with a password set', () => {
     // bundle, so gating them would leave nothing to log in with.
     expect((await get('/')).statusCode).not.toBe(401)
     expect((await get('/api/session')).statusCode).toBe(200)
+  })
+
+  it('cannot be got round by spelling the path differently', async () => {
+    // The router decodes before it matches, so each of these reaches the
+    // API route it spells. Every one of them must be refused.
+    for (const url of [
+      '/%61pi/devices',
+      '/%61pi/backup',
+      '/api%2Fdevices',
+      '/%2561pi/devices',
+      '//api/devices',
+      '/%61pi/session/../devices',
+    ]) {
+      const response = await get(url)
+      expect([401, 404], url).toContain(response.statusCode)
+      expect(response.body, url).not.toContain('SQLite format')
+    }
+    expect((await post('/%61pi/password', { password: null })).statusCode).toBe(401)
+    expect(app.auth.required).toBe(true)
+    expect((await upgrade({}, '/w%73')).statusCode).not.toBe(101)
+  })
+
+  it('closes a socket once its session has ended', async () => {
+    const { cookie } = await signIn()
+    const socket = await server.injectWS('/ws', { headers: { cookie } })
+    const closed = new Promise<number>((resolve) => socket.on('close', (code) => resolve(code)))
+
+    await post('/api/logout', {}, { cookie })
+    // The next thing the app would have told it, it is closed instead.
+    await app.tick()
+
+    expect(await closed).toBe(4401)
   })
 
   it('lets a browser in with the cookie it was given', async () => {
@@ -308,5 +348,42 @@ describe('an install told its network is already trusted', () => {
     await boot({ trustedNetwork: true, uiPassword: PASSWORD })
     const refused = await server.inject({ method: 'GET', url: '/api/devices' })
     expect(refused.statusCode).toBe(401)
+  })
+})
+
+describe('where the app is reached from', () => {
+  it('learns its address only from somebody who got in', async () => {
+    await boot()
+    app.auth.setPassword(PASSWORD)
+    // A signed-out request naming a lookalike would otherwise point every
+    // alert link at it.
+    await get('/', { accept: 'text/html', 'x-forwarded-host': 'evil.example' })
+    expect(app.publicOrigin).not.toContain('evil.example')
+  })
+
+  it('never moves an address that was configured', async () => {
+    await boot({ baseUrl: 'https://stream.example.org' })
+    await get('/', { accept: 'text/html', host: 'elsewhere.example' })
+    expect(app.publicOrigin).toBe('https://stream.example.org')
+  })
+
+  it('answers only to its own names once it has been told them', async () => {
+    await boot({ allowedHosts: ['localhost'] })
+    // A page that rebinds its domain to 127.0.0.1 still sends its own name.
+    expect((await get('/api/devices', { host: 'attacker.example' })).statusCode).toBe(421)
+    expect((await get('/api/devices', { host: 'localhost:8500' })).statusCode).toBe(200)
+    expect((await get('/api/devices', { host: '127.0.0.1:8500' })).statusCode).toBe(200)
+  })
+
+  it('answers to the configured public address', async () => {
+    await boot({ baseUrl: 'https://stream.example.org' })
+    expect((await get('/api/devices', { host: 'stream.example.org' })).statusCode).toBe(200)
+    expect((await get('/api/devices', { host: 'other.example' })).statusCode).toBe(421)
+  })
+
+  it('refuses a socket opened by a page on another site', async () => {
+    await boot()
+    const response = await upgrade({ origin: 'https://attacker.example', host: 'localhost:8500' })
+    expect(response.statusCode).toBe(403)
   })
 })

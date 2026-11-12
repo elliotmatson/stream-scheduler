@@ -259,6 +259,11 @@ export class Application {
     return this.links.origin
   }
 
+  /** True when the public URL was configured rather than learnt. */
+  get linksConfigured(): boolean {
+    return this.links.configured
+  }
+
   /**
    * Whether this app is listening anywhere but loopback.
    *

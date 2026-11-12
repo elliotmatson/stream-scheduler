@@ -42,6 +42,10 @@ async function boot(): Promise<void> {
     port: PORT,
     host: HOST,
     webRoot: join(here, '..', 'web'),
+    // Answers to its own loopback names and nothing else. A desktop install
+    // has no password by default, so this is what stops a web page that
+    // rebinds its own domain to 127.0.0.1 from driving the user's devices.
+    allowedHosts: ['localhost'],
   })
   await scheduler.start()
   await server.listen({ port: PORT, host: HOST })
