@@ -82,6 +82,8 @@ function fakeObs(options: FakeOptions = {}) {
           }
           return {} as T
         case 'StartRecord':
+          // Real OBS refuses to start what is already running.
+          if (recording) throw Object.assign(new Error('OutputRunning'), { code: 500 })
           if (!options.ignoresWrites) {
             recording = true
             // OBS picks the name itself, from the profile's filename
@@ -95,6 +97,7 @@ function fakeObs(options: FakeOptions = {}) {
           }
           return {} as T
         case 'StopRecord': {
+          if (!recording) throw Object.assign(new Error('OutputNotRunning'), { code: 501 })
           if (options.ignoresWrites) return {} as T
           recording = false
           const path = recordingPath
@@ -106,6 +109,8 @@ function fakeObs(options: FakeOptions = {}) {
           return { outputPath: path } as T
         }
         case 'StartStream':
+          // Real OBS refuses to start what is already running.
+          if (streaming) throw Object.assign(new Error('OutputRunning'), { code: 500 })
           if (!options.ignoresWrites) {
             streaming = true
             fire('StreamStateChanged', {
@@ -115,6 +120,7 @@ function fakeObs(options: FakeOptions = {}) {
           }
           return {} as T
         case 'StopStream':
+          if (!streaming) throw Object.assign(new Error('OutputNotRunning'), { code: 501 })
           if (!options.ignoresWrites) {
             streaming = false
             fire('StreamStateChanged', {
@@ -245,6 +251,21 @@ describe('streaming', () => {
 
     await obs.invoke('stream', 'stopStreaming')
     expect((await obs.invoke('stream', 'readState'))?.streaming?.active).toBe(false)
+  })
+
+  it('treats stopping a stream that already dropped as done', async () => {
+    // The stream fell over mid-service. The scheduled stop must not then
+    // fail the run because OBS says there is nothing to stop.
+    const obs = await connect(fakeObs())
+    await expect(obs.invoke('stream', 'stopStreaming')).resolves.toBeFalsy()
+    await expect(obs.invoke('record', 'stopRecording', {})).resolves.toBeFalsy()
+  })
+
+  it('treats starting what is already running as done', async () => {
+    const obs = await connect(fakeObs())
+    await obs.invoke('stream', 'startStreaming')
+    await expect(obs.invoke('stream', 'startStreaming')).resolves.toBeFalsy()
+    expect((await obs.invoke('stream', 'readState'))?.streaming?.active).toBe(true)
   })
 
   it('reports congestion where a hardware encoder reports its cache', async () => {

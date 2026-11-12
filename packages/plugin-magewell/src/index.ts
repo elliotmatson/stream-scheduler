@@ -111,10 +111,15 @@ const configSchema: ConfigField[] = [
 /** How many files to ask for in one go. Big enough for a card nobody has
  *  cleared in a year, small enough not to haul a novel over the wire. */
 const MEDIA_PAGE = 200
+/** The most pages of a card read in one go: a backstop, not a limit anybody meets. */
+const MAX_MEDIA_PAGES = 50
 
+/** How often a connected device is asked whether it is still there. */
+const HEALTH_PROBE_MS = 15_000
 class MagewellDevice {
   private connectedAt = 0
   private connected = false
+  private probedAt = 0
   private disposed = false
   private lastError: string | undefined
   private info: MagewellInfo | undefined
@@ -188,7 +193,25 @@ class MagewellDevice {
     }
   }
 
-  health(): HealthReport {
+  /**
+   * Whether the encoder is still answering.
+   *
+   * Asked of the device, not read from a flag set once at connect: over
+   * HTTP nothing else would ever notice it had been unplugged, and the
+   * evening check and the device page would go on saying it was fine.
+   * Asked at most every {HEALTH_PROBE_MS / 1000}s, since the scheduler
+   * calls this every tick.
+   */
+  async health(): Promise<HealthReport> {
+    if (!this.disposed && this.connected && this.now() - this.probedAt >= HEALTH_PROBE_MS) {
+      this.probedAt = this.now()
+      try {
+        await this.api.call('get-info')
+      } catch (error) {
+        this.connected = false
+        this.lastError = describe(error)
+      }
+    }
     if (this.disposed || !this.connected) {
       return {
         state: 'disconnected',
@@ -449,13 +472,32 @@ class MagewellDevice {
     }
   }
 
+  /**
+   * Everything on one disk, page by page.
+   *
+   * A refusal is an error, not an empty disk. Read as empty, a card the
+   * encoder was too busy to list looked as if a delete had worked, and
+   * retention saw nothing to tidy. Read past the first page, because the
+   * check that a file has gone and the lookup of the file being written
+   * both need the whole card, and a full one holds more than a page.
+   */
   private async mediaOn(diskType: number) {
-    const answer = await this.call<MagewellMedia>('get-media-files', {
-      'disk-type': String(diskType),
-      start: '0',
-      count: String(MEDIA_PAGE),
-    })
-    return answer['media-files'] ?? []
+    const files: NonNullable<MagewellMedia['media-files']> = []
+    for (let page = 0; page < MAX_MEDIA_PAGES; page++) {
+      const params = {
+        'disk-type': String(diskType),
+        start: String(page * MEDIA_PAGE),
+        count: String(MEDIA_PAGE),
+      }
+      const answer = await this.call<MagewellMedia>('get-media-files', params)
+      if (answer.result !== RESULT.succeeded) {
+        throw this.explain('get-media-files', params, answer.result)
+      }
+      const batch = answer['media-files'] ?? []
+      files.push(...batch)
+      if (batch.length < MEDIA_PAGE) break
+    }
+    return files
   }
 
   private async status(): Promise<MagewellStatus> {
@@ -598,7 +640,7 @@ export function magewellPlugin(options: MagewellPluginOptions = {}): PluginDefin
 
       return defineDevice({
         probe: () => device.probe(),
-        health: () => Promise.resolve(device.health()),
+        health: () => device.health(),
         listNodes: () => Promise.resolve(device.nodes()),
         actionsFor: (nodeId) => device.actionsFor(nodeId),
         dispose: () => device.dispose(),

@@ -107,6 +107,7 @@ class HyperdeckDevice {
    * per slot, and the pending work grows faster than it drains.
    */
   private emitting = false
+  private emitAgain = false
   /** The deck's own configuration, which changes about never. Read once
    *  rather than on every state read. */
   private config: Commands.ConfigurationCommandResponse | undefined
@@ -179,9 +180,24 @@ class HyperdeckDevice {
       this.ctx.emitHealth(this.health())
     })
 
-    // Ask the deck to push transport and slot changes rather than polling it:
-    // a recording that stops because the media filled up should surface
-    // immediately, not at the next health tick.
+    await this.subscribe()
+    // The library reconnects by itself after a drop, and a deck's
+    // notification settings belong to the connection: a new one starts with
+    // none. Asked again each time, or push updates stop without a word and
+    // the state this adapter reports quietly goes stale.
+    this.deck.on('connected', () => void this.subscribe())
+
+    this.deck.on('notify.transport', () => void this.emit())
+    this.deck.on('notify.slot', () => void this.emit())
+  }
+
+  /**
+   * Asks the deck to push transport and slot changes rather than being
+   * polled: a recording that stops because the media filled up should
+   * surface immediately, not at the next health tick.
+   */
+  private async subscribe(): Promise<void> {
+    if (this.disposed) return
     const notify = new Commands.NotifySetCommand()
     notify.transport = true
     notify.slot = true
@@ -190,9 +206,6 @@ class HyperdeckDevice {
       // updates is a degradation, not a reason to refuse the device.
       this.ctx.log('warn', 'could not subscribe to deck notifications', { error: describe(error) })
     })
-
-    this.deck.on('notify.transport', () => void this.emit())
-    this.deck.on('notify.slot', () => void this.emit())
   }
 
   async probe(): Promise<DeviceCapabilities> {
@@ -740,10 +753,21 @@ class HyperdeckDevice {
   }
 
   private async emit(): Promise<void> {
-    if (this.disposed || this.emitting) return
+    if (this.disposed) return
+    // A notification that arrives while a read is under way is not dropped:
+    // the read under way may have been answered before the change it
+    // reports, and a recording stopping is the one change that matters.
+    // One more read after the current one covers any number of them.
+    if (this.emitting) {
+      this.emitAgain = true
+      return
+    }
     this.emitting = true
     try {
-      this.ctx.emitState('record', await this.readState())
+      do {
+        this.emitAgain = false
+        this.ctx.emitState('record', await this.readState())
+      } while (this.emitAgain && !this.disposed)
     } catch (error) {
       this.ctx.log('debug', 'could not read deck state after a notification', {
         error: describe(error),
@@ -835,7 +859,17 @@ export function hyperdeckPlugin(options: HyperdeckPluginOptions = {}): PluginDef
       const port = typeof ctx.config.port === 'number' ? ctx.config.port : DEFAULT_PORT
 
       const device = new HyperdeckDevice(ctx, host, port, now, options.connectFtp)
-      await device.connect()
+      try {
+        await device.connect()
+      } catch (error) {
+        // The library client is already running and will keep retrying on
+        // its own — a worker thread for an ATEM, a timer for a HyperDeck —
+        // long after this attempt has been given up on. Every failed
+        // attempt overnight would leave one more behind, all of them
+        // connecting at once when the device comes back.
+        await device.dispose().catch(() => {})
+        throw error
+      }
 
       return defineDevice({
         probe: () => device.probe(),

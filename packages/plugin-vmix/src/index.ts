@@ -104,9 +104,12 @@ function channelOf(nodeId: string): number | undefined {
   return shown >= 1 && shown <= MAX_STREAM_CHANNELS ? shown - 1 : undefined
 }
 
+/** How often a connected device is asked whether it is still there. */
+const HEALTH_PROBE_MS = 15_000
 class VmixDevice {
   private connectedAt = 0
   private connected = false
+  private probedAt = 0
   private disposed = false
   private lastError: string | undefined
   private status: VmixStatus | undefined
@@ -164,7 +167,25 @@ class VmixDevice {
     }
   }
 
-  health(): HealthReport {
+  /**
+   * Whether vMix is still answering.
+   *
+   * Asked of the device, not read from a flag set once at connect: over
+   * HTTP nothing else would ever notice it had been unplugged, and the
+   * evening check and the device page would go on saying it was fine.
+   * Asked at most every {HEALTH_PROBE_MS / 1000}s, since the scheduler
+   * calls this every tick.
+   */
+  async health(): Promise<HealthReport> {
+    if (!this.disposed && this.connected && this.now() - this.probedAt >= HEALTH_PROBE_MS) {
+      this.probedAt = this.now()
+      try {
+        await this.refresh()
+      } catch (error) {
+        this.connected = false
+        this.lastError = describe(error)
+      }
+    }
     if (this.disposed || !this.connected) {
       return {
         state: 'disconnected',
@@ -274,6 +295,12 @@ class VmixDevice {
 
   private async streamState(channel: number): Promise<NodeState> {
     const status = await this.refresh()
+    // Not read from vMix: its Web Controller reports whether each channel
+    // is streaming, but not where to. This is what this adapter last wrote,
+    // so checking a stream target against it always passes — it confirms
+    // the command was sent, not that vMix took it. Whether the stream then
+    // reaches the service is what the start's read-back (`active`) and the
+    // service's own status show.
     const target = this.targets.get(channel)
 
     return {
@@ -390,7 +417,7 @@ export function vmixPlugin(options: VmixPluginOptions = {}): PluginDefinition {
 
       return defineDevice({
         probe: () => device.probe(),
-        health: () => Promise.resolve(device.health()),
+        health: () => device.health(),
         listNodes: () => Promise.resolve(device.nodes()),
         actionsFor: (nodeId) => device.actionsFor(nodeId),
         dispose: () => device.dispose(),

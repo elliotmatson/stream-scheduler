@@ -699,7 +699,17 @@ export function atemPlugin(options: AtemPluginOptions = {}): PluginDefinition {
       if (!host) throw new DeviceError('no-host', 'This ATEM has no address configured.')
       const port = typeof ctx.config.port === 'number' ? ctx.config.port : DEFAULT_PORT
       const device = new AtemDevice(ctx, createClient(), host, port, now, options.connectFtp)
-      await device.connect()
+      try {
+        await device.connect()
+      } catch (error) {
+        // The library client is already running and will keep retrying on
+        // its own — a worker thread for an ATEM, a timer for a HyperDeck —
+        // long after this attempt has been given up on. Every failed
+        // attempt overnight would leave one more behind, all of them
+        // connecting at once when the device comes back.
+        await device.dispose().catch(() => {})
+        throw error
+      }
 
       return defineDevice({
         probe: async () => device.probe(),

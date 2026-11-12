@@ -30,6 +30,9 @@ export class FakeStreamingEncoder {
   options: FakeOptions
 
   status: LivestreamStatus = 'Idle'
+  /** A wrong or expired key: the encoder sits in Connecting for good. */
+  neverConnects = false
+  private connectingReads = 0
   bitrate = 0
   duration: number | undefined
   cache = 0
@@ -153,8 +156,14 @@ export class FakeStreamingEncoder {
     }
 
     if (method === 'GET' && path === '/livestreams/0') {
+      const status = this.status
+      // As the hardware does: Connecting for a read or two after a start,
+      // then Streaming — unless the key is wrong, when it never gets there.
+      if (status === 'Connecting' && !this.neverConnects && --this.connectingReads <= 0) {
+        this.status = 'Streaming'
+      }
       return json(200, {
-        status: this.status,
+        status,
         bitrate: this.bitrate,
         effectiveVideoFormat: '1920x1080p30',
         ...(this.duration === undefined ? {} : { duration: this.duration }),
@@ -184,7 +193,8 @@ export class FakeStreamingEncoder {
 
     if (method === 'PUT' && path === '/livestreams/0/start') {
       if (!this.active) return json(400, { error: 'no platform' })
-      this.status = 'Streaming'
+      this.status = 'Connecting'
+      this.connectingReads = 1
       this.bitrate = 6_000_000
       this.duration = 0
       return json(204)

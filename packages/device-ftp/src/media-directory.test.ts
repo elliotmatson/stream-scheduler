@@ -4,6 +4,7 @@ import {
   isHousekeeping,
   mediaDirectory,
   parentOf,
+  parseListDate,
   type FtpSession,
   type RemoteEntry,
 } from './index.js'
@@ -119,5 +120,26 @@ describe('stepping back up a card', () => {
     // two FTP servers agree on what that means.
     expect(parentOf('/')).toBeUndefined()
     expect(parentOf('')).toBeUndefined()
+  })
+})
+
+describe('dates from a server that only answers LIST', () => {
+  const now = new Date(2026, 10, 12, 12, 0).getTime() // 12 Nov 2026, local
+
+  it('reads this year\'s "Nov 8 09:30"', () => {
+    expect(parseListDate('Nov  8 09:30', now)).toBe(new Date(2026, 10, 8, 9, 30).getTime())
+  })
+
+  it('reads an older "Mar 2 2025"', () => {
+    expect(parseListDate('Mar  2 2025', now)).toBe(new Date(2025, 2, 2).getTime())
+  })
+
+  it('puts a month ahead of now in last year', () => {
+    expect(parseListDate('Dec 24 18:00', now)).toBe(new Date(2025, 11, 24, 18, 0).getTime())
+  })
+
+  it('gives up on anything else rather than guessing', () => {
+    expect(parseListDate('yesterday', now)).toBeUndefined()
+    expect(parseListDate(undefined, now)).toBeUndefined()
   })
 })

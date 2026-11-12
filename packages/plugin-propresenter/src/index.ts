@@ -100,9 +100,12 @@ const configSchema: ConfigField[] = [
   },
 ]
 
+/** How often a connected device is asked whether it is still there. */
+const HEALTH_PROBE_MS = 15_000
 class ProPresenterDevice {
   private connectedAt = 0
   private connected = false
+  private probedAt = 0
   private disposed = false
   private lastError: string | undefined
   /**
@@ -171,7 +174,25 @@ class ProPresenterDevice {
     }
   }
 
-  health(): HealthReport {
+  /**
+   * Whether ProPresenter is still answering.
+   *
+   * Asked of the device, not read from a flag set once at connect: over
+   * HTTP nothing else would ever notice it had been unplugged, and the
+   * evening check and the device page would go on saying it was fine.
+   * Asked at most every {HEALTH_PROBE_MS / 1000}s, since the scheduler
+   * calls this every tick.
+   */
+  async health(): Promise<HealthReport> {
+    if (!this.disposed && this.connected && this.now() - this.probedAt >= HEALTH_PROBE_MS) {
+      this.probedAt = this.now()
+      try {
+        await this.api.request('GET', '/version')
+      } catch (error) {
+        this.connected = false
+        this.lastError = describe(error)
+      }
+    }
     if (this.disposed || !this.connected) {
       return {
         state: 'disconnected',
@@ -298,7 +319,18 @@ class ProPresenterDevice {
 
   // -- the capture ---------------------------------------------------------
 
+  /**
+   * Starts or stops the one capture — unless it is already that way.
+   *
+   * A capture that dropped before its scheduled stop must not turn that
+   * stop into a failure, and a retried start must not be refused because
+   * the first one landed. The read-back afterwards says what is true.
+   */
   private async capture(operation: 'start' | 'stop'): Promise<void> {
+    const status = await this.send<ProCaptureStatus>('GET', '/v1/capture/status').catch(
+      () => undefined,
+    )
+    if (status !== undefined && status.capturing === (operation === 'start')) return
     await this.send('GET', `/v1/capture/${operation}`)
   }
 
@@ -446,7 +478,7 @@ export function propresenterPlugin(options: ProPresenterPluginOptions = {}): Plu
 
       return defineDevice({
         probe: () => device.probe(),
-        health: () => Promise.resolve(device.health()),
+        health: () => device.health(),
         listNodes: () => Promise.resolve(device.nodes()),
         actionsFor: (nodeId) => device.actionsFor(nodeId),
         dispose: () => device.dispose(),
