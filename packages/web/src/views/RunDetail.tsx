@@ -77,8 +77,9 @@ export function RunDetail({
     }
   }
 
-  if (error) return <ErrorBanner error={error} />
-  if (!run) return <p className="muted">Loading…</p>
+  // A refresh that fails keeps the page up, Stop now included: losing the
+  // stop button to a network blip during a service is the worst outcome.
+  if (!run) return error ? <ErrorBanner error={error} /> : <p className="muted">Loading…</p>
 
   const stoppable = !['completed', 'failed', 'cancelled'].includes(run.state)
 
@@ -97,29 +98,29 @@ export function RunDetail({
             <StatusPill status={run.state} />
             {/* The scheduler must never be the only way to stop a stream. */}
             {stoppable ? (
-              <button
+              <ConfirmButton
                 className="danger solid"
+                label="Stop now"
+                confirmLabel="Stop everything?"
                 disabled={busy}
-                title="Ends every stream and recording in this run, now."
-                onClick={() => void cancel()}
-              >
-                Stop now
-              </button>
+                title="Ends every stream and recording in this run."
+                onConfirm={() => void cancel()}
+              />
             ) : null}
           </>
         }
       />
 
-      <ErrorBanner error={actionError} />
+      <ErrorBanner error={actionError ?? (error ? `Couldn't refresh: ${error}` : undefined)} />
 
       <div className="stack">
         {run.failure ? (
           <div className="banner error">
-            <strong>{run.failure.code}</strong>
-            <div>{run.failure.message}</div>
+            <strong>{run.failure.message}</strong>
             {run.failure.remediation ? (
               <div style={{ marginTop: 6 }}>{run.failure.remediation}</div>
             ) : null}
+            <div className="muted small">{run.failure.code}</div>
           </div>
         ) : null}
 
@@ -547,7 +548,9 @@ export function Runs({ navigate }: { navigate: (path: string) => void }): ReactN
           </div>
         ) : null}
 
-        {all.length === 0 ? (
+        {data === undefined ? (
+          <p className="muted">Loading…</p>
+        ) : all.length === 0 ? (
           <Empty>Nothing has run yet.</Empty>
         ) : shown.length === 0 ? (
           <Empty>No runs match that.</Empty>

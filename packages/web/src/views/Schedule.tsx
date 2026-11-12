@@ -1,7 +1,16 @@
 import { useMemo, useState } from 'react'
 import type { ReactNode } from 'react'
 import { api, useLiveRefresh, useResource, type Occurrence } from '../api.ts'
-import { Card, Empty, ErrorBanner, PageHead, StatusPill, toneFor } from '../components.tsx'
+import {
+  Card,
+  ConfirmButton,
+  CopyButton,
+  Empty,
+  ErrorBanner,
+  PageHead,
+  StatusPill,
+  toneFor,
+} from '../components.tsx'
 import {
   dateTimeIn,
   dayLabel,
@@ -261,7 +270,7 @@ function CalendarGrid({
   const todayKey = keyOf(new Date())
 
   return (
-    <div className="calendar" role="grid" aria-label="Scheduled events">
+    <div className="calendar" role="region" aria-label="Scheduled events">
       {WEEKDAYS.map((day) => (
         <div key={day} className="dow">
           {day}
@@ -423,7 +432,7 @@ function WeekGrid({
   const offset = (minutes: number): number => (minutes / 60 - window.from) * HOUR_PX
 
   return (
-    <div className="week" role="grid" aria-label="Scheduled events by time of day">
+    <div className="week" role="region" aria-label="Scheduled events by time of day">
       <div className="week-head">
         <div className="week-gutter" />
         {days.map((day) => (
@@ -560,6 +569,11 @@ function ScheduleList({
   const [busy, setBusy] = useState<string>()
   const [error, setError] = useState<string>()
 
+  const [links, setLinks] = useState<{
+    occurrenceId: string
+    links: { label: string; url: string }[]
+  }>()
+
   const act = async (id: string, action: () => Promise<unknown>): Promise<void> => {
     setBusy(id)
     setError(undefined)
@@ -654,18 +668,25 @@ function ScheduleList({
                           disabled={busy === occurrence.id}
                           title="Creates the broadcast now, so the link can go out ahead of the day. Nothing goes on air."
                           onClick={() =>
-                            void act(occurrence.id, () => api.prepareNow(occurrence.id))
+                            void act(occurrence.id, async () => {
+                              const prepared = await api.prepareNow(occurrence.id)
+                              setLinks({ occurrenceId: occurrence.id, links: prepared.links })
+                            })
                           }
                         >
                           Prepare now
                         </button>
-                        <button
+                        {/* Puts it on air this minute: asked twice. */}
+                        <ConfirmButton
+                          className=""
+                          label="Start now"
+                          confirmLabel="Go on air now?"
                           disabled={busy === occurrence.id}
                           title="Runs it now, without waiting for its time."
-                          onClick={() => void act(occurrence.id, () => api.startNow(occurrence.id))}
-                        >
-                          Start now
-                        </button>
+                          onConfirm={() =>
+                            void act(occurrence.id, () => api.startNow(occurrence.id))
+                          }
+                        />
                         <button
                           disabled={busy === occurrence.id}
                           title="Leaves this date alone. The rest of the event carries on."
@@ -674,6 +695,27 @@ function ScheduleList({
                           Skip
                         </button>
                       </>
+                    ) : null}
+                    {['failed', 'cancelled'].includes(occurrence.status) &&
+                    occurrence.scheduledEnd > Date.now() ? (
+                      <button
+                        disabled={busy === occurrence.id}
+                        title="Puts this date back on the schedule, to run at its time."
+                        onClick={() => void act(occurrence.id, () => api.rearm(occurrence.id))}
+                      >
+                        Schedule again
+                      </button>
+                    ) : null}
+                    {links?.occurrenceId === occurrence.id && links.links.length > 0 ? (
+                      <span className="links">
+                        {links.links.map((link) => (
+                          <CopyButton
+                            key={link.url}
+                            value={link.url}
+                            label={`Copy ${link.label}`}
+                          />
+                        ))}
+                      </span>
                     ) : null}
                     {occurrence.status === 'skipped' ? (
                       <button

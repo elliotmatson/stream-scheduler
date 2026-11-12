@@ -132,12 +132,35 @@ function ProviderSection({
   }
 
   const connect = async (clientRef: string): Promise<void> => {
-    const { url } = await api.startOAuth(provider.id, clientRef)
-    // Sign-in has to happen in a real browser, not an iframe — Google and
-    // Twitch both refuse to be framed — and the callback lands back on this
-    // server.
-    window.open(url, '_blank', 'noopener')
+    // Opened now, while this is still the click. Safari and Firefox block a
+    // window opened after an `await`, and the button then does nothing.
+    const popup = window.open('', '_blank')
+    try {
+      const { url } = await api.startOAuth(provider.id, clientRef)
+      // Sign-in has to happen in a real browser, not an iframe — Google and
+      // Twitch both refuse to be framed — and the callback lands back on
+      // this server.
+      if (popup) {
+        popup.opener = null
+        popup.location.href = url
+      } else {
+        window.location.href = url
+      }
+    } catch (error) {
+      popup?.close()
+      throw error
+    }
   }
+
+  // Coming back to this tab after signing in elsewhere shows the account,
+  // rather than leaving the list as it was until a reload.
+  useEffect(() => {
+    const refresh = (): void => {
+      if (document.visibilityState === 'visible') onChanged()
+    }
+    document.addEventListener('visibilitychange', refresh)
+    return () => document.removeEventListener('visibilitychange', refresh)
+  }, [onChanged])
 
   return (
     <Card>
@@ -206,8 +229,9 @@ function ProviderSection({
 
       <h3>3. Destinations</h3>
       <p className="muted" style={{ marginTop: 0 }}>
-        A destination is one account plus the settings every broadcast made through it gets — who
-        can watch, and which playlist it is filed under. An event's streams point at one of these.
+        {provider.id === 'youtube'
+          ? 'One account plus how its broadcasts are set up: who can watch, and which playlist they go in.'
+          : 'One account plus how its streams are set up.'}
       </p>
       {destinations.length === 0 ? null : (
         <ul className="plain">

@@ -471,10 +471,9 @@ tr.is-picked td {
 /* Truncated rather than wrapped: a long error must not make one row three
    rows tall and push the rest of the rack off the screen. */
 .device-row-error {
-  max-width: 320px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  /* Wrapped, not cut off: an address cut in half is no use to anyone. */
+  max-width: 360px;
+  overflow-wrap: anywhere;
   font-size: 12px;
 }
 
@@ -1998,4 +1997,12 @@ button.link:hover {
 
 .token:active {
   cursor: grabbing;
+}
+
+/* Shown while the server cannot be reached, instead of a blank page. */
+.unreachable {
+  max-width: 28rem;
+  margin: 20vh auto 0;
+  padding: 0 16px;
+  text-align: center;
 }

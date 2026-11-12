@@ -125,6 +125,27 @@ describe('changing one occurrence', () => {
     expect(untouched === undefined || untouched.scheduledStart !== second.scheduledStart).toBe(true)
   })
 
+  it('keeps following the series for the names it was not given', async () => {
+    const { seriesId, first } = await weeklyService()
+    // A new title for one morning, and nothing else.
+    await patch(`/api/occurrences/${first.id}`, { templates: { title: 'Baptism at Grace' } })
+
+    // Later, the series gains a description for every week.
+    await patch(`/api/series/${seriesId}`, {
+      templates: { title: '{{event.name}}', description: 'Join us live.' },
+    })
+
+    const timeline = timelineFor(app.db, first.id)
+    expect(timeline.templates.title).toBe('Baptism at Grace')
+    expect(timeline.templates.description).toBe('Join us live.')
+  })
+
+  it('can blank one name for one morning, on purpose', async () => {
+    const { first } = await weeklyService()
+    await patch(`/api/occurrences/${first.id}`, { templates: { title: '' } })
+    expect(timelineFor(app.db, first.id).templates.title).toBe('')
+  })
+
   it('moves one occurrence in the event’s own zone', async () => {
     const { first } = await weeklyService()
 

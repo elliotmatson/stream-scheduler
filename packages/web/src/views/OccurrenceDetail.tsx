@@ -231,17 +231,15 @@ function EditOne({
       edit.startsAt = { date: draft.date, time: draft.time }
     }
     if (draft.minutes !== original.minutes) edit.durationMs = draft.minutes * 60_000
-    if (
-      draft.title !== original.title ||
-      draft.description !== original.description ||
-      draft.filename !== original.filename
-    ) {
-      const templates: Record<string, string> = {}
-      if (draft.title) templates.title = draft.title
-      if (draft.description) templates.description = draft.description
-      if (draft.filename) templates.filename = draft.filename
-      edit.templates = Object.keys(templates).length > 0 ? templates : null
+    // Only the fields that changed. Sending all three pinned the ones nobody
+    // touched to today's series values, and later edits to the series then
+    // never reached this date.
+    const templates: Record<string, string | null> = {}
+    for (const key of ['title', 'description', 'filename'] as const) {
+      if (draft[key] === original[key]) continue
+      templates[key] = draft[key] === (detail.seriesTemplates[key] ?? '') ? null : draft[key]
     }
+    if (Object.keys(templates).length > 0) edit.templates = templates
 
     api.editOccurrence(detail.id, edit).then(
       () => {

@@ -26,7 +26,7 @@ import { byFolder } from '../plan-groups.ts'
  * not needed here, and pretending otherwise would be ceremony.
  */
 export function PlanSourceCard({ timezone }: { timezone: string }): ReactNode {
-  const { data, error, reload } = useResource(() => api.planSources(), [])
+  const { data, error, loading, reload } = useResource(() => api.planSources(), [])
   const sources = data?.sources ?? []
 
   return (
@@ -41,7 +41,15 @@ export function PlanSourceCard({ timezone }: { timezone: string }): ReactNode {
       <ErrorBanner error={error} />
 
       {sources.length === 0 ? (
-        <Empty>No schedule sources in this build.</Empty>
+        // Only once the answer is in: said while loading, it told people
+        // Planning Center was not installed when it was merely slow.
+        data === undefined ? (
+          loading ? (
+            <p className="muted">Loading…</p>
+          ) : null
+        ) : (
+          <Empty>No schedule sources in this build.</Empty>
+        )
       ) : (
         <div className="stack">
           {sources.map((source) => (
@@ -69,6 +77,11 @@ function SourceRow({
   const [problem, setProblem] = useState<string>()
   const [showSteps, setShowSteps] = useState(false)
   const [preview, setPreview] = useState(false)
+  // Disconnecting leaves every event paired to it with no schedule at all,
+  // so the button says how many before it does it.
+  const paired = (useResource(() => api.series(), []).data ?? []).filter(
+    (series) => series.planSourceId === source.id,
+  ).length
 
   const connected = source.status.state !== 'not_configured'
 
@@ -106,6 +119,11 @@ function SourceRow({
               </button>
               <ConfirmButton
                 label="Disconnect"
+                confirmLabel={
+                  paired > 0
+                    ? `Unpair ${paired} event${paired === 1 ? '' : 's'}?`
+                    : 'Really disconnect?'
+                }
                 disabled={busy}
                 onConfirm={() =>
                   void api

@@ -357,11 +357,16 @@ export function ConfirmButton({
   confirmLabel,
   disabled,
   onConfirm,
+  className = 'danger',
+  title,
 }: {
   label: string
   confirmLabel?: string
   disabled?: boolean
   onConfirm: () => void
+  /** The button's own class, before it is armed. */
+  className?: string
+  title?: string
 }): ReactNode {
   const [armed, setArmed] = useState(false)
 
@@ -373,9 +378,10 @@ export function ConfirmButton({
 
   return (
     <button
-      // Quiet until armed: the next click really does delete.
-      className={armed ? 'danger armed' : 'danger'}
+      // Quiet until armed: the next click really does it.
+      className={armed ? `${className} armed` : className}
       disabled={disabled}
+      {...(title === undefined ? {} : { title })}
       onClick={() => {
         if (armed) onConfirm()
         setArmed(!armed)
