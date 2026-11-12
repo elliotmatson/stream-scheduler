@@ -39,6 +39,8 @@ export interface StepRecord {
   error: string | null
   started_at: number | null
   ended_at: number | null
+  /** The first attempt's start, kept across retries; see StepContext. */
+  first_started_at: number | null
 }
 
 export interface RunFailure {
@@ -170,9 +172,12 @@ export class RunStore {
   markStepRunning(runId: string, seq: number): void {
     this.db
       .prepare(
-        "UPDATE run_step SET state = 'running', attempts = attempts + 1, started_at = ? WHERE run_id = ? AND seq = ?",
+        `UPDATE run_step
+            SET state = 'running', attempts = attempts + 1, started_at = ?,
+                first_started_at = COALESCE(first_started_at, ?)
+          WHERE run_id = ? AND seq = ?`,
       )
-      .run(this.clock.now(), runId, seq)
+      .run(this.clock.now(), this.clock.now(), runId, seq)
   }
 
   markStepDone(runId: string, seq: number, output: StepOutput | void): void {

@@ -581,31 +581,29 @@ export class RunEngine {
   }
 
   /**
-   * Catches an event edited out from under a run that is already going.
+   * Catches an output taken out of an event while its run was going.
    *
-   * Steps are addressed by position: the plan is rebuilt from the database
-   * every tick, and step 3 of the plan is matched to step 3 of the committed
-   * rows. Add, remove or switch off an output mid-run and every position
-   * after it shifts, so "stop the 9:00 service" would be executed against
-   * the row recording the recorder. Refusing to act is the only safe answer;
-   * doing nothing quietly is not, because the operator would have no idea.
+   * Steps are matched to their committed rows by kind, so a plan rebuilt
+   * after an edit can no longer run one output's step against another's
+   * row. What it cannot do is drive an output the event no longer has: its
+   * device, its destination, its times are all gone. That is what fails
+   * here — and anything it made that never aired is cleaned up as the run
+   * winds down.
    *
-   * Renaming or retiming an output is fine and does not land here: a step's
-   * kind carries the output's id, which does not change.
+   * A step the planner has added since the run was committed — a new
+   * output, or a new kind of step after an upgrade — is not drift. It has
+   * no row, so it is not part of this run, and the run carries on without
+   * it.
    */
   private planDrift(runId: string, plan: RunPlan): RunFailure | undefined {
-    const records = this.deps.store.steps(runId)
-    if (
-      records.length === plan.length &&
-      records.every((record, seq) => record.kind === plan[seq]?.kind)
-    ) {
-      return undefined
-    }
+    const planned = new Set(plan.map((step) => step.kind))
+    const removed = this.deps.store.steps(runId).filter((record) => !planned.has(record.kind))
+    if (removed.length === 0) return undefined
     return {
       code: 'plan_changed',
       message:
-        'The event was edited while this run was going: an output was added, removed or switched off, so the ' +
-        'steps no longer line up with what was committed when the run started.',
+        'The event was edited while this run was going: an output was removed or switched off, so this run ' +
+        'can no longer drive it.',
       remediation:
         'Start the event again if it is still wanted, and make structural changes between events rather ' +
         'than during one.',
@@ -780,7 +778,9 @@ export class RunEngine {
   private aired(runId: string, plan: RunPlan, outputId: string): boolean {
     const records = this.deps.store.steps(runId)
     const recordOf = (kind: string) => records.find((record) => record.kind === kind)
-    const ofOutput = plan.filter((step) => step.outputId === outputId)
+    const ofOutput = plan.filter(
+      (step) => step.outputId === outputId && recordOf(step.kind) !== undefined,
+    )
     const starts = ofOutput.filter((step) => step.phase === 'start').map((s) => recordOf(s.kind))
     const stops = ofOutput.filter((step) => step.phase === 'stop').map((s) => recordOf(s.kind))
     if (starts.length > 0 && starts.every((record) => record?.state === 'done')) return true
@@ -930,7 +930,11 @@ export class RunEngine {
 
     const stateByKind = new Map(records.map((record) => [record.kind, record.state]))
     for (const entry of timeline.outputs) {
-      const steps = plan.filter((step) => step.outputId === entry.output.id)
+      // Steps with no committed row are not part of this run — added to the
+      // planner after the run was created — and are not waited for.
+      const steps = plan.filter(
+        (step) => step.outputId === entry.output.id && stateByKind.has(step.kind),
+      )
       const stateOf = (phase: string): ('done' | 'other')[] =>
         steps
           .filter((step) => step.phase === phase)

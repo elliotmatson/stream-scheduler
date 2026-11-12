@@ -350,6 +350,7 @@ function contextFor(
     occurrenceId: run.occurrence_id,
     idempotencyKey: record.idempotency_key,
     attempt: record.attempts,
+    firstAttemptAt: record.first_started_at ?? deps.clock.now(),
     outputs: deps.store.outputs(runId),
     log: (message: string, data?: JsonObject) => logger.info(message, { kind: step.kind, ...data }),
   }

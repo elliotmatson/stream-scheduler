@@ -80,6 +80,15 @@ export class DestinationRegistry {
     return this.providers.has(id)
   }
 
+  /** Whether the scheduler puts this destination's broadcasts on air itself. */
+  controlsLifecycle(destinationId: string): boolean {
+    const row = this.deps.db
+      .prepare('SELECT plugin_id FROM destination WHERE id = ?')
+      .get(destinationId) as { plugin_id: string } | undefined
+    if (!row || !this.has(row.plugin_id)) return false
+    return this.get(row.plugin_id).controlsBroadcastLifecycle === true
+  }
+
   list(): DestinationProvider[] {
     return [...this.providers.values()]
   }
