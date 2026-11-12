@@ -1,5 +1,7 @@
 # 07 — Packaging and distribution
 
+> Design record. Where it disagrees with the README or the code, they win.
+
 The target is the Companion install experience: a non-technical user downloads a
 `.dmg` or `.exe`, runs it, and gets a tray icon and a browser tab — while a
 rack-mount user runs the same thing as a container.
@@ -11,13 +13,13 @@ pnpm workspaces + Turborepo. Layout in [01](./01-architecture.md).
 - **Node 22 LTS**, pinned via `.nvmrc` and `engines`.
 - **TypeScript strict**, `noUncheckedIndexedAccess` on.
 - **Vitest** for unit and integration, **Playwright** for the web UI.
-- **Drizzle** migrations checked in; the app migrates on startup and refuses to
-  run against a schema newer than the binary (a downgrade after a bad update must
-  fail loudly, not corrupt the database).
+- Hand-written SQL migrations in `packages/core/src/db/migrations.ts`; the app
+  migrates on startup and refuses to run against a schema newer than the binary
+  (a downgrade after a bad update must fail loudly, not corrupt the database).
 
 ## Config directory
 
-One directory holds everything — database, logs, key file, plugin data:
+One directory holds the database and the key file. Logs go to stdout:
 
 | Platform | Path                                            |
 | -------- | ----------------------------------------------- |
@@ -29,27 +31,31 @@ One directory holds everything — database, logs, key file, plugin data:
 Overridable with `--config-dir` / `SCHEDULER_CONFIG_DIR`, which also makes it easy
 to run two instances side by side for testing.
 
-**Backup and restore is a first-class feature, not an export button.** A single
-zip of the config directory, restorable into a fresh install, with secrets
-re-wrapped under the new install's master key. The user's entire schedule lives in
-one SQLite file; losing it should be a ten-minute recovery.
+**Backup and restore is a first-class feature, not an export button.** A backup
+is one consistent SQLite file, taken while the app runs. It records which master
+key its secrets need, never the key itself. Restoring does not re-wrap secrets
+under a different key: it reports a key mismatch, and the secrets stay
+unreadable until the original key is in place. The user's entire schedule lives
+in one SQLite file; losing it should be a ten-minute recovery.
 
 ## Desktop (Electron)
 
 `electron-builder`. The Electron main process imports the same `core` package the
 headless entrypoint does, so there is exactly one code path.
 
-The tray app deliberately does very little: status dot, "Open UI", "Start at
-login", "Check for updates", "Quit". All real UI is the web UI, opened in the
+The tray app deliberately does very little: "Open Stream Scheduler", "Open in
+browser", "Start at login", "Quit". All real UI is the web UI, opened in the
 default browser or an Electron `BrowserWindow` — the same React app either way.
 
 **Quit needs care.** Quitting the tray app while a broadcast is live must warn,
 and should offer "keep running in the background". A confirmation dialog is not
 optional here.
 
-Auto-update via `electron-updater` against GitHub Releases, with a setting to
-defer updates — nobody wants an update prompt at 08:55 on a Sunday. Consider
-suppressing update checks entirely within an hour of any scheduled occurrence.
+Auto-update is not built. The plan was `electron-updater` against GitHub
+Releases, with a setting to defer updates — nobody wants an update prompt at
+08:55 on a Sunday.
+
+The desktop app is experimental. It registers only the mock plugin.
 
 ### Signing and notarization
 
@@ -88,10 +94,10 @@ ENTRYPOINT ["node", "/app/main.js", "--config-dir", "/config"]
 
 - Runs as non-root.
 - `linux/amd64` and `linux/arm64` (people run these on a Pi or an ARM NAS).
-- `SCHEDULER_SECRET` is required, and the container exits with a clear message if
-  it is missing rather than falling back to plaintext secrets.
-- The OAuth wizard detects the container and uses the paste-the-code flow
-  described in [05](./05-youtube.md), since it cannot open a local browser.
+- The master key comes from `SCHEDULER_SECRET` or `/config/master.key`. With
+  neither, the app creates `master.key` on first start.
+- OAuth uses the same browser redirect as everywhere else; see
+  [05](./05-youtube.md).
 
 ## CI
 
@@ -100,8 +106,9 @@ GitHub Actions:
 - **PR** — lint, typecheck, unit + integration tests against the fake devices and
   the fake YouTube server, `dependency-cruiser` boundary check, Playwright UI
   tests. No hardware, no network, no real Google project.
-- **Tag** — build and publish the Docker image, build/sign/notarize the macOS and
-  Windows installers, attach to a GitHub Release, publish `plugin-sdk` to npm.
+- **Push to `main` or a `v*` tag** — build, start and check the Docker image,
+  then publish it to GHCR. Installers, GitHub Releases and publishing
+  `plugin-sdk` to npm are not built.
 
 The fake-device suite is what makes a green PR meaningful. If CI can only prove
 that the code compiles, the scheduler's reliability claims are untested and the

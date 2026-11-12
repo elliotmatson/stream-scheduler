@@ -1,5 +1,7 @@
 # 03 — Scheduling engine
 
+> Design record. Where it disagrees with the README or the code, they win.
+
 This is the part that has to be right. Everything else is a UI over it. A stream
 that silently fails to start on a Sunday morning is worse than having no tool at
 all, because the operator stopped watching for it.

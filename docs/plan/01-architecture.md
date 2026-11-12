@@ -1,5 +1,7 @@
 # 01 — Architecture
 
+> Design record. Where it disagrees with the README or the code, they win.
+
 ## Runtime topology
 
 One codebase produces three deployment shapes, all running the same core:
@@ -16,10 +18,11 @@ One codebase produces three deployment shapes, all running the same core:
                             React web UI
 ```
 
-- **Headless** (`node packages/core/dist/main.js`) — what Docker runs, and what
+- **Headless** (`node packages/host/dist/main.js`) — what Docker runs, and what
   a Mac/PC user can run from a terminal if they prefer.
 - **Electron** — the _same_ core imported in the main process, plus a tray icon,
-  "Open UI", launch-at-login, and an update checker. Electron is a shell around
+  "Open", and launch-at-login. Experimental: it registers only the mock plugin,
+  and has no update checker. Electron is a shell around
   the core, never a fork of it. Companion does this via an `ELECTRON=0` build
   flag; we use the same idea with separate entrypoints against a shared core.
 - **Docker** — multi-stage build, no Electron, `/config` volume.
@@ -41,7 +44,8 @@ Companion is the reference for _packaging and extensibility_, not for _execution
 - Declarative config fields per connection, from which the UI is auto-rendered.
   Nobody hand-writes a settings form for a new encoder.
 - Plugins isolated in child processes, communicating over IPC, so a misbehaving
-  third-party adapter cannot take down the scheduler.
+  third-party adapter cannot take down the scheduler. Not built yet: plugins
+  run in-process today (see below).
 
 **Deliberately not borrowed:**
 
@@ -86,17 +90,25 @@ packages/
     template/      the name templating engine
     api/           REST + WebSocket
   web/             React UI
-  desktop/         Electron main + tray + updater
+  desktop/         Electron main + tray
+  host/            the headless entrypoint, and the only place that names plugins
+  device-ftp/      recordings over FTP, shared by the ATEM and HyperDeck plugins
   plugin-atem/
-  plugin-webpresenter/
   plugin-hyperdeck/
+  plugin-streaming-encoder/  Streaming Encoder and Web Presenter, over REST
+  plugin-obs/
+  plugin-propresenter/
+  plugin-vmix/
+  plugin-magewell/
   plugin-youtube/
-  plugin-rtmp/     generic RTMP/SRT destination
+  plugin-twitch/
+  plugin-planning-center/
   plugin-mock/     fake devices for tests and for evaluating the app without hardware
 ```
 
-Dependency rule, enforced by `dependency-cruiser` in CI: plugins depend only on
-`plugin-sdk`. Plugins never import from `core`. `core` never imports a specific
+Dependency rule, enforced by `dependency-cruiser` in CI: plugins depend on
+`plugin-sdk` (and the ATEM and HyperDeck plugins on `device-ftp`). Plugins never
+import from `core`. `core` never imports a specific
 plugin — it discovers them through the registry. This is what keeps "extendable"
 true over time rather than aspirational.
 
