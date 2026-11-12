@@ -96,7 +96,9 @@ async function executeStep(
   const maxAttempts = retryable ? (step.maxAttempts ?? DEFAULT_MAX_ATTEMPTS) : 1
 
   let lastError: unknown
+  let attempts = 0
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    attempts = attempt
     // Committed before the call, so a crash mid-call is distinguishable from
     // a crash before it.
     store.markStepRunning(runId, seq)
@@ -109,13 +111,17 @@ async function executeStep(
     } catch (error) {
       lastError = error
       logger.warn('step failed', { kind: step.kind, seq, attempt, error: describe(error) })
+      // An error that says another attempt cannot help — a spent quota, a
+      // revoked authorization, a request the service refused — is not sent
+      // again. Repeating it costs quota and minutes and changes nothing.
+      if (saysNotRetryable(error)) break
       if (attempt < maxAttempts) {
         await sleeper.sleep(backoffFor(attempt, step.backoffMs ?? DEFAULT_BACKOFF_MS))
       }
     }
   }
 
-  const failure = failureFrom(step, lastError, retryable, maxAttempts)
+  const failure = failureFrom(step, lastError, retryable, attempts)
   store.markStepFailed(runId, seq, failure.message)
   store.recordFailure(runId, failure)
   return { ok: false, failure }
@@ -272,7 +278,13 @@ function failureFrom(
       remediation: 'This step is not safe to repeat automatically. Check the destination by hand.',
     }
   }
-  return { ...base, remediation: `Failed after ${attempts} attempts.` }
+  return { ...base, remediation: `Failed after ${attempts} attempt${attempts === 1 ? '' : 's'}.` }
+}
+
+function saysNotRetryable(error: unknown): boolean {
+  return (
+    error !== null && typeof error === 'object' && 'retryable' in error && error.retryable === false
+  )
 }
 
 function codeOf(error: unknown): string | undefined {

@@ -261,6 +261,38 @@ describe('series and occurrences', () => {
   })
 })
 
+describe('in the middle of a service', () => {
+  // 09:30 on the first Sunday: the 09:00–10:30 occurrence is on air.
+  const MID_SERVICE = START + 30 * MINUTE
+
+  it('accepts an edit to the event', async () => {
+    const { seriesId } = await seedEverything()
+    clock.set(MID_SERVICE)
+    const response = await patch(`/api/series/${seriesId}`, { label: 'Sunday Worship' })
+    expect(response.status).toBe(200)
+  })
+
+  it('keeps the loop going and can be restarted', async () => {
+    await seedEverything()
+    clock.set(MID_SERVICE)
+    // Forces the hourly refill, which used to throw on the occurrence on air.
+    await app.tick()
+    await app.stop()
+
+    const again = Application.create({
+      configDir: dir,
+      clock,
+      logger: silentLogger,
+      plugins: [mockPlugin({ now: () => clock.now() })],
+    })
+    try {
+      await expect(again.start()).resolves.toBeUndefined()
+    } finally {
+      await again.stop()
+    }
+  })
+})
+
 describe('the status screen', () => {
   it('answers what is on air, what is next and what needs somebody, in one read', async () => {
     const { deviceId } = await seedEverything()

@@ -6,7 +6,13 @@
  */
 export class DeviceError extends Error {
   readonly code: string
-  readonly retryable: boolean
+  /**
+   * `false` says another attempt cannot help — a rejected credential, a
+   * refused request — and the scheduler stops retrying at once. Left unset,
+   * the scheduler decides, which for a device usually means trying again:
+   * most device faults are a deck that is busy or a socket that dropped.
+   */
+  readonly retryable: boolean | undefined
   readonly remediation: string | undefined
 
   constructor(
@@ -17,7 +23,7 @@ export class DeviceError extends Error {
     super(message, options.cause === undefined ? undefined : { cause: options.cause })
     this.name = 'DeviceError'
     this.code = code
-    this.retryable = options.retryable ?? false
+    this.retryable = options.retryable
     this.remediation = options.remediation
   }
 }
