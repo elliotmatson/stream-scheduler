@@ -190,15 +190,15 @@ export function Dashboard({ navigate }: { navigate: (path: string) => void }): R
                   {device.activity === 'unreachable' && device.lastError ? (
                     <span className="bad">{device.lastError}</span>
                   ) : (
-                    device.facts.map((fact) => (
-                      <span
-                        key={fact.label}
-                        className={fact.tone === 'bad' ? 'bad' : 'muted'}
-                        title={fact.label}
-                      >
-                        {fact.value}
-                      </span>
-                    ))
+                    // Labelled, so a row reads as "Recording: H.264 Low · Card:
+                    // 23h left" rather than a run of bare values.
+                    device.facts
+                      .filter((fact) => fact.label !== 'Type')
+                      .map((fact) => (
+                        <span key={fact.label} className={fact.tone === 'bad' ? 'bad' : 'muted'}>
+                          <span className="fact-label">{fact.label}:</span> {fact.value}
+                        </span>
+                      ))
                   )}
                   {device.health === 'degraded' ? (
                     <span className="muted" title={device.lastError ?? undefined}>
@@ -285,7 +285,7 @@ function SweepButton({
             })
           }
         >
-          {busy ? 'Checking…' : 'Sweep…'}
+          {busy ? 'Checking…' : 'Clean up old recordings…'}
         </button>
       ) : (
         <>
@@ -371,11 +371,11 @@ function Recordings(): ReactNode {
         title="Recordings"
         subtitle={
           open
-            ? 'What is on the cards, and what the hourly sweep will take off them.'
+            ? 'What is on the cards, and what cleanup will remove.'
             : // One line, not two. The subtitle and the body used to say
               // overlapping things, which read as the card explaining
               // itself twice before it had shown anybody anything.
-              'What is on the cards, and what the hourly sweep will take off them. Reading one takes a moment, so this asks only when you want it to.'
+              'What is on the cards, and what cleanup will remove.'
         }
         actions={
           <button onClick={() => setOpen((was) => !was)}>

@@ -335,7 +335,7 @@ function factsOf(app: Application, connection: Connection): DeviceFact[] {
     if (state.cache?.percent !== undefined && state.cache.percent >= 1) {
       add({
         label: 'Cache',
-        value: `cache ${Math.round(state.cache.percent)}%`,
+        value: `${Math.round(state.cache.percent)}%`,
         ...(state.cache.percent >= app.thresholds.get().cacheWarningPercent
           ? { tone: 'bad' as const }
           : {}),
@@ -343,7 +343,7 @@ function factsOf(app: Application, connection: Connection): DeviceFact[] {
     } else if (state.cache?.status !== undefined && !QUIET_CACHE.has(state.cache.status)) {
       // A deck writing out its cache has nothing to do with being full,
       // and is worth seeing before somebody pulls the card.
-      add({ label: 'Cache', value: `cache ${state.cache.status}` })
+      add({ label: 'Cache', value: state.cache.status })
     }
 
     const storage = storageFact(state)
@@ -357,8 +357,7 @@ function factsOf(app: Application, connection: Connection): DeviceFact[] {
     // in the value, because "ProRes422HQ" beside a device label reads as a
     // model number and "standard" reads as nothing at all.
     const quality = state.options?.quality?.current
-    if (quality !== undefined)
-      add({ label: 'Quality', value: `${readableQuality(quality)} quality` })
+    if (quality !== undefined) add({ label: 'Quality', value: readableQuality(quality) })
   }
 
   // Always something, even for a device that reports nothing at all.
@@ -405,7 +404,7 @@ function storageFact(state: NodeState): DeviceFact | undefined {
   if (recording === undefined) return undefined
 
   if (recording.remainingMs !== undefined) {
-    return { label: 'Media left', value: `${describeSpan(recording.remainingMs)} left` }
+    return { label: 'Card', value: `${describeSpan(recording.remainingMs)} left` }
   }
 
   const slots = recording.slots ?? []
@@ -413,7 +412,7 @@ function storageFact(state: NodeState): DeviceFact | undefined {
 
   const mounted = slots.filter((slot) => MOUNTED.has(slot.status.toLowerCase()))
   if (mounted.length === 0) {
-    return { label: 'Media left', value: 'no card', tone: 'bad' }
+    return { label: 'Card', value: 'no card', tone: 'bad' }
   }
 
   // The one it would write to, else the emptiest, which is the one it
@@ -421,11 +420,11 @@ function storageFact(state: NodeState): DeviceFact | undefined {
   const best = mounted.find((slot) => slot.active) ?? mounted[0]
   if (best?.remainingMs === undefined) {
     return {
-      label: 'Media left',
+      label: 'Card',
       value: `${mounted.length} card${mounted.length === 1 ? '' : 's'}`,
     }
   }
-  return { label: 'Media left', value: `${describeSpan(best.remainingMs)} left` }
+  return { label: 'Card', value: `${describeSpan(best.remainingMs)} left` }
 }
 
 const MOUNTED = new Set(['mounted', 'ready', 'ok'])
@@ -515,9 +514,15 @@ function attention(app: Application, now: number): DashboardAttention[] {
         // is enough — an hour by default, which is a service and a bit.
         if (slot.active !== true || slot.remainingMs === undefined) continue
         if (slot.remainingMs > mediaWarningMs) continue
+        const minutes = Math.round(slot.remainingMs / 60_000)
+        const where = slot.volumeName ? `"${slot.volumeName}"` : 'its card'
         items.push({
           kind: 'media',
-          message: `${connection.label} has ${Math.round(slot.remainingMs / 60_000)} minutes left on slot ${slot.id}`,
+          // What it means, not which slot number the protocol uses.
+          message:
+            minutes <= 0
+              ? `${connection.label}: ${where} is full`
+              : `${connection.label}: ${minutes} min of recording left on ${where}`,
           href: '/devices',
         })
       }

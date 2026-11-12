@@ -175,19 +175,30 @@ export function EventForm({ series, onDone }: { series?: Series; onDone: () => v
             />
           </Field>
 
-          <Field
-            label="Timezone"
-            hint="Times below are read in this zone, so a 9am service stays at 9am across a clock change."
-          >
+          <Field label="Timezone" hint="A 9am service stays at 9am across a clock change.">
             <select
               value={draft.timezone}
               onChange={(event) => set('timezone', event.target.value)}
             >
-              {zoneChoices(draft.timezone).map((zone) => (
-                <option key={zone} value={zone}>
-                  {zone}
-                </option>
-              ))}
+              {/* The few anybody here means first, then the rest. A list of
+                  418 starting at Africa/Abidjan is not a choice, it is a
+                  scroll. */}
+              <optgroup label="Common">
+                {commonZones(draft.timezone).map((zone) => (
+                  <option key={zone} value={zone}>
+                    {zoneName(zone)}
+                  </option>
+                ))}
+              </optgroup>
+              <optgroup label="Everywhere else">
+                {zoneChoices(draft.timezone)
+                  .filter((zone) => !commonZones(draft.timezone).includes(zone))
+                  .map((zone) => (
+                    <option key={zone} value={zone}>
+                      {zone.replace(/_/g, ' ')}
+                    </option>
+                  ))}
+              </optgroup>
             </select>
           </Field>
 
@@ -677,8 +688,7 @@ function PlanPairing({
       </Field>
 
       <p className="muted" style={{ margin: 0 }}>
-        The repeating rule stops being used. Weeks with no plan published yet show nothing, rather
-        than a guess — and a plan edited after this event starts preparing is not acted on.
+        Dates come from Planning Center. A plan changed after preparing starts is not picked up.
       </p>
     </div>
   )
@@ -764,6 +774,35 @@ function timeInZone(instant: number, timeZone: string): string {
     minute: '2-digit',
     hour12: false,
   }).format(instant)
+}
+
+const US_ZONES = [
+  'America/New_York',
+  'America/Chicago',
+  'America/Denver',
+  'America/Phoenix',
+  'America/Los_Angeles',
+  'America/Anchorage',
+  'Pacific/Honolulu',
+]
+
+/** This browser's zone, the one already chosen, and the US zones. */
+function commonZones(current: string): string[] {
+  const here = Intl.DateTimeFormat().resolvedOptions().timeZone
+  return [...new Set([current, here, ...US_ZONES])]
+}
+
+/** "America/Chicago" as "Central — Chicago", where there is a short name. */
+function zoneName(zone: string): string {
+  const city = zone.split('/').pop()?.replace(/_/g, ' ') ?? zone
+  try {
+    const name = new Intl.DateTimeFormat('en-US', { timeZone: zone, timeZoneName: 'long' })
+      .formatToParts(new Date())
+      .find((part) => part.type === 'timeZoneName')?.value
+    return name ? `${city} (${name.replace(/ (Standard|Daylight) Time$/, '')})` : city
+  } catch {
+    return city
+  }
 }
 
 /** Every zone the browser knows, with the current one guaranteed present. */

@@ -178,10 +178,7 @@ function ProviderSection({
 
       <h3>1. This install's OAuth client</h3>
       {clients.length === 0 ? (
-        <p className="muted">
-          None yet. Each install brings its own OAuth client, so nothing is shared and your
-          channel's API budget is your own. The setup steps above walk through making one.
-        </p>
+        <p className="muted">None yet. Setup steps shows how to make one.</p>
       ) : (
         <ul className="plain">
           {clients.map((client) => (
@@ -256,13 +253,13 @@ function ProviderSection({
                   <span className="muted">
                     {/* The provider's own labels, not the stored keys: nobody
                         outside this codebase calls it a playlistId. */}
-                    {Object.entries(destination.config)
-                      .map(([key, value]) => {
-                        const field = provider.configSchema.find(
-                          (candidate) => candidate.id === key,
-                        )
-                        return `${field && 'label' in field ? field.label : key}: ${String(value)}`
-                      })
+                    {[
+                      accounts.find((account) => account.id === destination.accountId)?.displayName,
+                      ...Object.entries(destination.config).map(([key, value]) =>
+                        describeSetting(provider, key, value),
+                      ),
+                    ]
+                      .filter(Boolean)
                       .join(' · ')}
                   </span>
                 </span>
@@ -560,9 +557,7 @@ function StreamKeys({
         <button onClick={() => setOpen((value) => !value)}>{open ? 'Cancel' : 'Add a key'}</button>
       </div>
       <p className="muted" style={{ marginTop: 0 }}>
-        For a service with no integration here: an ingest URL and key, typed in once. A service
-        listed above is better connected there — it fills the title in for you, and YouTube makes
-        the broadcast too.
+        For services not listed above: an ingest URL and key.
       </p>
 
       {credentials.length === 0 ? (
@@ -724,4 +719,25 @@ function safeTest(pattern: string, value: string): boolean {
   } catch {
     return true
   }
+}
+
+/**
+ * One setting as a person would say it: the field's own label, a choice's
+ * name rather than its id, yes or no rather than true or false. The account
+ * is said separately, so its stored reference is left out.
+ */
+function describeSetting(
+  provider: DestinationProvider,
+  key: string,
+  value: unknown,
+): string | undefined {
+  if (key === 'accountRef' || value === undefined || value === '') return undefined
+  const field = provider.configSchema.find((candidate) => candidate.id === key)
+  const label = field && 'label' in field ? field.label : key
+  if (typeof value === 'boolean') return value ? label : `${label}: off`
+  const choice =
+    field && 'choices' in field && Array.isArray(field.choices)
+      ? field.choices.find((option: { id: string }) => option.id === value)
+      : undefined
+  return `${label}: ${choice && 'label' in choice ? String(choice.label) : String(value)}`
 }

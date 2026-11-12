@@ -64,9 +64,13 @@ export function SeriesList(): ReactNode {
         title="Events"
         subtitle="What runs, when it runs, and what it is called."
         actions={
-          <button className="primary" onClick={() => setAdding((open) => !open)}>
-            {adding ? 'Cancel' : 'Add an event'}
-          </button>
+          // While the form is open its own Cancel closes it; a second one up
+          // here, styled as the main button, was the wrong thing to stand out.
+          adding ? null : (
+            <button className="primary" onClick={() => setAdding(true)}>
+              Add an event
+            </button>
+          )
         }
       />
       <ErrorBanner error={error ?? actionError} />

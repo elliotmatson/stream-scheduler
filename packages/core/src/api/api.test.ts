@@ -505,9 +505,9 @@ describe('the status screen', () => {
     const facts = Object.fromEntries(
       row.facts.map((fact: { label: string; value: string }) => [fact.label, fact.value]),
     )
-    expect(facts['Media left']).toBe('4h left')
+    expect(facts['Card']).toBe('4h left')
     expect(facts['Input']).toBe('1080p50 on SDI')
-    expect(facts['Quality']).toBe('standard quality')
+    expect(facts['Quality']).toBe('standard')
     // Always at least the type, so no device is ever a bare name.
     expect(facts['Type']).toBe('Mock device')
   })
@@ -530,7 +530,7 @@ describe('the status screen', () => {
     expect(dashboard.attention).toEqual([
       expect.objectContaining({
         kind: 'media',
-        message: expect.stringContaining('40 minutes left'),
+        message: expect.stringContaining('40 min of recording left'),
       }),
     ])
   })

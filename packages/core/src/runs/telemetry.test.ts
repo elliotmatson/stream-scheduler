@@ -294,7 +294,7 @@ describe('when to tell somebody', () => {
     await post(`/api/devices/${device.id}/nodes/record/startRecording`, { filename: 'sunday' })
 
     const complains = (body: { attention: { message: string }[] }): boolean =>
-      body.attention.some((item) => /minutes left/.test(item.message))
+      body.attention.some((item) => /recording left|is full/.test(item.message))
 
     // The mock records to a slot with four hours on it, which no sensible
     // default calls a problem.
