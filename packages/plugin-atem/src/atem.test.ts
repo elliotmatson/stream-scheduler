@@ -3,6 +3,7 @@ import { Enums } from 'atem-connection'
 import type { AtemState } from 'atem-connection'
 import { fingerprint, withSerializingTransport } from '@scheduler/plugin-sdk'
 import type { DeviceContext, DeviceInstance, NodeState } from '@scheduler/plugin-sdk'
+import { isHousekeeping, type RemoteEntry } from '@scheduler/device-ftp'
 import { atemPlugin, formatQuality, parseQuality } from './index.js'
 import { AtemConnectionStatus, type AtemClient } from './client.js'
 
@@ -217,7 +218,14 @@ function context(config: Record<string, unknown> = {}): DeviceContext {
  */
 function fakeFtp(
   volumes: Record<string, string[]>,
-  options: { ignoresDeletes?: boolean; flat?: boolean } = {},
+  options: {
+    ignoresDeletes?: boolean
+    flat?: boolean
+    /** Each recording is a folder, which is what ISO mode writes. */
+    asFolders?: boolean
+    /** Plain files the card keeps for itself, alongside the recordings. */
+    junk?: string[]
+  } = {},
 ) {
   let stamp = 0
   const clip = (name: string): RemoteEntry => ({
@@ -246,26 +254,45 @@ function fakeFtp(
     }
     put('/', { name: volume, size: 0, isDirectory: true })
     tree.set(`/${volume}`, new Map())
-    for (const name of names) put(`/${volume}`, clip(name))
+    for (const name of names) {
+      put(
+        `/${volume}`,
+        options.asFolders ? { ...clip(name), size: 131_072, isDirectory: true } : clip(name),
+      )
+    }
+    // Four kilobytes, no date: exactly what a Mac leaves behind.
+    for (const name of options.junk ?? []) {
+      put(`/${volume}`, { name, size: 4_096, isDirectory: false })
+    }
   }
 
   const removed: string[] = []
+  const removedDirectories: string[] = []
   let closed = 0
   const at = (directory: string): Map<string, RemoteEntry> =>
     tree.get(directory === '' ? '/' : directory) ?? new Map<string, RemoteEntry>()
 
   return {
     removed,
+    removedDirectories,
     closed: () => closed,
     /** What is in a directory, for asserting a delete actually took. */
     names: (directory: string) =>
-      [...at(directory).values()].filter((entry) => !entry.isDirectory).map((entry) => entry.name),
+      [...at(directory).values()]
+        .filter((entry) => !isHousekeeping(entry.name))
+        .map((entry) => entry.name),
     connect: async () => ({
       entries: async (directory: string) => [...at(directory).values()],
       list: async (directory: string) =>
-        [...at(directory).values()].filter((entry) => !entry.isDirectory),
+        [...at(directory).values()].filter((entry) => !isHousekeeping(entry.name)),
       remove: async (path: string) => {
         removed.push(path)
+        if (options.ignoresDeletes) return
+        const name = path.split('/').pop() ?? path
+        at(path.slice(0, path.lastIndexOf('/')) || '/').delete(name)
+      },
+      removeDirectory: async (path: string) => {
+        removedDirectories.push(path)
         if (options.ignoresDeletes) return
         const name = path.split('/').pop() ?? path
         at(path.slice(0, path.lastIndexOf('/')) || '/').delete(name)
@@ -711,6 +738,54 @@ describe('what is on the switcher\u2019s drive', () => {
     expect(media[0]?.bytes).toBeGreaterThan(0)
     expect(media[0]?.recordedAt).toBeGreaterThan(0)
     expect(ftp.closed()).toBe(1)
+  })
+
+  it('lists an ISO recording, which is a folder, and not the card\u2019s housekeeping', async () => {
+    // The real drive, as the switcher serves it: a folder per take, and
+    // one AppleDouble sidecar that was the only plain file among them.
+    // Keeping files and dropping directories showed the sidecar alone.
+    const ftp = fakeFtp(
+      {
+        'AND-College': [
+          '2026-10-11_08-58-00_and-college-atem',
+          '2026-10-18_08-57-59_and-college-atem',
+        ],
+      },
+      { asFolders: true, junk: ['._.', '._2026-10-18_08-57-59_and-college-atem 01.mp4'] },
+    )
+    const atem = await connect(recorder(), {}, ftp)
+
+    const listed = await atem.invoke('record', 'listMedia', {})
+    const media = (listed?.raw?.media ?? []) as {
+      name: string
+      bytes?: number
+      recordedAt?: number
+      isFolder?: boolean
+    }[]
+
+    expect(media.map((item) => item.name)).toEqual([
+      '2026-10-11_08-58-00_and-college-atem',
+      '2026-10-18_08-57-59_and-college-atem',
+    ])
+    expect(media[0]?.isFolder).toBe(true)
+    // The directory entry's size is not the take's, so it is not offered
+    // as one: a blank beats 128 kB against a recording of many gigabytes.
+    expect(media[0]?.bytes).toBeUndefined()
+    expect(media[0]?.recordedAt).toBeGreaterThan(0)
+  })
+
+  it('removes an ISO recording with the verb for a directory', async () => {
+    const name = '2026-10-18_08-57-59_and-college-atem'
+    const ftp = fakeFtp({ 'AND-College': [name] }, { asFolders: true })
+    const atem = await connect(recorder(), {}, ftp)
+
+    await atem.invoke('record', 'deleteMedia', { name })
+
+    // DELE on a directory is refused by every server worth the name, so
+    // the folder has to go the other way.
+    expect(ftp.removedDirectories).toEqual([`/AND-College/${name}`])
+    expect(ftp.removed).toEqual([])
+    expect(ftp.names('/AND-College')).toEqual([])
   })
 
   it('looks on the disk it is writing to, not whichever sorts first', async () => {
