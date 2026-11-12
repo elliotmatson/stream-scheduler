@@ -23,6 +23,10 @@ export interface FakeBroadcast {
   boundStreamId?: string
   enableAutoStart: boolean
   enableAutoStop: boolean
+  /** YouTube's preview stage. On unless the insert turns it off, as on the
+   *  real API, and while it is on a broadcast cannot go straight to live. */
+  enableMonitorStream: boolean
+  publishedAt: string
   deleted: boolean
 }
 
@@ -44,6 +48,19 @@ export interface FakeOptions {
   /** Refuse deletion, as YouTube does for a broadcast that already started.
    *  The provider must then fall back to making it private. */
   refuseDelete?: boolean
+  /** Fail one kind of call, leaving the rest alone. */
+  failOn?: { verb: string; path: string; status: number; reason: string; times?: number }
+  /** The fake's clock. When set, a start time already past is refused, as
+   *  YouTube refuses it. */
+  now?: () => number
+}
+
+/** What each `broadcastStatus` filter returns. Empty means everything. */
+const BROADCAST_STATUS: Record<string, string[]> = {
+  all: [],
+  upcoming: ['created', 'ready', 'testStarting', 'testing'],
+  active: ['liveStarting', 'live'],
+  completed: ['complete'],
 }
 
 export class FakeYouTube {
@@ -60,6 +77,7 @@ export class FakeYouTube {
 
   private nextId = 1
   private failuresLeft = 0
+  private targetedFailuresLeft = 0
 
   constructor(options: FakeOptions = {}) {
     this.setOptions(options)
@@ -68,6 +86,8 @@ export class FakeYouTube {
   setOptions(options: FakeOptions): void {
     this.options = options
     this.failuresLeft = options.failWith?.times ?? (options.failWith ? Number.POSITIVE_INFINITY : 0)
+    this.targetedFailuresLeft =
+      options.failOn?.times ?? (options.failOn ? Number.POSITIVE_INFINITY : 0)
   }
 
   get liveBroadcastCount(): number {
@@ -99,6 +119,11 @@ export class FakeYouTube {
         'simulated failure',
       )
     }
+    const target = this.options.failOn
+    if (target && this.targetedFailuresLeft > 0 && target.verb === verb && target.path === path) {
+      this.targetedFailuresLeft--
+      return this.error(target.status, target.reason, 'simulated failure')
+    }
 
     if (path === '/liveBroadcasts' && verb === 'POST') return this.insertBroadcast(body)
     if (path === '/liveBroadcasts' && verb === 'GET') return this.listBroadcasts(query)
@@ -109,20 +134,18 @@ export class FakeYouTube {
     if (path === '/liveStreams' && verb === 'POST') return this.insertStream(body)
     if (path === '/liveStreams' && verb === 'GET') return this.listStreams(query)
     if (path === '/playlistItems' && verb === 'POST') return this.insertPlaylistItem(body)
-    if (path === '/playlists' && verb === 'GET') return this.listPlaylists()
+    if (path === '/playlists' && verb === 'GET') return this.listPlaylists(query)
     if (path === '/channels' && verb === 'GET') return this.myChannel()
 
     return this.error(404, 'notFound', `the fake does not implement ${verb} ${path}`)
   }
 
   /** What a channel has to file videos in. Named like a church's would be. */
-  private listPlaylists(): ReturnType<Fetch> {
-    return this.ok({
-      items: this.playlists.map((playlist) => ({
-        id: playlist.id,
-        snippet: { title: playlist.title },
-      })),
-    })
+  private listPlaylists(query: URLSearchParams): ReturnType<Fetch> {
+    return this.page(
+      this.playlists.map((playlist) => ({ id: playlist.id, snippet: { title: playlist.title } })),
+      query,
+    )
   }
 
   private myChannel(): ReturnType<Fetch> {
@@ -132,7 +155,18 @@ export class FakeYouTube {
   private insertBroadcast(body: Record<string, unknown> | undefined): ReturnType<Fetch> {
     const snippet = (body?.snippet ?? {}) as Record<string, string>
     const status = (body?.status ?? {}) as Record<string, string>
-    const details = (body?.contentDetails ?? {}) as Record<string, boolean>
+    const details = (body?.contentDetails ?? {}) as Record<string, unknown> & {
+      monitorStream?: { enableMonitorStream?: boolean }
+    }
+
+    const now = this.options.now?.()
+    if (now !== undefined && Date.parse(snippet.scheduledStartTime ?? '') < now) {
+      return this.error(
+        400,
+        'invalidScheduledStartTime',
+        'Scheduled start time must be in the future.',
+      )
+    }
 
     const id = `bc-${this.nextId++}`
     const broadcast: FakeBroadcast = {
@@ -143,8 +177,10 @@ export class FakeYouTube {
       scheduledEndTime: snippet.scheduledEndTime ?? '',
       privacyStatus: status.privacyStatus ?? 'private',
       lifeCycleStatus: 'created',
-      enableAutoStart: details.enableAutoStart ?? false,
-      enableAutoStop: details.enableAutoStop ?? false,
+      enableAutoStart: details.enableAutoStart === true,
+      enableAutoStop: details.enableAutoStop === true,
+      enableMonitorStream: details.monitorStream?.enableMonitorStream !== false,
+      publishedAt: new Date(now ?? Date.now()).toISOString(),
       deleted: false,
     }
     this.broadcasts.set(id, broadcast)
@@ -174,10 +210,25 @@ export class FakeYouTube {
 
     const id = query.get('id')
     const all = [...this.broadcasts.values()].filter((b) => !b.deleted)
-    const items = id
-      ? all.filter((b) => b.id === id)
-      : all.filter((b) => b.lifeCycleStatus !== 'complete')
-    return this.ok({ items: items.map((b) => this.broadcastJson(b)) })
+    if (id) {
+      const found = all.filter((b) => b.id === id)
+      // A transition YouTube has accepted finishes a moment later; reading
+      // the broadcast again is what sees it through.
+      const items = found.map((b) => this.broadcastJson(b))
+      for (const b of found) this.settle(b)
+      return this.ok({ items })
+    }
+    const wanted = BROADCAST_STATUS[query.get('broadcastStatus') ?? 'all'] ?? []
+    const matching = all.filter((b) => wanted.length === 0 || wanted.includes(b.lifeCycleStatus))
+    return this.page(
+      matching.map((b) => this.broadcastJson(b)),
+      query,
+    )
+  }
+
+  private settle(broadcast: FakeBroadcast): void {
+    if (broadcast.lifeCycleStatus === 'liveStarting') broadcast.lifeCycleStatus = 'live'
+    if (broadcast.lifeCycleStatus === 'testStarting') broadcast.lifeCycleStatus = 'testing'
   }
 
   private updateBroadcast(body: Record<string, unknown> | undefined): ReturnType<Fetch> {
@@ -205,22 +256,48 @@ export class FakeYouTube {
     const streamId = query.get('streamId')
     if (streamId && !this.streams.has(streamId))
       return this.error(404, 'notFound', 'no such stream')
+    if (!['created', 'ready'].includes(broadcast.lifeCycleStatus)) {
+      return this.error(403, 'invalidTransition', 'a broadcast on air cannot be rebound')
+    }
     broadcast.boundStreamId = streamId ?? undefined
+    broadcast.lifeCycleStatus = streamId ? 'ready' : 'created'
     return this.ok(this.broadcastJson(broadcast))
   }
 
+  /**
+   * YouTube's lifecycle, as strictly as YouTube keeps it.
+   *
+   * created → ready on bind; ready → testing only with the preview stage on;
+   * ready → live only with it off; testing → live; live or testing →
+   * complete. Going to testing or live needs the stream to be receiving,
+   * and passes through a starting state for one read. Asking for where it
+   * already is is `redundantTransition`; anything else is
+   * `invalidTransition`. A fake that let created go straight to complete
+   * is how a broadcast that never aired passed every test.
+   */
   private transition(query: URLSearchParams): ReturnType<Fetch> {
     const broadcast = this.broadcasts.get(query.get('id') ?? '')
     if (!broadcast) return this.error(404, 'notFound', 'no such broadcast')
     const target = query.get('broadcastStatus') ?? ''
+    const from = broadcast.lifeCycleStatus
     const stream = broadcast.boundStreamId ? this.streams.get(broadcast.boundStreamId) : undefined
 
-    // The real API refuses to go live without ingest, which is the failure
-    // the autoStart path exists to avoid.
-    if (target === 'live' && stream?.streamStatus !== 'active') {
+    const starting = target === 'testing' ? 'testStarting' : `${target}Starting`
+    if (from === target || from === starting) {
+      return this.error(403, 'redundantTransition', `the broadcast is already ${from}`)
+    }
+    const allowed =
+      (target === 'testing' && from === 'ready' && broadcast.enableMonitorStream) ||
+      (target === 'live' && from === 'ready' && !broadcast.enableMonitorStream) ||
+      (target === 'live' && from === 'testing') ||
+      (target === 'complete' && (from === 'live' || from === 'testing'))
+    if (!allowed) {
+      return this.error(403, 'invalidTransition', `cannot go from ${from} to ${target}`)
+    }
+    if ((target === 'live' || target === 'testing') && stream?.streamStatus !== 'active') {
       return this.error(403, 'errorStreamInactive', 'the stream is not active')
     }
-    broadcast.lifeCycleStatus = target
+    broadcast.lifeCycleStatus = target === 'complete' ? 'complete' : starting
     return this.ok(this.broadcastJson(broadcast))
   }
 
@@ -243,7 +320,10 @@ export class FakeYouTube {
   private listStreams(query: URLSearchParams): ReturnType<Fetch> {
     const id = query.get('id')
     const items = [...this.streams.values()].filter((s) => !id || s.id === id)
-    return this.ok({ items: items.map((s) => this.streamJson(s)) })
+    return this.page(
+      items.map((s) => this.streamJson(s)),
+      query,
+    )
   }
 
   private insertPlaylistItem(body: Record<string, unknown> | undefined): ReturnType<Fetch> {
@@ -265,6 +345,28 @@ export class FakeYouTube {
     if (stream) stream.streamStatus = 'active'
   }
 
+  /** Every stream receiving, as when every encoder is pushing. */
+  markAllStreamsActive(): void {
+    for (const stream of this.streams.values()) stream.streamStatus = 'active'
+  }
+
+  /** Simulates the encoder dropping. The broadcast is left as it is. */
+  markStreamInactive(streamId: string): void {
+    const stream = this.streams.get(streamId)
+    if (stream) stream.streamStatus = 'inactive'
+  }
+
+  /** One page of `items`, honouring `maxResults` and `pageToken`. */
+  private page(items: unknown[], query: URLSearchParams): ReturnType<Fetch> {
+    const size = Number(query.get('maxResults') ?? 5) || 5
+    const offset = Number(query.get('pageToken') ?? 0) || 0
+    const next = offset + size < items.length ? String(offset + size) : undefined
+    return this.ok({
+      items: items.slice(offset, offset + size),
+      ...(next === undefined ? {} : { nextPageToken: next }),
+    })
+  }
+
   private broadcastJson(b: FakeBroadcast): unknown {
     return {
       id: b.id,
@@ -273,12 +375,14 @@ export class FakeYouTube {
         description: b.description,
         scheduledStartTime: b.scheduledStartTime,
         scheduledEndTime: b.scheduledEndTime,
+        publishedAt: b.publishedAt,
       },
       status: { privacyStatus: b.privacyStatus, lifeCycleStatus: b.lifeCycleStatus },
       contentDetails: {
         ...(b.boundStreamId === undefined ? {} : { boundStreamId: b.boundStreamId }),
         enableAutoStart: b.enableAutoStart,
         enableAutoStop: b.enableAutoStop,
+        monitorStream: { enableMonitorStream: b.enableMonitorStream },
       },
     }
   }

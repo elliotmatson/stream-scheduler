@@ -47,7 +47,7 @@ beforeEach(() => {
     resolveMasterKey([keyFileSource(join(dir, 'k'), { create: true })]),
     new Scrubber(),
   )
-  youtube = new FakeYouTube()
+  youtube = new FakeYouTube({ now: () => clock.now() })
 
   const plugins = new PluginRegistry().register(mockPlugin({ now: () => clock.now() }))
   connections = new ConnectionManager({
@@ -63,6 +63,7 @@ beforeEach(() => {
   destinations.register(
     youtubeProvider({
       now: () => clock.now(),
+      sleep: async () => {},
       fetchImpl: withTokenEndpoint(youtube.fetch),
       resolveClient: async (accountRef) => {
         const { clientId, clientSecret, refreshToken } = destinations.resolveOAuthClient(accountRef)
@@ -217,6 +218,7 @@ describe('a scheduled event delivering to YouTube', () => {
     ).toBeUndefined()
 
     clock.set(START)
+    youtube.markAllStreamsActive() // the encoder is pushing
     await engine.tick()
     expect(store.getRun(runId).state).toBe('running')
     // Pointed at the key YouTube issued, verified by a read-back rather
@@ -253,6 +255,7 @@ describe('a scheduled event delivering to YouTube', () => {
     expect(vault.has(ref)).toBe(true)
 
     clock.set(START)
+    youtube.markAllStreamsActive() // the encoder is pushing
     await engine.tick()
     clock.set(START + DURATION)
     await engine.tick()
@@ -281,6 +284,49 @@ describe('a scheduled event delivering to YouTube', () => {
     expect(spend.calls).toBeGreaterThan(0)
     expect(spend.used).toBeGreaterThan(100)
     expect(spend.used).toBeLessThanOrEqual(260)
+  })
+})
+
+describe('the scheduler drives the broadcast', () => {
+  const broadcast = () => [...youtube.broadcasts.values()][0]!
+
+  it('goes on air only once YouTube sees the encoder, and comes off at the stop', async () => {
+    const { engine } = await fullPipeline()
+    clock.set(START - 30 * MINUTE)
+    const runId = (await engine.tick()).created[0]!
+    expect(broadcast().lifeCycleStatus).toBe('ready')
+
+    clock.set(START)
+    youtube.markAllStreamsActive()
+    await engine.tick()
+    expect(broadcast().lifeCycleStatus).toBe('live')
+
+    // The encoder drops for a minute. YouTube is not left to end it.
+    youtube.markStreamInactive(broadcast().boundStreamId!)
+    clock.set(START + 30 * MINUTE)
+    await engine.tick()
+    expect(broadcast().lifeCycleStatus).toBe('live')
+
+    clock.set(START + DURATION)
+    await engine.tick()
+    expect(broadcast().lifeCycleStatus).toBe('complete')
+    expect(store.getRun(runId).state).toBe('completed')
+  })
+
+  it('takes the encoder off and the broadcast down when YouTube never sees it', async () => {
+    const { engine, encoderId } = await fullPipeline()
+    clock.set(START - 30 * MINUTE)
+    const runId = (await engine.tick()).created[0]!
+
+    // The encoder says it is pushing, but nothing arrives at YouTube.
+    clock.set(START)
+    await engine.tick()
+
+    expect(store.steps(runId).find((s) => s.kind.endsWith('.goLive'))?.state).toBe('failed')
+    expect((await connections.invoke(encoderId, 'stream', 'readState'))?.streaming?.active).toBe(
+      false,
+    )
+    expect(youtube.liveBroadcastCount).toBe(0)
   })
 })
 
@@ -319,6 +365,7 @@ describe('failure and recovery', () => {
     expect(store.getRun(runId).state).toBe('ready')
 
     clock.set(START)
+    youtube.markAllStreamsActive() // the encoder is pushing
     await engine.tick()
     // Its one output failed to go on air, but the run is not over until
     // its window is.
@@ -388,6 +435,7 @@ describe('failure and recovery', () => {
 
     await engine.recover()
     clock.set(START)
+    youtube.markAllStreamsActive() // the encoder is pushing
     await engine.tick()
     clock.set(START + DURATION)
     await engine.tick()

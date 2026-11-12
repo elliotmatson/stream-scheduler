@@ -33,18 +33,31 @@ export const DEFAULT_DAILY_LIMIT = 10_000
 /**
  * Held back for the calls that actually make a stream happen.
  *
- * Roughly two events' worth. Polling and metadata refreshes stop once the
- * day's spend crosses into it, so an afternoon of health checks cannot eat
- * the budget the evening service needs.
+ * Roughly two services' worth: one output costs about 400 units from
+ * prepare to the end of the broadcast. Playlist lookups and metadata stop
+ * once the day's spend crosses into it, so an afternoon of browsing forms
+ * cannot eat the budget the evening service needs.
  */
-export const CRITICAL_RESERVE = 500
+export const CRITICAL_RESERVE = 1_000
 
-/** Calls without which a scheduled event simply does not happen. */
+/**
+ * Calls without which a scheduled event does not happen, or does not end
+ * cleanly.
+ *
+ * Every call prepare, going live, ending and cleaning up make — including
+ * the cheap lookups they start with. A reserve that let the broadcast be
+ * created but refused the lookup that comes before it, or the delete that
+ * undoes it, would protect nothing.
+ */
 const CRITICAL: ReadonlySet<string> = new Set<QuotaMethod>([
   'liveBroadcasts.insert',
+  'liveBroadcasts.list',
   'liveBroadcasts.bind',
   'liveBroadcasts.transition',
+  'liveBroadcasts.update',
+  'liveBroadcasts.delete',
   'liveStreams.insert',
+  'liveStreams.list',
 ])
 
 export function isCritical(method: QuotaMethod): boolean {
@@ -109,4 +122,21 @@ export async function assertAffordable(quota: QuotaRecorder, method: QuotaMethod
   const ceiling = isCritical(method) ? limit : limit - CRITICAL_RESERVE
 
   if (used + cost > ceiling) throw new QuotaExhaustedError(method, used, limit)
+}
+
+/**
+ * Decides whether a sequence of calls fits, before the first is sent.
+ *
+ * For work that would leave something half-made if it ran out part-way:
+ * a broadcast created and then never bound.
+ */
+export async function assertAffordableAll(
+  quota: QuotaRecorder,
+  methods: QuotaMethod[],
+): Promise<void> {
+  const cost = methods.reduce((total, method) => total + QUOTA_COSTS[method], 0)
+  const used = await quota.usedToday()
+  const limit = quota.dailyLimit()
+  const ceiling = methods.every(isCritical) ? limit : limit - CRITICAL_RESERVE
+  if (used + cost > ceiling) throw new QuotaExhaustedError(methods[0] ?? 'prepare', used, limit)
 }

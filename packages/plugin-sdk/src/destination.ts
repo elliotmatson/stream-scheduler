@@ -32,6 +32,13 @@ export interface PrepareInput {
   /** Committed before the call, so an interrupted attempt is recognisable. */
   idempotencyKey: string
   metadata: DestinationMetadata
+  /**
+   * When this prepare was first attempted, epoch ms. The same on every
+   * retry and after a restart, so a provider that has to adjust what it
+   * sends — a start time that has already passed — adjusts it the same way
+   * each time, and can still recognise what an earlier attempt made.
+   */
+  firstAttemptAt?: number
 }
 
 export interface PrepareResult {
@@ -104,6 +111,21 @@ export interface DestinationInstance {
    */
   discard(input: { externalId: string }): Promise<void>
 
+  /**
+   * Puts the broadcast on air, once the encoder is pushing to it.
+   *
+   * Only for a provider with `controlsBroadcastLifecycle`. Called after the
+   * encoder's start has been verified. Must be idempotent: called again on
+   * a broadcast that is already live, it succeeds.
+   */
+  goLive?(input: { externalId: string }): Promise<void>
+
+  /**
+   * Takes the broadcast off air at the output's scheduled stop, after the
+   * encoder has been stopped. Idempotent, like `goLive`.
+   */
+  endBroadcast?(input: { externalId: string }): Promise<void>
+
   /** Called once the event has finished: playlists, final metadata, tidy-up. */
   finalize(input: { externalId: string; metadata: DestinationMetadata }): Promise<void>
 
@@ -164,5 +186,12 @@ export interface DestinationProvider {
   providesIngest: boolean
   /** Absent for a provider configured with a key typed in by hand. */
   oauth?: OAuthCapability
+  /**
+   * True when the broadcast has its own lifecycle that the scheduler drives:
+   * the engine calls `goLive` once the encoder is verified pushing, and
+   * `endBroadcast` once it has stopped. False or absent for a service where
+   * going live is simply the encoder pushing, as on Twitch.
+   */
+  controlsBroadcastLifecycle?: boolean
   createDestination(ctx: DestinationContext): Promise<DestinationInstance>
 }

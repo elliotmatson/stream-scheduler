@@ -48,6 +48,37 @@ function seedSeries(db: Database.Database): void {
 }
 
 describe('the event-output migration', () => {
+  it('drops the old "let YouTube start and stop" setting, and only from YouTube', () => {
+    const db = new Database(':memory:')
+    db.pragma('foreign_keys = ON')
+    db.exec(
+      `CREATE TABLE schema_migration (id INTEGER PRIMARY KEY, name TEXT NOT NULL, applied_at INTEGER NOT NULL)`,
+    )
+    const record = db.prepare(
+      'INSERT INTO schema_migration (id, name, applied_at) VALUES (?, ?, ?)',
+    )
+    for (const migration of migrations.filter((m) => m.id < 16)) {
+      db.exec(migration.sql)
+      migration.convert?.(db)
+      record.run(migration.id, migration.name, Date.now())
+    }
+    const insert = db.prepare(
+      "INSERT INTO destination (id, plugin_id, label, config, created_at) VALUES (?, ?, 'x', ?, 0)",
+    )
+    insert.run('yt', 'youtube', JSON.stringify({ privacy: 'unlisted', autoStartStop: false }))
+    insert.run('other', 'twitch', JSON.stringify({ autoStartStop: false }))
+
+    migrate(db)
+
+    const config = (id: string) =>
+      JSON.parse(
+        (db.prepare('SELECT config FROM destination WHERE id = ?').get(id) as { config: string })
+          .config,
+      )
+    expect(config('yt')).toEqual({ privacy: 'unlisted' })
+    expect(config('other')).toEqual({ autoStartStop: false })
+  })
+
   it('turns a pipeline into a source encoder and its outputs', () => {
     const db = openOldDatabase()
     db.prepare(

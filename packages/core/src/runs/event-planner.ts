@@ -189,7 +189,29 @@ export class EventPlanner implements RunPlanner {
           },
         )
       },
+      // Undone when the output fails after this — the broadcast refusing
+      // to go live, say. Left pushing, the encoder would carry on sending
+      // the service to a broadcast that is about to be deleted.
+      compensate: async () => {
+        await this.deps.connections.applyAndVerify(
+          device.deviceId,
+          device.nodeId,
+          'stopStreaming',
+          {},
+          {
+            what: 'Streaming',
+            expected: 'stopped',
+            satisfiedBy: (state) => state.streaming?.active === false,
+          },
+        )
+      },
     })
+
+    const drivesBroadcast =
+      output.destinationId !== null &&
+      output.destinationId !== undefined &&
+      (this.deps.destinations?.controlsLifecycle(output.destinationId) ?? false)
+    if (drivesBroadcast) steps.push(this.destinationLifecycleStep(output, 'goLive'))
 
     steps.push({
       kind: `${output.id}.stopStreaming`,
@@ -210,6 +232,10 @@ export class EventPlanner implements RunPlanner {
         )
       },
     })
+    // After the encoder has stopped, never before: the executor stops at the
+    // first failed step, and a broadcast that would not end must not be the
+    // reason the encoder was never told to stop.
+    if (drivesBroadcast) steps.push(this.destinationLifecycleStep(output, 'endBroadcast'))
 
     if (output.destinationId)
       steps.push(this.destinationFinalizeStep(output, entry, context, templates))
@@ -239,6 +265,7 @@ export class EventPlanner implements RunPlanner {
           const result = await destination.prepare({
             idempotencyKey: ctx.idempotencyKey,
             metadata: metadata(),
+            firstAttemptAt: ctx.firstAttemptAt,
           })
           return this.recordIngest(result, keyRef(ctx.runId, output.id))
         } finally {
@@ -251,6 +278,7 @@ export class EventPlanner implements RunPlanner {
           const existing = await destination.reconcile({
             idempotencyKey: ctx.idempotencyKey,
             metadata: metadata(),
+            firstAttemptAt: ctx.firstAttemptAt,
           })
           return existing ? this.recordIngest(existing, keyRef(ctx.runId, output.id)) : undefined
         } finally {
@@ -309,6 +337,40 @@ export class EventPlanner implements RunPlanner {
       definitions.push(definition)
     }
     return definitions
+  }
+
+  /**
+   * Puts the broadcast on air, or takes it off, for a service whose
+   * broadcasts the scheduler drives.
+   *
+   * On air only once the encoder's own start has been verified, so the
+   * service has something to show; off at the output's scheduled stop, so
+   * an encoder that drops for a minute does not end the broadcast early.
+   */
+  private destinationLifecycleStep(
+    output: EventOutput,
+    action: 'goLive' | 'endBroadcast',
+  ): StepDefinition {
+    const registry = this.registryOrThrow(output)
+    const destinationId = output.destinationId!
+    return {
+      kind: `${output.id}.${action}`,
+      phase: action === 'goLive' ? 'start' : 'stop',
+      outputId: output.id,
+      label: `${output.label}: ${action === 'goLive' ? 'put the broadcast on air' : 'end the broadcast'}`,
+      maxAttempts: 3,
+      backoffMs: 5_000,
+      execute: async (ctx) => {
+        const externalId = ctx.outputs[`${output.id}.prepare`]?.externalId
+        if (!externalId) return
+        const destination = await registry.open(destinationId, { runId: ctx.runId })
+        try {
+          await destination[action]?.({ externalId })
+        } finally {
+          await destination.dispose()
+        }
+      },
+    }
   }
 
   private destinationFinalizeStep(
@@ -626,6 +688,8 @@ const PHASE_OF_ACTION: Record<string, StepDefinition['phase']> = {
   applyStreamTarget: 'start',
   startStreaming: 'start',
   startRecording: 'start',
+  goLive: 'start',
+  endBroadcast: 'stop',
   stopStreaming: 'stop',
   stopRecording: 'stop',
   finalize: 'complete',

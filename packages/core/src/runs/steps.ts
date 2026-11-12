@@ -15,6 +15,8 @@ export interface StepContext {
    *  recognise work this run already did. */
   idempotencyKey: string
   attempt: number
+  /** When this step was first attempted, the same on every retry. */
+  firstAttemptAt: number
   /** Outputs of earlier steps in this run, keyed by step kind. */
   outputs: Readonly<Record<string, StepOutput>>
   log(message: string, data?: JsonObject): void

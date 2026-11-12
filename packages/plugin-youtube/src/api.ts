@@ -62,9 +62,16 @@ export interface LiveBroadcast {
     description?: string
     scheduledStartTime?: string
     scheduledEndTime?: string
+    /** When the broadcast was created. */
+    publishedAt?: string
   }
   status?: { privacyStatus?: string; lifeCycleStatus?: string }
-  contentDetails?: { boundStreamId?: string; enableAutoStart?: boolean; enableAutoStop?: boolean }
+  contentDetails?: {
+    boundStreamId?: string
+    enableAutoStart?: boolean
+    enableAutoStop?: boolean
+    monitorStream?: { enableMonitorStream?: boolean }
+  }
 }
 
 export interface LiveStream {
@@ -90,6 +97,9 @@ export interface LiveStream {
  * units it is the most expensive call in the API, and nothing here needs it
  * that `liveBroadcasts.list` cannot serve for 1.
  */
+/** The most pages of a list read in one go. */
+const MAX_PAGES = 10
+
 export class YouTubeApi {
   constructor(
     private readonly tokens: TokenSource,
@@ -124,10 +134,12 @@ export class YouTubeApi {
         },
         status: { privacyStatus: input.privacyStatus, selfDeclaredMadeForKids: false },
         contentDetails: {
-          // Preferring these over explicit transitions removes the classic
-          // errorStreamInactive race, where the transition beats the encoder.
           enableAutoStart: input.enableAutoStart,
           enableAutoStop: input.enableAutoStop,
+          // Off, so the broadcast can go straight from ready to live. With
+          // YouTube's preview stage on — its default — it has to pass
+          // through testing first, and a direct transition is refused.
+          monitorStream: { enableMonitorStream: false },
           ...(input.latencyPreference ? { latencyPreference: input.latencyPreference } : {}),
         },
       },
@@ -135,9 +147,8 @@ export class YouTubeApi {
   }
 
   async listUpcomingBroadcasts(): Promise<LiveBroadcast[]> {
-    const response = await this.call<{ items?: LiveBroadcast[] }>(
+    return this.listAll<LiveBroadcast>(
       'liveBroadcasts.list',
-      'GET',
       '/liveBroadcasts',
       // Exactly one filter: `id`, `mine` or `broadcastStatus`. Sending
       // `mine` alongside `broadcastStatus` is rejected outright with
@@ -145,7 +156,6 @@ export class YouTubeApi {
       // answer to the authenticated channel.
       { part: 'snippet,status,contentDetails', broadcastStatus: 'upcoming', maxResults: '50' },
     )
-    return response.items ?? []
   }
 
   async getBroadcast(id: string): Promise<LiveBroadcast | undefined> {
@@ -221,17 +231,14 @@ export class YouTubeApi {
   }
 
   async listStreams(): Promise<LiveStream[]> {
-    const response = await this.call<{ items?: LiveStream[] }>(
-      'liveStreams.list',
-      'GET',
-      '/liveStreams',
-      {
-        part: 'snippet,cdn,contentDetails,status',
-        mine: 'true',
-        maxResults: '50',
-      },
-    )
-    return response.items ?? []
+    // Every page: a channel with a stream per event for a year has more than
+    // fifty, and missing the reusable one on page two would make a second
+    // with a new key — and the encoder's key would change under it.
+    return this.listAll<LiveStream>('liveStreams.list', '/liveStreams', {
+      part: 'snippet,cdn,contentDetails,status',
+      mine: 'true',
+      maxResults: '50',
+    })
   }
 
   async getStream(id: string): Promise<LiveStream | undefined> {
@@ -267,13 +274,12 @@ export class YouTubeApi {
    * opens the form.
    */
   async listPlaylists(): Promise<{ id: string; title: string }[]> {
-    const response = await this.call<{ items?: { id: string; snippet?: { title?: string } }[] }>(
+    const items = await this.listAll<{ id: string; snippet?: { title?: string } }>(
       'playlists.list',
-      'GET',
       '/playlists',
       { part: 'snippet', mine: 'true', maxResults: '50' },
     )
-    return (response.items ?? []).map((item) => ({
+    return items.map((item) => ({
       id: item.id,
       title: item.snippet?.title ?? item.id,
     }))
@@ -296,6 +302,34 @@ export class YouTubeApi {
       )
     }
     return { id: channel.id, title: channel.snippet?.title ?? channel.id }
+  }
+
+  /**
+   * Every page of a list, up to a bound.
+   *
+   * The bound is a backstop against a service that keeps handing back a
+   * next page: ten pages of fifty is more than any church channel has, and
+   * each page costs a unit.
+   */
+  private async listAll<T>(
+    method: QuotaMethod,
+    path: string,
+    query: Record<string, string>,
+  ): Promise<T[]> {
+    const items: T[] = []
+    let pageToken: string | undefined
+    for (let page = 0; page < MAX_PAGES; page++) {
+      const response = await this.call<{ items?: T[]; nextPageToken?: string }>(
+        method,
+        'GET',
+        path,
+        pageToken === undefined ? query : { ...query, pageToken },
+      )
+      items.push(...(response.items ?? []))
+      pageToken = response.nextPageToken
+      if (!pageToken) break
+    }
+    return items
   }
 
   private async call<T>(

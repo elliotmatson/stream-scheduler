@@ -596,6 +596,23 @@ CREATE UNIQUE INDEX run_one_active_per_occurrence
   ON run (occurrence_id) WHERE state NOT IN ('completed', 'failed', 'cancelled');
 `,
   },
+  {
+    id: 16,
+    name: 'scheduler-drives-youtube',
+    sql: `
+-- When a step was first tried, kept across retries. A YouTube prepare sent
+-- after its start time has to send a start time that has not passed, and
+-- has to send the same one on every retry, or the reconcile that stops a
+-- retry from making a second broadcast cannot recognise the first.
+ALTER TABLE run_step ADD COLUMN first_started_at INTEGER;
+
+-- "Let YouTube start and stop the broadcast" is gone: the scheduler now
+-- puts every broadcast on air and takes it off itself, so an encoder that
+-- drops for a minute no longer ends the service early.
+UPDATE destination SET config = json_remove(config, '$.autoStartStop')
+ WHERE plugin_id = 'youtube';
+`,
+  },
 ]
 
 interface GraphNode {

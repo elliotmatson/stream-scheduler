@@ -45,8 +45,12 @@ function context(config: Record<string, unknown> = {}): DestinationContext {
   }
 }
 
+let now = START - 30 * 60_000
+
 async function destination(config: Record<string, unknown> = {}): Promise<DestinationInstance> {
   const provider = youtubeProvider({
+    now: () => now,
+    sleep: async () => {},
     fetchImpl: tokenFetch(youtube.fetch),
     resolveClient: async () => ({ client: CLIENT, refreshToken: 'rt-1' }),
   })
@@ -68,7 +72,8 @@ const prepareInput = (over = {}) => ({
 })
 
 beforeEach(() => {
-  youtube = new FakeYouTube()
+  now = START - 30 * 60_000
+  youtube = new FakeYouTube({ now: () => now })
   quota = new InMemoryQuota()
   logs.length = 0
 })
@@ -89,12 +94,75 @@ describe('preparing a broadcast', () => {
     expect(broadcast?.privacyStatus).toBe('public')
   })
 
-  it('turns on autoStart and autoStop, avoiding the transition race', async () => {
+  it('leaves going on and off air to the scheduler, not YouTube', async () => {
     const dest = await destination()
     const result = await dest.prepare(prepareInput())
     const broadcast = youtube.broadcasts.get(result.externalId)
-    expect(broadcast?.enableAutoStart).toBe(true)
-    expect(broadcast?.enableAutoStop).toBe(true)
+    // An encoder dropping for a minute must not end the service.
+    expect(broadcast?.enableAutoStart).toBe(false)
+    expect(broadcast?.enableAutoStop).toBe(false)
+    // And with no preview stage, it can go straight from ready to live.
+    expect(broadcast?.enableMonitorStream).toBe(false)
+    expect(broadcast?.lifeCycleStatus).toBe('ready')
+  })
+
+  it('sends a start time that has not passed when it is late, and the same one on a retry', async () => {
+    now = START + 10 * 60_000 // Start now, ten minutes into the service
+    const firstAttemptAt = now
+    const input = { ...prepareInput(), firstAttemptAt }
+    const first = await (await destination()).prepare(input)
+    const sent = Date.parse(youtube.broadcasts.get(first.externalId)!.scheduledStartTime)
+    expect(sent).toBeGreaterThan(now)
+
+    // A retry a minute later, after the answer to the first was lost.
+    now += 60_000
+    const again = await (await destination()).prepare(input)
+    expect(again.externalId).toBe(first.externalId)
+    expect(youtube.liveBroadcastCount).toBe(1)
+  })
+
+  it('does not adopt a later service of the same name', async () => {
+    // Next week's service, made a week ago, has the same title.
+    const nextWeek = await (
+      await destination()
+    ).prepare(prepareInput({ scheduledStart: START + 7 * 86_400_000 }))
+    now = START + 10 * 60_000
+    const late = await (await destination()).prepare({ ...prepareInput(), firstAttemptAt: now })
+    expect(late.externalId).not.toBe(nextWeek.externalId)
+  })
+
+  it('deletes the broadcast it made when the stream cannot be bound', async () => {
+    youtube.setOptions({
+      now: () => now,
+      failOn: { verb: 'POST', path: '/liveBroadcasts/bind', status: 500, reason: 'backendError' },
+    })
+    await expect((await destination()).prepare(prepareInput())).rejects.toThrow()
+    expect(youtube.liveBroadcastCount).toBe(0)
+  })
+
+  it('deletes the broadcast it made when the streams cannot be listed', async () => {
+    youtube.setOptions({
+      now: () => now,
+      failOn: { verb: 'GET', path: '/liveStreams', status: 500, reason: 'backendError' },
+    })
+    await expect((await destination()).prepare(prepareInput())).rejects.toThrow()
+    expect(youtube.liveBroadcastCount).toBe(0)
+  })
+
+  it('finds the reusable stream however many streams the channel has', async () => {
+    const dest = await destination()
+    const first = await dest.prepare(prepareInput())
+    // Twelve one-off streams on top, so the reusable one is on page three.
+    for (let i = 0; i < 12; i++) {
+      await youtube.fetch('https://www.googleapis.com/youtube/v3/liveStreams?part=snippet', {
+        method: 'POST',
+        body: JSON.stringify({ snippet: { title: `old ${i}` } }),
+      })
+    }
+    const second = await (
+      await destination()
+    ).prepare(prepareInput({ title: 'Next week', scheduledStart: START + 604_800_000 }))
+    expect(second.ingest.key).toBe(first.ingest.key)
   })
 
   it('reuses one ingestion stream, so the encoder key never changes', async () => {
@@ -287,13 +355,25 @@ describe('quota', () => {
     expect(youtube.liveBroadcastCount).toBe(0)
   })
 
-  it('keeps a reserve so polling cannot starve the calls that matter', async () => {
+  it('spends the reserve on the service, not on browsing playlists', async () => {
     quota = new InMemoryQuota(DEFAULT_DAILY_LIMIT)
     await quota.record('padding', DEFAULT_DAILY_LIMIT - CRITICAL_RESERVE + 1)
 
     const dest = await destination()
-    // The reconcile list is non-critical and is refused inside the reserve...
-    await expect(dest.prepare(prepareInput())).rejects.toBeInstanceOf(QuotaExhaustedError)
+    // Picking a playlist in a form is refused inside the reserve...
+    await expect(dest.listPlaylists!()).rejects.toBeInstanceOf(QuotaExhaustedError)
+    // ...and everything prepare does, lookups included, is not.
+    await expect(dest.prepare(prepareInput())).resolves.toBeDefined()
+  })
+
+  it('refuses a prepare it could not finish or undo, before making anything', async () => {
+    quota = new InMemoryQuota(DEFAULT_DAILY_LIMIT)
+    // Room for the broadcast, but not for binding it or deleting it again.
+    await quota.record('padding', DEFAULT_DAILY_LIMIT - 120)
+    await expect((await destination()).prepare(prepareInput())).rejects.toBeInstanceOf(
+      QuotaExhaustedError,
+    )
+    expect(youtube.liveBroadcastCount).toBe(0)
   })
 
   it('reports remaining budget so the cap is visible before it bites', async () => {
@@ -313,24 +393,100 @@ describe('quota', () => {
   })
 })
 
-describe('finalizing', () => {
-  it('leaves an autoStop broadcast for YouTube to complete', async () => {
+describe('going on and off air', () => {
+  async function prepared(): Promise<{ dest: DestinationInstance; id: string; streamId: string }> {
     const dest = await destination()
     const result = await dest.prepare(prepareInput())
-    const before = youtube.calls.length
+    return {
+      dest,
+      id: result.externalId,
+      streamId: youtube.broadcasts.get(result.externalId)!.boundStreamId!,
+    }
+  }
+  const lifecycle = (id: string) => youtube.broadcasts.get(id)?.lifeCycleStatus
 
-    await dest.finalize({ externalId: result.externalId, metadata: metadata() })
-    // No transition call, so no race against YouTube's own completion.
-    expect(youtube.calls.slice(before)).toEqual([])
+  it('goes live once YouTube can see the encoder', async () => {
+    const { dest, id, streamId } = await prepared()
+    youtube.markStreamActive(streamId)
+    await dest.goLive!({ externalId: id })
+    expect(lifecycle(id)).toBe('live')
   })
 
-  it('transitions explicitly when autoStop is off', async () => {
-    const dest = await destination({ autoStartStop: false })
-    const result = await dest.prepare(prepareInput())
-    youtube.markStreamActive(youtube.broadcasts.get(result.externalId)!.boundStreamId!)
+  it('waits out YouTube not having seen the encoder yet', async () => {
+    const { dest, id, streamId } = await prepared()
+    youtube.setOptions({
+      now: () => now,
+      failOn: {
+        verb: 'POST',
+        path: '/liveBroadcasts/transition',
+        status: 403,
+        reason: 'errorStreamInactive',
+        times: 2,
+      },
+    })
+    youtube.markStreamActive(streamId)
+    await dest.goLive!({ externalId: id })
+    expect(lifecycle(id)).toBe('live')
+  })
 
-    await dest.finalize({ externalId: result.externalId, metadata: metadata() })
-    expect(youtube.broadcasts.get(result.externalId)?.lifeCycleStatus).toBe('complete')
+  it('fails rather than pretending when the encoder never arrives', async () => {
+    const { dest, id } = await prepared()
+    await expect(dest.goLive!({ externalId: id })).rejects.toThrow(/not active/)
+    expect(lifecycle(id)).toBe('ready')
+  })
+
+  it('is a no-op on a broadcast that is already live', async () => {
+    const { dest, id, streamId } = await prepared()
+    youtube.markStreamActive(streamId)
+    await dest.goLive!({ externalId: id })
+    await expect(dest.goLive!({ externalId: id })).resolves.toBeUndefined()
+  })
+
+  it('will not put a broadcast ended elsewhere back on air', async () => {
+    const { dest, id, streamId } = await prepared()
+    youtube.markStreamActive(streamId)
+    await dest.goLive!({ externalId: id })
+    await dest.endBroadcast!({ externalId: id })
+    await expect(dest.goLive!({ externalId: id })).rejects.toMatchObject({ retryable: false })
+  })
+
+  it('goes through the preview stage for a broadcast made with it on', async () => {
+    const { dest, id, streamId } = await prepared()
+    youtube.broadcasts.get(id)!.enableMonitorStream = true
+    youtube.markStreamActive(streamId)
+    await dest.goLive!({ externalId: id })
+    expect(lifecycle(id)).toBe('live')
+  })
+
+  it('stays live through an encoder drop, and ends when told', async () => {
+    const { dest, id, streamId } = await prepared()
+    youtube.markStreamActive(streamId)
+    await dest.goLive!({ externalId: id })
+
+    youtube.markStreamInactive(streamId)
+    expect(lifecycle(id)).toBe('live')
+
+    await dest.endBroadcast!({ externalId: id })
+    expect(lifecycle(id)).toBe('complete')
+    await expect(dest.endBroadcast!({ externalId: id })).resolves.toBeUndefined()
+  })
+
+  it('ends a broadcast still on air when the event is closed out', async () => {
+    const { dest, id, streamId } = await prepared()
+    youtube.markStreamActive(streamId)
+    await dest.goLive!({ externalId: id })
+    await dest.finalize({ externalId: id, metadata: metadata() })
+    expect(lifecycle(id)).toBe('complete')
+  })
+
+  it('leaves an ended broadcast alone when the event is closed out', async () => {
+    const { dest, id, streamId } = await prepared()
+    youtube.markStreamActive(streamId)
+    await dest.goLive!({ externalId: id })
+    await dest.endBroadcast!({ externalId: id })
+    const before = youtube.calls.filter((call) => call.includes('transition')).length
+    await dest.finalize({ externalId: id, metadata: metadata() })
+    expect(youtube.calls.filter((call) => call.includes('transition')).length).toBe(before)
   })
 })
 
