@@ -1038,7 +1038,9 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(input),
     }),
-  createSeries: (input: SeriesInput) =>
+  /** Makes the event and, when given, what it streams and records — all at
+   *  once, or nothing. */
+  createSeries: (input: SeriesInput & { outputs?: OutputInput[] }) =>
     request<{ id: string }>('/api/series', { method: 'POST', body: JSON.stringify(input) }),
   updateSeries: (id: string, input: Partial<SeriesInput>) =>
     request<unknown>(`/api/series/${id}`, { method: 'PATCH', body: JSON.stringify(input) }),

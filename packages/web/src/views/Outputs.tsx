@@ -731,3 +731,124 @@ function templatesOf(draft: RowDraft, kind: 'stream' | 'recording'): Record<stri
 }
 
 /** The event's own start, as HH:mm in its zone. */
+
+/**
+ * Streams and recordings for an event that has not been saved yet.
+ *
+ * The same editor as a saved event's outputs, holding them here until the
+ * event is created, when they are sent with it. So an event is set up on one
+ * page in one pass — times, then what goes out — rather than saved half-done
+ * first.
+ *
+ * Takes the event as it stands in the form. Only its opening time, length
+ * and pairing matter here: outputs are offsets into the window, so the
+ * calendar date and the zone do not change them.
+ */
+export function DraftOutputs({
+  event,
+  value,
+  onChange,
+}: {
+  event: { time: string; durationMs: number; paired: boolean; templates: Record<string, string> }
+  value: OutputInput[]
+  onChange: (next: OutputInput[]) => void
+}): ReactNode {
+  const { data: destinations } = useResource(() => api.destinations(), [])
+  const { data: credentials } = useResource(() => api.credentials(), [])
+  const { data: devices } = useResource(() => api.devices(), [])
+  const [adding, setAdding] = useState<'stream' | 'recording'>()
+
+  // A stand-in for the series the editor expects. Read in UTC with its
+  // opening time on the clock, the offsets come out the same as they will
+  // against the real one.
+  const [hour = 0, minute = 0] = event.time.split(':').map(Number)
+  const series = {
+    id: 'draft',
+    label: '',
+    timezone: 'UTC',
+    rrule: null,
+    describes: '',
+    dtstart: Date.UTC(2000, 0, 1, hour, minute),
+    durationMs: event.durationMs,
+    prepareLeadMs: 0,
+    prerollMs: 0,
+    postrollMs: 0,
+    lateStartGraceMs: 0,
+    templates: event.templates,
+    version: 0,
+    enabled: true,
+    planSourceId: event.paired ? 'draft' : null,
+    planGroupId: event.paired ? 'draft' : null,
+  } as Series
+
+  const asOutput = (input: OutputInput, index: number): EventOutput => ({
+    id: `draft-${index}`,
+    seriesId: 'draft',
+    position: index,
+    offsetMs: 0,
+    followsWindow: false,
+    destinationId: null,
+    credentialId: null,
+    templates: {},
+    settings: {},
+    enabled: true,
+    ...input,
+  })
+
+  return (
+    <section className="card">
+      <div className="page-head" style={{ marginBottom: 12 }}>
+        <div>
+          <h2 style={{ margin: 0 }}>Outputs</h2>
+          <p className="muted" style={{ margin: '4px 0 0' }}>
+            What it streams and records. Saved with the event.
+          </p>
+        </div>
+        <div className="row">
+          <button onClick={() => setAdding(adding === 'stream' ? undefined : 'stream')}>
+            Add a stream
+          </button>
+          <button onClick={() => setAdding(adding === 'recording' ? undefined : 'recording')}>
+            Add a recording
+          </button>
+        </div>
+      </div>
+
+      {adding ? (
+        <OutputRow
+          key={`new-${adding}`}
+          kind={adding}
+          series={series}
+          destinations={destinations ?? []}
+          credentials={credentials ?? []}
+          devices={devices ?? []}
+          onSave={(input) => {
+            onChange([...value, input])
+            setAdding(undefined)
+          }}
+          onCancel={() => setAdding(undefined)}
+        />
+      ) : null}
+
+      {value.length === 0 && !adding ? (
+        <Empty>Nothing yet. Add a stream or a recording, or add them after saving.</Empty>
+      ) : null}
+
+      <div className="stack">
+        {value.map((input, index) => (
+          <OutputRow
+            key={`draft-${index}-${event.time}`}
+            output={asOutput(input, index)}
+            kind={input.kind}
+            series={series}
+            destinations={destinations ?? []}
+            credentials={credentials ?? []}
+            devices={devices ?? []}
+            onSave={(next) => onChange(value.map((entry, at) => (at === index ? next : entry)))}
+            onRemove={() => onChange(value.filter((_, at) => at !== index))}
+          />
+        ))}
+      </div>
+    </section>
+  )
+}

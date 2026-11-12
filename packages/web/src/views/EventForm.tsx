@@ -1,7 +1,14 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { ReactNode } from 'react'
-import { api, useResource, type EventOutput, type SchedulePreview, type Series } from '../api.ts'
-import { Outputs } from './Outputs.tsx'
+import {
+  api,
+  useResource,
+  type EventOutput,
+  type OutputInput,
+  type SchedulePreview,
+  type Series,
+} from '../api.ts'
+import { DraftOutputs, Outputs } from './Outputs.tsx'
 import { GroupOptions } from './PlanSource.tsx'
 import { Card, ErrorBanner, Field, TemplateTokens } from '../components.tsx'
 import { shortZone, timeIn } from '../format.ts'
@@ -61,6 +68,8 @@ export function EventForm({ series, onDone }: { series?: Series; onDone: () => v
   const [draft, setDraft] = useState<Draft>(() => toDraft(series))
   const [error, setError] = useState<string>()
   const [saving, setSaving] = useState(false)
+  // What it will stream and record, held here until the event is created.
+  const [draftOutputs, setDraftOutputs] = useState<OutputInput[]>([])
   /** Hold the outputs at their clock times rather than letting them follow. */
   const [keepOutputTimes, setKeepOutputTimes] = useState(false)
   // An event has to exist before its outputs can hang off it. Rather than
@@ -151,7 +160,8 @@ export function EventForm({ series, onDone }: { series?: Series; onDone: () => v
         const fresh = (await api.series()).find((row) => row.id === saved.id)
         if (fresh) setSaved(fresh)
       } else {
-        const created = await api.createSeries(input)
+        const created = await api.createSeries({ ...input, outputs: draftOutputs })
+        setDraftOutputs([])
         const fresh = (await api.series()).find((row) => row.id === created.id)
         setSaved(fresh)
       }
@@ -421,16 +431,18 @@ export function EventForm({ series, onDone }: { series?: Series; onDone: () => v
             />
           </Field>
 
-          <div className="row">
-            <button
-              className="primary"
-              disabled={saving || !draft.label}
-              onClick={() => void save()}
-            >
-              {saving ? 'Saving…' : saved ? 'Save' : 'Next: add streams and recordings'}
-            </button>
-            <button onClick={onDone}>{saved ? 'Done' : 'Cancel'}</button>
-          </div>
+          {saved ? (
+            <div className="row">
+              <button
+                className="primary"
+                disabled={saving || !draft.label}
+                onClick={() => void save()}
+              >
+                {saving ? 'Saving…' : 'Save'}
+              </button>
+              <button onClick={onDone}>Done</button>
+            </div>
+          ) : null}
         </div>
 
         <PreviewPanel
@@ -452,9 +464,34 @@ export function EventForm({ series, onDone }: { series?: Series; onDone: () => v
           <Outputs key={`${saved.id}:${saved.version}`} series={saved} />
         </div>
       ) : (
-        <p className="muted" style={{ marginBottom: 0 }}>
-          Streams and recordings are added here, on this page, once the times above are saved.
-        </p>
+        <div style={{ marginTop: 16 }}>
+          <DraftOutputs
+            event={{
+              time: draft.time,
+              durationMs: draft.durationMinutes * 60_000,
+              paired: draft.repeat === 'plan',
+              templates: templatesOf(draft),
+            }}
+            value={draftOutputs}
+            onChange={setDraftOutputs}
+          />
+          {/* Last on the page: the event and everything it sends out are
+              made together, so the button that does it comes after both. */}
+          <div className="row" style={{ marginTop: 16 }}>
+            <button
+              className="primary"
+              disabled={saving || !draft.label}
+              onClick={() => void save()}
+            >
+              {saving
+                ? 'Creating…'
+                : draftOutputs.length > 0
+                  ? `Create with ${draftOutputs.length} output${draftOutputs.length === 1 ? '' : 's'}`
+                  : 'Create'}
+            </button>
+            <button onClick={onDone}>Cancel</button>
+          </div>
+        </div>
       )}
     </Card>
   )

@@ -102,7 +102,6 @@ records, stops and tidies up — without anyone touching it.
 - Fanning one encoder out to several services _at once_, which needs a relay in
   front of it. Several services one after another across a morning does work
 - Signed installers (#11)
-- A one-page event form. Outputs can only be added once the event is saved
 - Finding a device on the network. The plugin SDK has a slot for it and no
   adapter fills it, so every device is added by address
 

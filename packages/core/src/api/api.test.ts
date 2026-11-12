@@ -362,6 +362,78 @@ describe('deleting what holds a secret', () => {
   })
 })
 
+describe('making an event in one go', () => {
+  async function encoderAndKey(): Promise<{ deviceId: string; credentialId: string }> {
+    const device = await post('/api/devices', {
+      pluginId: 'mock',
+      label: 'Sanctuary encoder',
+      config: { kind: 'encoder' },
+    })
+    await post(`/api/devices/${device.json.id}/connect`, {})
+    const credential = await post('/api/credentials', {
+      label: 'YouTube primary',
+      ingestUrl: 'rtmps://a.rtmp.youtube.com/live2',
+      key: 'live_key',
+    })
+    return { deviceId: device.json.id, credentialId: credential.json.id }
+  }
+
+  const event = {
+    label: 'Sunday Service',
+    timezone: 'America/Chicago',
+    rrule: 'FREQ=WEEKLY;BYDAY=SU',
+    dtstart: START,
+    durationMs: 90 * MINUTE,
+  }
+
+  it('creates the event with what it streams, in order', async () => {
+    const { deviceId, credentialId } = await encoderAndKey()
+    const created = await post('/api/series', {
+      ...event,
+      outputs: [
+        {
+          kind: 'stream',
+          label: '9:00',
+          durationMs: 60 * MINUTE,
+          credentialId,
+          deviceId,
+          nodeId: 'stream',
+        },
+        {
+          kind: 'stream',
+          label: 'Late',
+          offsetMs: 60 * MINUTE,
+          durationMs: 30 * MINUTE,
+          credentialId,
+          deviceId,
+          nodeId: 'stream',
+        },
+      ],
+    })
+    expect(created.status).toBe(201)
+    const outputs = (await get(`/api/series/${created.json.id}/outputs`)).json.outputs
+    expect(outputs.map((output: { label: string }) => output.label)).toEqual(['9:00', 'Late'])
+  })
+
+  it('makes nothing when one of the outputs is wrong', async () => {
+    const { deviceId } = await encoderAndKey()
+    const before = (await get('/api/series')).json.length
+    const refused = await post('/api/series', {
+      ...event,
+      // A stream with nowhere to go.
+      outputs: [
+        { kind: 'stream', label: 'Lost', durationMs: 60 * MINUTE, deviceId, nodeId: 'stream' },
+      ],
+    })
+    expect(refused.status).toBeGreaterThanOrEqual(400)
+    expect((await get('/api/series')).json.length).toBe(before)
+  })
+
+  it('still makes an event with no outputs at all', async () => {
+    expect((await post('/api/series', event)).status).toBe(201)
+  })
+})
+
 describe('the calendar', () => {
   it('says which devices each date uses, so it can be narrowed to one', async () => {
     const { deviceId } = await seedEverything()
