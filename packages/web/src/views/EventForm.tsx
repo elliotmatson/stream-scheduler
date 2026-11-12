@@ -209,38 +209,62 @@ export function EventForm({ series, onDone }: { series?: Series; onDone: () => v
             </select>
           </Field>
 
+          <Field label="Repeats">
+            <select
+              value={draft.repeat}
+              onChange={(event) => set('repeat', event.target.value as Repeat)}
+            >
+              <option value="once">Does not repeat</option>
+              <option value="daily">Every day</option>
+              <option value="weekly">Every week</option>
+              <option value="monthly">Every month, on the same weekday</option>
+              <option value="custom">Custom rule</option>
+              <option value="plan">Whenever Planning Center says</option>
+            </select>
+          </Field>
+
+          {draft.repeat === 'plan' ? (
+            <PlanPairing
+              sourceId={draft.planSourceId}
+              groupId={draft.planGroupId}
+              onChange={(next) =>
+                setDraft((current) => ({
+                  ...current,
+                  planSourceId: next.sourceId,
+                  planGroupId: next.groupId,
+                }))
+              }
+            />
+          ) : null}
+
           <div className="row">
             {/* A paired event does not run at a time this form decides:
                 Planning Center supplies the date and the start, and one of
-                them is not even the same week to week. Left editable these
-                read as settings that do nothing, which is worse than being
-                greyed out with a reason. */}
-            <Field
-              label="First date"
-              hint={fromPlan ? 'Planning Center supplies this.' : undefined}
-            >
-              <input
-                type="date"
-                value={draft.date}
-                disabled={fromPlan}
-                onChange={(event) => set('date', event.target.value)}
-              />
-            </Field>
-            <Field
-              label="Start time"
-              hint={fromPlan ? 'Planning Center supplies this.' : undefined}
-            >
-              <input
-                type="time"
-                value={draft.time}
-                disabled={fromPlan}
-                onChange={(event) => set('time', event.target.value)}
-              />
-            </Field>
+                them is not even the same week to week. So the two boxes go
+                away rather than sitting there greyed out — which is why the
+                choice of how it repeats comes first. */}
+            {fromPlan ? null : (
+              <>
+                <Field label="First date">
+                  <input
+                    type="date"
+                    value={draft.date}
+                    onChange={(event) => set('date', event.target.value)}
+                  />
+                </Field>
+                <Field label="Start time">
+                  <input
+                    type="time"
+                    value={draft.time}
+                    onChange={(event) => set('time', event.target.value)}
+                  />
+                </Field>
+              </>
+            )}
             <Field
               label="Length (min)"
-              // Not dead on a paired event, unlike the two beside it: a plan
-              // time is allowed to have no end, and this is what fills in.
+              // Still here on a paired event: a plan time is allowed to have
+              // no end, and this is what fills in.
               hint={
                 fromPlan
                   ? 'Only used for a service time with no end time in the plan.'
@@ -283,34 +307,6 @@ export function EventForm({ series, onDone }: { series?: Series; onDone: () => v
                 </label>
               )}
             </div>
-          ) : null}
-
-          <Field label="Repeats">
-            <select
-              value={draft.repeat}
-              onChange={(event) => set('repeat', event.target.value as Repeat)}
-            >
-              <option value="once">Does not repeat</option>
-              <option value="daily">Every day</option>
-              <option value="weekly">Every week</option>
-              <option value="monthly">Every month, on the same weekday</option>
-              <option value="custom">Custom rule</option>
-              <option value="plan">Whenever Planning Center says</option>
-            </select>
-          </Field>
-
-          {draft.repeat === 'plan' ? (
-            <PlanPairing
-              sourceId={draft.planSourceId}
-              groupId={draft.planGroupId}
-              onChange={(next) =>
-                setDraft((current) => ({
-                  ...current,
-                  planSourceId: next.sourceId,
-                  planGroupId: next.groupId,
-                }))
-              }
-            />
           ) : null}
 
           {draft.repeat === 'weekly' ? (
