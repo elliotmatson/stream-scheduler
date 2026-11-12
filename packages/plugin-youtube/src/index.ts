@@ -312,6 +312,17 @@ class YouTubeDestination implements DestinationInstance {
   async status(): Promise<DestinationStatus> {
     const used = await this.ctx.quota.usedToday()
     const remaining = this.ctx.quota.dailyLimit() - used
+    // Asked of Google, not of this instance's memory: a fresh instance has
+    // never failed anything, so without a real check an expired token is
+    // first noticed when the service fails at T-30.
+    try {
+      await this.api.authorize()
+    } catch (error) {
+      if (error instanceof ReauthRequiredError) {
+        return { state: 'reauth_required', message: error.message, quotaRemaining: remaining }
+      }
+      return { state: 'error', message: describe(error), quotaRemaining: remaining }
+    }
     if (this.lastError)
       return { state: 'error', message: this.lastError, quotaRemaining: remaining }
     if (remaining <= 0) return { state: 'quota_exhausted', quotaRemaining: 0 }

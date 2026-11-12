@@ -4,6 +4,7 @@ import type { ConnectionManager } from '../devices/connection-manager.js'
 import type { DestinationRegistry } from '../destinations/registry.js'
 import { silentLogger, type Logger } from '../log.js'
 import { deviceFor } from '../events/outputs.js'
+import { markAccountReauth } from '../destinations/reauth.js'
 import { describeConflict, overlapsForSeries } from '../events/overlap.js'
 import type { EventPlanner } from '../runs/event-planner.js'
 import { timelineFor, type EventTimeline } from '../runs/timeline.js'
@@ -237,6 +238,7 @@ export class PreflightChecker {
         try {
           const status = await destination.status()
           if (status.state === 'reauth_required') {
+            markAccountReauth(this.deps.db, this.deps.notifier, destinationId)
             problems.push({
               what: label,
               detail: status.message ?? 'The stored authorization was rejected.',
@@ -348,8 +350,12 @@ export function readyNotification(result: PreflightResult): Notification {
  * somebody there are still two.
  */
 function fingerprintProblems(result: PreflightResult): string {
+  // What is wrong as well as where. Keyed on the place alone, a quota
+  // warning on Saturday silenced the "authorization refused" that came for
+  // the same destination on Sunday. Numbers are left out, so "400 units
+  // left" and "350 units left" are still the one problem.
   return result.problems
-    .map((problem) => problem.what)
+    .map((problem) => `${problem.what}: ${problem.detail.replace(/\d+/g, '#')}`)
     .sort()
     .join('|')
 }

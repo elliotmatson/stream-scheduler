@@ -58,6 +58,11 @@ export const emailChannel: NotificationChannel = {
       port: typeof config.port === 'number' ? config.port : 587,
       secure: config.secure === true,
       ...(username && password ? { auth: { user: username, pass: password } } : {}),
+      // Nodemailer's own defaults allow minutes. A mail server that is down
+      // must fail the send, not hold the scheduler's loop.
+      connectionTimeout: 10_000,
+      greetingTimeout: 10_000,
+      socketTimeout: 20_000,
     })
 
     try {

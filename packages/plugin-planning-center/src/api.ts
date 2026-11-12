@@ -146,6 +146,7 @@ export class PlanningCenterApi {
   constructor(
     private readonly credentials: Credentials,
     private readonly fetchImpl: Fetch = globalThis.fetch as unknown as Fetch,
+    private readonly now: () => number = Date.now,
   ) {}
 
   /** The service types this account can see, for the pairing dropdown. */
@@ -208,9 +209,15 @@ export class PlanningCenterApi {
    * be supported and failing on somebody else's account.
    */
   async upcomingPlans(serviceTypeId: string, limit = 25): Promise<Plan[]> {
+    // From yesterday, not `filter=future`. A plan's date is when its first
+    // time starts, so once the 9:00 service has begun "future" can drop the
+    // whole plan — and the 11:00 with it, which sync would then delete.
+    // Yesterday rather than today covers the date line in any timezone;
+    // times already past are dropped when the services are synced.
+    const after = new Date(this.now() - 86_400_000).toISOString().slice(0, 10)
     const path =
       `/service_types/${encodeURIComponent(serviceTypeId)}/plans` +
-      `?filter=future&order=sort_date&per_page=${Math.max(1, Math.min(limit, 100))}`
+      `?filter=after&after=${after}&order=sort_date&per_page=${Math.max(1, Math.min(limit, 100))}`
     const body = await this.get(path)
 
     const plans: Plan[] = []

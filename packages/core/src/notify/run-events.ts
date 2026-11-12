@@ -41,29 +41,6 @@ export function runFailedNotification(
   }
 }
 
-export function accountReauthNotification(account: {
-  id: string
-  displayName: string
-  provider: string
-}): Notification {
-  return {
-    event: 'account.reauth_required',
-    severity: 'error',
-    title: `${account.displayName} needs reconnecting`,
-    summary: `${account.provider} rejected the stored authorization, so scheduled streams to this account will fail.`,
-    facts: [
-      { label: 'Account', value: account.displayName },
-      { label: 'Service', value: account.provider },
-    ],
-    remediation:
-      'Reconnect the account in Settings. If it stopped working about a week after you set it up, the ' +
-      'Google Cloud OAuth consent screen is probably still set to "Testing", which expires refresh tokens ' +
-      'after 7 days.',
-    threadKey: `account-${account.id}`,
-    dedupeKey: `reauth:${account.id}`,
-  }
-}
-
 function occurrenceContext(
   db: Db,
   occurrenceId: string,

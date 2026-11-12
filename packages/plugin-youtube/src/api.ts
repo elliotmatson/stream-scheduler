@@ -305,6 +305,16 @@ export class YouTubeApi {
   }
 
   /**
+   * Checks the stored authorization still works, without spending quota.
+   *
+   * Refreshing the access token is free and is exactly the thing that
+   * fails when a refresh token has been revoked or has expired.
+   */
+  async authorize(): Promise<void> {
+    await this.tokens.accessToken()
+  }
+
+  /**
    * Every page of a list, up to a bound.
    *
    * The bound is a backstop against a service that keeps handing back a

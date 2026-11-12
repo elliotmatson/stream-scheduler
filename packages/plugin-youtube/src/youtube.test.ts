@@ -490,6 +490,50 @@ describe('going on and off air', () => {
   })
 })
 
+describe('the stored authorization', () => {
+  const failingTokens =
+    (status: number, body: string): Fetch =>
+    async (url, init) =>
+      url.startsWith('https://oauth2.googleapis.com/token')
+        ? { ok: false, status, text: async () => body }
+        : youtube.fetch(url, init)
+
+  const withTokens = (fetchImpl: Fetch) =>
+    youtubeProvider({
+      now: () => now,
+      sleep: async () => {},
+      fetchImpl,
+      resolveClient: async () => ({ client: CLIENT, refreshToken: 'rt-1' }),
+    }).createDestination(context())
+
+  it('is checked by status, so an expired token is caught before the service', async () => {
+    const dest = await withTokens(
+      failingTokens(
+        400,
+        JSON.stringify({
+          error: 'invalid_grant',
+          error_description: 'Token has been expired or revoked.',
+        }),
+      ),
+    )
+    const status = await dest.status()
+    expect(status.state).toBe('reauth_required')
+    expect(status.message).toMatch(/expired or revoked/)
+  })
+
+  it('is not blamed when Google itself is having a bad minute', async () => {
+    const dest = await withTokens(failingTokens(503, 'backend error'))
+    expect((await dest.status()).state).toBe('error')
+    const error = await dest.prepare(prepareInput()).catch((caught: unknown) => caught)
+    expect(error).not.toBeInstanceOf(ReauthRequiredError)
+    expect(error).toMatchObject({ retryable: true })
+  })
+
+  it('reports ok when the token refreshes', async () => {
+    expect((await (await destination()).status()).state).toBe('ok')
+  })
+})
+
 describe('API errors', () => {
   it('explains a channel without live streaming enabled', async () => {
     youtube.setOptions({ failWith: { status: 403, reason: 'liveStreamingNotEnabled' } })

@@ -50,6 +50,9 @@ export interface NotifierDeps {
 const MAX_ATTEMPTS = 5
 const BASE_BACKOFF_MS = 30_000
 const MAX_BACKOFF_MS = 30 * 60_000
+/** How long one send may take before it is given up as a failure. */
+const SEND_TIMEOUT_MS = 15_000
+
 /** How many messages one flush will send, so a backlog cannot block a tick. */
 const BATCH = 10
 
@@ -63,11 +66,17 @@ const BATCH = 10
 export class Notifier {
   private readonly channels = new Map<string, NotificationChannel>()
   private readonly logger: Logger
+  private flushing: Promise<{ sent: number; failed: number }> | undefined
   private readonly fetchImpl: Fetch
 
   constructor(private readonly deps: NotifierDeps) {
     this.logger = deps.logger ?? silentLogger
-    this.fetchImpl = deps.fetchImpl ?? (globalThis.fetch as unknown as Fetch)
+    const base = deps.fetchImpl ?? (globalThis.fetch as unknown as Fetch)
+    // Every send has a deadline. A webhook that accepts the connection and
+    // never answers would otherwise hold the tick until it was abandoned,
+    // and the next tick would send the same alert again.
+    this.fetchImpl = (url, init) =>
+      base(url, { ...init, signal: init?.signal ?? AbortSignal.timeout(SEND_TIMEOUT_MS) })
     for (const channel of [googleChatChannel, slackChannel, webhookChannel, emailChannel]) {
       this.channels.set(channel.kind, channel)
     }
@@ -145,21 +154,44 @@ export class Notifier {
    * request per second per space, shared by every webhook in it.
    */
   async flush(): Promise<{ sent: number; failed: number }> {
+    // One flush at a time. A tick abandoned mid-send is still sending, and
+    // a second flush starting alongside it would send the same rows again.
+    if (this.flushing) return { sent: 0, failed: 0 }
+    this.flushing = this.flushOnce().finally(() => {
+      this.flushing = undefined
+    })
+    return this.flushing
+  }
+
+  private async flushOnce(): Promise<{ sent: number; failed: number }> {
     const now = this.deps.clock.now()
+    // Read past the batch, so ten rows for one paced channel — one of which
+    // can go this flush — cannot keep every other channel's alerts waiting.
     const due = this.deps.db
       .prepare(
         `SELECT * FROM notification_outbox
           WHERE status = 'pending' AND next_attempt_at <= ?
           ORDER BY created_at LIMIT ?`,
       )
-      .all(now, BATCH) as OutboxRow[]
+      .all(now, BATCH * 5) as OutboxRow[]
 
     let sent = 0
     let failed = 0
     const sentThisFlush = new Set<string>()
 
     for (const row of due) {
-      const channel = this.channelFor(row.channel_id)
+      if (sent + failed >= BATCH) break
+      let channel: ReturnType<Notifier['channelFor']>
+      try {
+        channel = this.channelFor(row.channel_id)
+      } catch (error) {
+        // Its secret could not be read — restored under another key, say.
+        // That is this row's failure, not a reason to stop every alert
+        // queued behind it.
+        this.markFailed(row, row.channel_id, error)
+        failed++
+        continue
+      }
       if (!channel) {
         this.discard(row, 'The channel this was queued for no longer exists.')
         continue

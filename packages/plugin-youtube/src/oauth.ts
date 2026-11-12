@@ -91,7 +91,7 @@ export async function exchangeCode(
   })
 
   const text = await response.text()
-  if (!response.ok) throw new ReauthRequiredError(describeTokenError(text))
+  if (!response.ok) throw tokenError(response.status, text)
 
   const tokens = JSON.parse(text) as TokenResponse
   if (!tokens.refresh_token) {
@@ -112,6 +112,8 @@ export async function exchangeCode(
 export class RefreshingTokenSource implements TokenSource {
   private accessTokenValue: string | undefined
   private expiresAt = 0
+  /** One refresh at a time, however many calls want a token at once. */
+  private inflight: Promise<string> | undefined
 
   constructor(
     private readonly client: OAuthClient,
@@ -124,7 +126,13 @@ export class RefreshingTokenSource implements TokenSource {
     // 60 seconds of slack, so a token cannot expire between the check and
     // the call it was fetched for.
     if (this.accessTokenValue && this.now() < this.expiresAt - 60_000) return this.accessTokenValue
+    this.inflight ??= this.refresh().finally(() => {
+      this.inflight = undefined
+    })
+    return this.inflight
+  }
 
+  private async refresh(): Promise<string> {
     const response = await this.fetchImpl(TOKEN_ENDPOINT, {
       method: 'POST',
       headers: { 'content-type': 'application/x-www-form-urlencoded' },
@@ -137,13 +145,39 @@ export class RefreshingTokenSource implements TokenSource {
     })
 
     const text = await response.text()
-    if (!response.ok) throw new ReauthRequiredError(describeTokenError(text))
+    if (!response.ok) throw tokenError(response.status, text)
 
     const tokens = JSON.parse(text) as TokenResponse
     this.accessTokenValue = tokens.access_token
     this.expiresAt = this.now() + tokens.expires_in * 1000
     return this.accessTokenValue
   }
+}
+
+/**
+ * Google is having a bad minute, as opposed to having refused the grant.
+ *
+ * Kept apart from `ReauthRequiredError` because the two need opposite
+ * answers: this one is retried and goes away by itself, and telling an
+ * operator to reconnect their account over it sends them chasing a problem
+ * they do not have.
+ */
+export class TokenEndpointError extends Error {
+  readonly code = 'token-endpoint-unavailable'
+  readonly retryable = true
+  readonly remediation =
+    "Google's sign-in service did not answer properly. This is usually brief; it is retried automatically."
+  constructor(status: number, detail: string) {
+    super(`Google's token endpoint answered ${status}: ${detail}`)
+    this.name = 'TokenEndpointError'
+  }
+}
+
+/** A refused grant needs a person; a server error or a rate limit does not. */
+function tokenError(status: number, text: string): Error {
+  if (status >= 500 || status === 429)
+    return new TokenEndpointError(status, describeTokenError(text))
+  return new ReauthRequiredError(describeTokenError(text))
 }
 
 function describeTokenError(text: string): string {
