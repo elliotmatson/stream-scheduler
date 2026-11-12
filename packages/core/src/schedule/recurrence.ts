@@ -154,7 +154,6 @@ function wallOf(naive: Date): WallTime {
   }
 }
 
-/** A plain-language summary of a rule, for the series list. */
 /**
  * How far ahead to look before calling an event finished.
  *
@@ -181,6 +180,7 @@ export function nextOccurrenceAfter(schedule: SeriesSchedule, from: number): num
   return found[0]?.start ?? null
 }
 
+/** A plain-language summary of a rule, for the series list. */
 export function describeSchedule(schedule: SeriesSchedule): string {
   if (schedule.rrule === null) return 'Does not repeat'
   try {

@@ -81,8 +81,8 @@ RUN install -d -o scheduler -g scheduler /config /backups
 
 USER scheduler
 
-# The config directory holds the database, logs and the master key. A single
-# archive of it is the entire backup, and restoring it is the entire recovery.
+# The config directory holds the database and, unless SCHEDULER_SECRET is
+# set, the master key. See docs/operations.md for what a backup needs.
 VOLUME ["/config"]
 ENV SCHEDULER_CONFIG_DIR=/config \
     SCHEDULER_PORT=8500 \

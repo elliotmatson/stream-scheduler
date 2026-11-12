@@ -1,5 +1,7 @@
 # 05 — YouTube integration
 
+> Design record. Where it disagrees with the README or the code, they win.
+
 Two constraints shape this entire component, and both are Google's, not ours:
 
 1. **An OAuth app in "Testing" publishing status has its refresh tokens expired
@@ -85,26 +87,23 @@ decision, not a v1 blocker.
 
 ### Flow
 
-OAuth 2.0 authorization code **with PKCE**, loopback redirect to
-`http://127.0.0.1:<port>/oauth/callback`. This is the correct flow for an
-installed app. The out-of-band (`urn:ietf:wg:oauth:2.0:oob`) copy-paste flow is
-deprecated and must not be used.
+OAuth 2.0 authorization code **with PKCE**, using an OAuth client of type
+**Web application**. The redirect is `<origin>/oauth/callback`, where the origin
+is derived from the request as described above. The same flow works in Docker
+and on a desktop: the browser that started it is sent back to the app. The
+out-of-band (`urn:ietf:wg:oauth:2.0:oob`) copy-paste flow is deprecated and is
+not used.
 
-Scopes: `youtube.force-ssl` (create and manage broadcasts, insert playlist items)
-plus `youtube.readonly`. Nothing else — every additional scope makes a future
-verification harder.
-
-Docker needs care: the loopback redirect has to reach a browser on the user's
-machine, not inside the container. The wizard detects a container environment and
-switches to a "open this URL on your computer, then paste the code back" flow
-against the same loopback listener published on the container's port.
+One scope: `youtube.force-ssl`. It covers creating and managing broadcasts,
+reading them, and inserting playlist items. Every additional scope makes a
+future verification harder.
 
 ## Broadcast lifecycle
 
 Per run, during `preparing`:
 
 1. `liveBroadcasts.insert` — title, description, scheduled start/end, privacy,
-   `contentDetails.enableAutoStart`, `enableAutoStop`, latency preference.
+   latency preference, with YouTube's auto start and auto stop switched off.
 2. Ensure a `liveStream` exists (see below).
 3. `liveBroadcasts.bind` — attach the ingestion stream to the broadcast.
 4. Resolve the ingest URL + key and push them to the encoder.
@@ -124,17 +123,21 @@ push that silently didn't land), and it saves a 50-unit `liveStreams.insert` eve
 event. Per-event keys remain available as a setting for anyone who wants the
 isolation.
 
-### autoStart / autoStop over explicit transitions
+### The scheduler drives the transitions
 
-Setting `contentDetails.enableAutoStart` lets YouTube take the broadcast live when
-it detects ingest, and `enableAutoStop` ends it when ingest stops. Preferring these
-removes the `liveBroadcasts.transition` calls, which are the classic source of
-`errorStreamInactive` failures when the transition races the encoder.
+The engine puts the broadcast on air and takes it off, through the destination
+hooks `goLive` and `endBroadcast`. `enableAutoStart` and `enableAutoStop` are
+off. The old "Let YouTube start and stop the broadcast" setting was removed by a
+migration.
 
-Keep explicit transition as a fallback: the API documents `invalidAutoStart` and
-`invalidAutoStop` errors for broadcast types that don't support the setting
-(notably, `enableAutoStop` cannot be modified on a permanent broadcast). The
-adapter detects those at prepare time and falls back, rather than at showtime.
+- **Going live.** Once the encoder is verified pushing, `goLive` waits for the
+  bound stream to read `active`, then transitions to `live`. That wait is what
+  avoids `errorStreamInactive`, and the error is still retried if it loses the
+  race. A broadcast made by an older version with the monitor stream on goes
+  through `testing` first.
+- **Ending.** At the output's scheduled stop the encoder is stopped, then
+  `endBroadcast` transitions to `complete`. A broadcast already ended is left
+  alone.
 
 ## Quota budget
 
@@ -143,16 +146,16 @@ Costs (verify against
 at implementation time — this list should be treated as a design estimate, not
 gospel):
 
-| Call                                                 | ~Units  | Per event                 |
-| ---------------------------------------------------- | ------- | ------------------------- |
-| `liveBroadcasts.insert`                              | 50      | 1                         |
-| `liveStreams.insert`                                 | 50      | 0 if reusable             |
-| `liveBroadcasts.bind`                                | 50      | 1                         |
-| `playlistItems.insert`                               | 50      | 1                         |
-| `videos.update` (category, tags, thumbnail metadata) | 50      | 0–1                       |
-| `liveBroadcasts.list` / `liveStreams.list`           | 1       | polling                   |
-| `liveBroadcasts.transition`                          | 50      | 0 with autoStart/autoStop |
-| `search.list`                                        | **100** | **never**                 |
+| Call                                                 | ~Units  | Per event          |
+| ---------------------------------------------------- | ------- | ------------------ |
+| `liveBroadcasts.insert`                              | 50      | 1                  |
+| `liveStreams.insert`                                 | 50      | 0 if reusable      |
+| `liveBroadcasts.bind`                                | 50      | 1                  |
+| `playlistItems.insert`                               | 50      | 1                  |
+| `videos.update` (category, tags, thumbnail metadata) | 50      | 0–1                |
+| `liveBroadcasts.list` / `liveStreams.list`           | 1       | polling            |
+| `liveBroadcasts.transition`                          | 50      | 2 (live, complete) |
+| `search.list`                                        | **100** | **never**          |
 
 So roughly **150–250 units per event** plus polling. Forty events a day is
 comfortable; a badly written health poll is not. Three rules:
@@ -165,10 +168,12 @@ comfortable; a badly written health poll is not. Three rules:
   first minute, then 30s, then 60s. A 90-minute service costs ~100 units of
   polling, not 540.
 - **Keep a ledger.** Every call writes to `quota_ledger`, keyed by day in Pacific
-  time (when Google resets). When the day's usage passes a threshold, the engine
-  refuses non-critical calls — health polls, metadata refreshes — and protects the
-  ones that make a stream happen. The UI shows the day's usage. Hitting the cap
-  mid-Sunday should be a visible warning on Saturday, not a surprise.
+  time (when Google resets). The last 1,000 units of the day are a reserve.
+  Non-critical calls — playlist lookups, metadata — are refused once spending
+  reaches it. Critical calls are every call that preparing, going live, ending
+  and cleaning up make, including the cheap lookups they start with; they may
+  spend the reserve. The UI shows the day's usage. Hitting the cap mid-Sunday
+  should be a visible warning on Saturday, not a surprise.
 
 ## Failure modes worth designing for explicitly
 
@@ -178,6 +183,6 @@ comfortable; a badly written health poll is not. Three rules:
 | `org_internal` at the consent screen          | OAuth client's user type is "Internal"; a Brand Account channel is not in the Workspace               | Cannot be caught by this app — the setup instructions require "External" and say why                                                                    |
 | `invalid_grant` on refresh                    | consent screen left on Testing (7-day expiry), or the user revoked access                             | Named error + reconnect CTA; mark `account.status = 'reauth_required'` and alert _before_ the next prepare window                                       |
 | `quotaExceeded`                               | day's budget gone                                                                                     | Ledger should have prevented it; if it happens, fail the run at prepare with a clear cause rather than half-creating things                             |
-| `errorStreamInactive` on transition           | encoder wasn't pushing yet                                                                            | Avoided by autoStart; fallback path waits for ingest health before transitioning                                                                        |
+| `errorStreamInactive` on transition           | encoder wasn't pushing yet                                                                            | `goLive` waits for the stream to read active before transitioning, and retries the error                                                                |
 | Broadcast created, bind failed                | crash or API error mid-prepare                                                                        | Compensation deletes the orphan broadcast, or makes it private and tags it if deletion fails                                                            |
 | Duplicate broadcasts                          | retry after a crash                                                                                   | Prevented by writing the idempotency key before the call and reconciling on startup — see [03](./03-scheduling-engine.md)                               |

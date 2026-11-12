@@ -1,5 +1,7 @@
 # 04 — Plugin SDK
 
+> Design record. Where it disagrees with the README or the code, they win.
+
 `@scheduler/plugin-sdk` is the contract between the core and every encoder,
 destination and router. It is versioned and semver'd from the first release, the
 way `@companion-module/base` is, because it is the thing that has to stay stable
@@ -103,6 +105,26 @@ Declarative, like Companion's, so no one hand-writes a settings form:
 UI in plaintext, never written to a log, never included in a run step's recorded
 request. A plugin cannot accidentally mishandle a secret because it never sees the
 storage path.
+
+## What exists now
+
+Device plugins: `plugin-atem`, `plugin-hyperdeck`, `plugin-streaming-encoder`
+(Streaming Encoder and Web Presenter over REST), `plugin-obs`,
+`plugin-propresenter`, `plugin-vmix`, `plugin-magewell` and `plugin-mock`. The
+ATEM and HyperDeck plugins share `device-ftp` for listing and deleting
+recordings. There is no `plugin-webpresenter` or `plugin-rtmp`: a hand-typed
+key on the Services page covers a plain RTMP target.
+
+Destinations, in `packages/plugin-sdk/src/destination.ts`: `plugin-youtube` and
+`plugin-twitch`. A provider that sets `controlsBroadcastLifecycle` has the
+engine call `goLive` once the encoder is verified pushing, and `endBroadcast`
+once it has stopped. YouTube sets it; Twitch does not, because going live there
+is just the encoder pushing.
+
+Schedule sources, in `packages/plugin-sdk/src/plan-source.ts`:
+`plugin-planning-center`.
+
+The sections below are the original plan.
 
 ## Phase 1 plugins
 

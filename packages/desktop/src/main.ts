@@ -1,7 +1,7 @@
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { app, BrowserWindow, dialog, Menu, nativeImage, shell, Tray } from 'electron'
-import { Application, createServer, isOnAir } from '@scheduler/core'
+import { Application, createServer, isTerminal } from '@scheduler/core'
 import { mockPlugin } from '@scheduler/plugin-mock'
 import { safeStorageKeySource } from './key-source.js'
 
@@ -105,10 +105,10 @@ function buildTray(): void {
 
 /** Quitting mid-broadcast needs a confirmation, not a silent stop. */
 async function requestQuit(): Promise<void> {
-  // Every run inside its window, whether or not an output happens to be on
-  // air this minute: quitting at 10:30 on a Sunday abandons the 11:00
-  // service just as surely as it abandons the 9:00 one.
-  const live = scheduler?.store.listActiveRuns().filter((run) => isOnAir(run.state)) ?? []
+  // Every run that has not finished, from preparing onwards, whether or not
+  // an output happens to be on air this minute: quitting at 10:30 on a
+  // Sunday abandons the 11:00 service just as surely as the 9:00 one.
+  const live = scheduler?.store.listActiveRuns().filter((run) => !isTerminal(run.state)) ?? []
 
   if (live.length > 0) {
     const { response } = await dialog.showMessageBox({

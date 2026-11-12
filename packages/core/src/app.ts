@@ -326,8 +326,9 @@ export class Application {
       })
     }
 
-    // Refuses to start rather than keeping stream keys and OAuth tokens in
-    // plaintext; the error names the fix for each platform.
+    // The first source that has a key wins: the host's own (the desktop
+    // keychain), an existing master.key, then SCHEDULER_SECRET. With none of
+    // those, a new master.key is created in the config directory.
     const masterKey = resolveMasterKey([
       ...(options.keySources ?? []),
       keyFileSource(paths.keyFile),

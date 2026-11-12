@@ -1,5 +1,7 @@
 # 06 — Templating and secrets
 
+> Design record. Where it disagrees with the README or the code, they win.
+
 ## Name templating
 
 Every user-entered name supports templates: broadcast title, description,
@@ -66,21 +68,19 @@ actually hurts: a stream key lets a stranger broadcast on the user's channel.
 Envelope encryption. Secrets are AES-256-GCM encrypted with a data key; the master
 key comes from a platform-appropriate backend:
 
-| Platform          | Master key source                                                       |
-| ----------------- | ----------------------------------------------------------------------- |
-| macOS             | Keychain, via Electron `safeStorage`                                    |
-| Windows           | DPAPI, via Electron `safeStorage`                                       |
-| Linux desktop     | libsecret where available                                               |
-| Docker / headless | a key file, or a key derived from a required `SCHEDULER_SECRET` env var |
+| Platform          | Master key source                                    |
+| ----------------- | ---------------------------------------------------- |
+| macOS             | Keychain, via Electron `safeStorage`                 |
+| Windows           | DPAPI, via Electron `safeStorage`                    |
+| Linux desktop     | libsecret where available                            |
+| Docker / headless | a key file, or a key derived from `SCHEDULER_SECRET` |
 
 `secret.key_id` records which master key encrypted each row, so rotation is a
 background re-encrypt rather than a migration.
 
-**Headless must not silently fall back to plaintext.** If no key source is
-configured, the app refuses to start and prints how to fix it. A container that
-quietly stores stream keys in plaintext next to a database file that people
-casually back up to Dropbox is the wrong default, and "secure unless you didn't
-notice" is not a security posture.
+**Headless never falls back to plaintext.** If no key source is configured, the
+app creates `master.key` in the config directory on first start. Once that file
+exists, `SCHEDULER_SECRET` is ignored.
 
 ### In transit, in the UI, in logs
 

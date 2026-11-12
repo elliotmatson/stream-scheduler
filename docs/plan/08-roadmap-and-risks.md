@@ -1,5 +1,7 @@
 # 08 — Roadmap and risks
 
+> Design record. Where it disagrees with the README or the code, they win.
+
 The phase plan this document opened with has been delivered and is recorded
 below as history. **Work still to do is tracked in
 [GitHub Issues](https://github.com/elliotmatson/stream-scheduler/issues), not
@@ -17,11 +19,11 @@ abstractions for the next phase".
 | Phase                      | Delivered                                                                                                                                                                                                         |
 | -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **0 — Skeleton**           | Monorepo, SQLite schema and migrations, config directory resolution, secret vault with every backend, React shell, REST + WebSocket API, Electron tray, Dockerfile, CI                                            |
-| **1 — Devices**            | `ConnectionManager`, plugin SDK v1, and the HyperDeck, ATEM, Streaming Encoder and mock adapters, each with a protocol-level fake. Device inventory with discovery, health and probed capabilities                |
+| **1 — Devices**            | `ConnectionManager`, plugin SDK v1, and the HyperDeck, ATEM, Streaming Encoder and mock adapters, each with a protocol-level fake. Device inventory with health and probed capabilities. Discovery was not built  |
 | **2 — YouTube**            | BYO OAuth with the "In production" warning, token vault, the account/destination model, broadcast creation with full metadata, reusable ingestion streams, playlist insertion, quota ledger, fake YouTube server  |
 | **3 — Scheduling**         | RRULE series, materialization and reconciliation, the run state machine, durable steps, crash recovery, compensation, missed-event policy, templating with live preview, calendar and list views, run timeline    |
 | **4 — Events and outputs** | An event owns a window; the streams and recordings inside it each own their hardware and start and stop independently. Fanning one encoder out to two services _simultaneously_ was **not** built and is issue #5 |
-| **5 — Hardening**          | Failure notifications with pre-flight. Backup/restore (#10), diagnostics bundle and signed installers (#11) were not built                                                                                        |
+| **5 — Hardening**          | Failure notifications with pre-flight, and backup and restore. A diagnostics bundle and signed installers (#11) were not built                                                                                    |
 
 Two deviations from the original plan worth recording:
 

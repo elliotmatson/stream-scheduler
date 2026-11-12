@@ -8,8 +8,8 @@ The goal is the operational experience of [Resi](https://resi.io) (scheduled
 events that start and stop themselves, recurring services, one console for
 encoders and destinations) on gear you already own, packaged the way
 [Bitfocus Companion](https://github.com/bitfocus/companion) is: a headless
-service with a local web UI, an optional tray app for Mac and Windows, and the
-same image for Docker.
+service with a local web UI, and the same image for Docker. A tray app for Mac
+and Windows exists but is experimental.
 
 ## Status
 
@@ -59,13 +59,18 @@ records, stops and tidies up — without anyone touching it.
 - **ProPresenter** (7.9+) adapter. One capture, not two outputs: it streams
   or records, and "keep a local copy while streaming" is how you get both
 - **vMix** adapter over the Web Controller. Five stream destinations that
-  start and stop independently, plus the recorder
-- **Magewell Ultra Encode** adapter over `usapi` — the one device here that
-  lists and deletes its own recordings, so retention can manage it
+  start and stop independently, plus the recorder. The Web Controller does not
+  report where a stream is pointed, so verifying a vMix stream target only
+  confirms the command was sent, not that vMix took it
+- **Magewell Ultra Encode** adapter over `usapi`
+- Recordings listed and deleted on the Magewell, and on ATEM and HyperDeck
+  over FTP, so retention can manage them
 - **YouTube**: bring-your-own OAuth, automated broadcast creation with
   templated title and description, automatic playlist insertion, a reusable
   ingestion stream so the encoder key never changes, and a quota ledger that
-  keeps a reserve for the calls that make a stream happen
+  keeps a reserve for the calls that make a stream happen. The scheduler puts
+  each broadcast on air once YouTube sees the encoder, and ends it at the
+  output's scheduled stop
 - **Twitch**: bring-your-own OAuth, with the channel's title and category set
   from the same templates before each service and the stream key read from
   Twitch rather than pasted, so a reset key fixes itself. Twitch has no
@@ -81,21 +86,23 @@ records, stops and tidies up — without anyone touching it.
   how bad a thing is: problems are sent by default and "it worked" messages
   only if you ask. Plus a pre-flight check the evening before that catches an
   expired YouTube token or an unplugged encoder while there is still time
-- Calendar and list views, a run timeline, and a device health page
+- Day, week, month and list views, with dragging a date to reschedule it, a
+  run timeline, and a device health page
 - Setup entirely in the browser: adding a device, connecting a YouTube
   account, and writing a recurring event and its outputs against a live
   preview of what the rule and the name templates would actually produce
 - Backup and restore: one consistent file taken without stopping the app,
   daily on a schedule into a volume of its own, and a restore that tells you
   what is in a file and whether your key can open it before anything changes
-- Runs headless, in Docker, or as an Electron tray app from one codebase
+- Runs headless or in Docker. The Electron tray app is experimental: see
+  [below](#desktop-app-experimental)
 
 **Not built yet**
 
 - Fanning one encoder out to several services _at once_, which needs a relay in
   front of it. Several services one after another across a morning does work
-- Week and day calendar views, and dragging an occurrence to reschedule it
-- Signed installers
+- Signed installers (#11)
+- A one-page event form. Outputs can only be added once the event is saved
 - Finding a device on the network. The plugin SDK has a slot for it and no
   adapter fills it, so every device is added by address
 
@@ -118,13 +125,29 @@ pnpm smoke          # boots the built server and drives one event end to end
 To run it for real:
 
 ```bash
-export SCHEDULER_SECRET="a long random string"
 node packages/host/dist/main.js
 # then open http://127.0.0.1:8500
 ```
 
-On a desktop the Electron build uses the OS keychain instead, so no
-`SCHEDULER_SECRET` is needed.
+Running it day to day is covered in [docs/operations.md](./docs/operations.md).
+Connecting YouTube, Twitch, Planning Center and alerts is in
+[docs/setup-services.md](./docs/setup-services.md). Building and changing it is
+in [CONTRIBUTING.md](./CONTRIBUTING.md).
+
+### The master key
+
+Stream keys and OAuth tokens are encrypted with a master key. The app takes the
+first of these it finds:
+
+1. The OS keychain. Desktop app only.
+2. An existing `master.key` in the config directory.
+3. `SCHEDULER_SECRET`, at least 16 characters, stretched with a salt kept in
+   `master.salt`.
+4. Otherwise it creates `master.key` on first start.
+
+Once `master.key` exists, `SCHEDULER_SECRET` is ignored. Lose the key and the
+stored secrets are gone. See
+[Keeping the key](./docs/operations.md#keeping-the-key).
 
 ### Docker
 
@@ -135,11 +158,12 @@ and `linux/arm64`:
 docker run -d --name scheduler \
   -e SCHEDULER_SECRET="a long random string" \
   -p 127.0.0.1:8500:8500 -v scheduler-config:/config \
-  ghcr.io/elliotmatson/stream-scheduler:latest
+  ghcr.io/elliotmatson/stream-scheduler:main
 ```
 
-`latest` is the newest tagged release. `main` tracks the tip of the default
-branch, and every build is also tagged by commit sha if you want to pin one.
+`main` tracks the default branch, and is the tag to use for now. No release has
+been tagged yet. Once one is, `latest` will follow the newest release. Every
+build is also tagged by commit sha if you want to pin one.
 Only the amd64 image is started and exercised in CI; arm64 is built but not
 run-tested.
 
@@ -149,8 +173,13 @@ Or build it yourself:
 SCHEDULER_SECRET="a long random string" docker compose up --build
 ```
 
-It refuses to start without a key source rather than writing secrets to disk
-in the clear.
+### Desktop app (experimental)
+
+`packages/desktop` wraps the same core in an Electron tray app. It is not ready
+for real use. It registers only the mock device, with no YouTube, Twitch or
+Planning Center. It reads `SCHEDULER_PORT` and `SCHEDULER_UI_PASSWORD` and
+ignores the other variables below. There are no signed installers (#11). Use
+Docker or `node` for anything that matters.
 
 ### Who can get in
 
@@ -192,9 +221,6 @@ access control:
 Running it directly with `node` binds loopback by default, so the same holds
 without you doing anything.
 
-Everything lives in one config directory (`/config` in Docker). A single
-archive of it is the entire backup.
-
 ### Reaching it from outside, with Cloudflare Zero Trust
 
 `docker-compose.cloudflare.yml` puts the app behind a Cloudflare tunnel with
@@ -217,6 +243,13 @@ the tunnel. Anything that can reach the container directly — another
 container on the machine, anyone who can reach the loopback port — skips
 Access and finds the app as it is. The overlay therefore refuses to start
 without `SCHEDULER_UI_PASSWORD`.
+
+That variable is copied in once, the first time the app starts with it set. If
+a password was removed in Settings after that, the install runs unlocked
+whatever the variable says. Check Settings shows a password.
+
+Behind the tunnel, also set `SCHEDULER_PUBLIC_URL` to the Access hostname and
+`SCHEDULER_TRUSTED_PROXY=true`. See [Configuration](#configuration).
 
 The app does not verify Access's JWT. If it did, the password could come off
 honestly; until then two sign-ins is the price of not leaving a hole behind
@@ -259,6 +292,15 @@ the same disk they will bring you back from a bad restore or a mistaken bulk
 delete, and go down with the drive. Pointed at another disk or a NAS mount —
 one line in the compose file — they survive the machine.
 
+A backup holds the database. It never holds the master key. Keep the key
+somewhere else as well: `master.key`, or the value of `SCHEDULER_SECRET`.
+Everything else lives in one config directory (`/config` in Docker). An
+archive of that directory is a complete backup only when the key is
+`master.key` inside it.
+
+Restoring is staged, and takes effect on the next restart. See
+[Backups and restore](./docs/operations.md#backups-and-restore).
+
 A backup that cannot be written says so through your notification channels
 rather than only in a log, because the failure that actually happens is a
 volume that stopped being writable months ago and a directory that has been
@@ -266,20 +308,33 @@ empty ever since.
 
 ## Configuration
 
-| Variable                    | Default      | Meaning                                                                                                                                                                                       |
-| --------------------------- | ------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `SCHEDULER_CONFIG_DIR`      | per-platform | Database, logs, master key                                                                                                                                                                    |
-| `SCHEDULER_SECRET`          | —            | Derives the master key when no keychain or key file is available                                                                                                                              |
-| `SCHEDULER_HOST`            | `127.0.0.1`  | Listen address. Anything but loopback with no password set logs a warning                                                                                                                     |
-| `SCHEDULER_PORT`            | `8500`       | Listen port                                                                                                                                                                                   |
-| `SCHEDULER_UI_PASSWORD`     | —            | Sets the first password on a new install. Read once, then the app owns it                                                                                                                     |
-| `SCHEDULER_TRUSTED_NETWORK` | `false`      | Says whatever can reach this port is already trusted. Silences the no-password warning; adds no protection                                                                                    |
-| `SCHEDULER_LOG_LEVEL`       | `info`       | `debug`, `info`, `warn`, `error`                                                                                                                                                              |
-| `SCHEDULER_PUBLIC_URL`      | —            | The address people reach the app at, e.g. `https://stream.example.org`. Used for links in alerts, and the app then answers to that name. Learnt from the first signed-in page load when unset |
-| `SCHEDULER_TRUSTED_PROXY`   | `false`      | Set behind cloudflared, Tailscale Serve or another reverse proxy, so the login throttle counts each person rather than the proxy                                                              |
-| `SCHEDULER_ALLOWED_HOSTS`   | —            | Comma-separated names the app answers to, besides loopback, IP addresses and the public URL. Once any name is set, requests for other names are refused, which blocks DNS rebinding           |
+| Variable                    | Default                | Meaning                                                                                                                                                                                       |
+| --------------------------- | ---------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `SCHEDULER_CONFIG_DIR`      | per-platform           | Database, `master.key` and `master.salt`. The `--config-dir` flag wins over it                                                                                                                |
+| `SCHEDULER_BACKUP_DIR`      | `<config dir>/backups` | Where scheduled backups are written. The `--backup-dir` flag wins over it                                                                                                                     |
+| `SCHEDULER_SECRET`          | —                      | At least 16 characters. Derives the master key when there is no keychain and no `master.key`. Ignored once `master.key` exists                                                                |
+| `SCHEDULER_HOST`            | `127.0.0.1`            | Listen address. Anything but loopback with no password set logs a warning                                                                                                                     |
+| `SCHEDULER_PORT`            | `8500`                 | Listen port                                                                                                                                                                                   |
+| `SCHEDULER_UI_PASSWORD`     | —                      | Sets the first password on a new install. Read once, then the app owns it                                                                                                                     |
+| `SCHEDULER_TRUSTED_NETWORK` | `false`                | Says whatever can reach this port is already trusted. Silences the no-password warning; adds no protection                                                                                    |
+| `SCHEDULER_LOG_LEVEL`       | `info`                 | `debug`, `info`, `warn`, `error`. Logs go to stdout only                                                                                                                                      |
+| `SCHEDULER_PUBLIC_URL`      | —                      | The address people reach the app at, e.g. `https://stream.example.org`. Used for links in alerts, and the app then answers to that name. Learnt from the first signed-in page load when unset |
+| `SCHEDULER_TRUSTED_PROXY`   | `false`                | Set behind cloudflared, Tailscale Serve or another reverse proxy, so the login throttle counts each person rather than the proxy                                                              |
+| `SCHEDULER_ALLOWED_HOSTS`   | —                      | Comma-separated names the app answers to, besides loopback, IP addresses and the public URL. Once any name is set, requests for other names are refused, which blocks DNS rebinding           |
+
+For the yes/no variables, `true`, `1`, `yes` and `on` mean yes, in any case.
+Anything else means no. The desktop app reads only `SCHEDULER_PORT` and
+`SCHEDULER_UI_PASSWORD`. More detail is in
+[docs/operations.md](./docs/operations.md#configuration).
 
 ## Connecting YouTube
+
+Step-by-step setup is in [docs/setup-services.md](./docs/setup-services.md).
+
+The scheduler drives each broadcast. It puts it on air once YouTube sees the
+encoder's stream, and ends it at the output's scheduled stop. YouTube's own
+auto start and auto stop are switched off. The old "Let YouTube start and
+stop" setting is gone; a migration removed it.
 
 Each install uses its own Google Cloud OAuth client. No client secret is
 embedded in the binary, nothing waits on Google's verification review, and
@@ -419,23 +474,30 @@ up.
 
 ```
 packages/
-  plugin-sdk/       the versioned extension contract
-  core/             scheduling, runs, secrets, devices, API
-  plugin-atem/      Blackmagic ATEM switchers
-  plugin-hyperdeck/ Blackmagic HyperDeck recorders
+  plugin-sdk/                the versioned extension contract
+  core/                      scheduling, runs, secrets, devices, backups, API
+  device-ftp/                listing and deleting recordings over FTP, for ATEM and HyperDeck
+  plugin-atem/               Blackmagic ATEM switchers
+  plugin-hyperdeck/          Blackmagic HyperDeck recorders
   plugin-streaming-encoder/  Blackmagic Streaming Encoder HD / 4K, Web Presenter
-  plugin-youtube/   YouTube broadcasts, OAuth and quota
-  plugin-twitch/    Twitch channel title, category and stream key
-  plugin-planning-center/  service times and plan details from Planning Center
-  plugin-mock/      a fake encoder and recorder, for tests and evaluation
-  host/             the composition root: the only place that names plugins
-  web/              the React UI
-  desktop/          the Electron tray shell
+  plugin-obs/                OBS Studio, over obs-websocket v5
+  plugin-propresenter/       ProPresenter 7.9+
+  plugin-vmix/               vMix, over the Web Controller
+  plugin-magewell/           Magewell Ultra Encode, over usapi
+  plugin-youtube/            YouTube broadcasts, OAuth and quota
+  plugin-twitch/             Twitch channel title, category and stream key
+  plugin-planning-center/    service times and plan details from Planning Center
+  plugin-mock/               a fake encoder and recorder, for tests and evaluation
+  host/                      the composition root: the only place that names plugins
+  web/                       the React UI
+  desktop/                   the Electron tray shell (experimental)
 ```
 
-`core` never imports a plugin — it discovers them through a registry — and
-plugins depend only on `plugin-sdk`. A dependency-cruiser rule in CI enforces
-both, which is what keeps adding an encoder a matter of writing a package.
+`core` never imports a plugin. It finds them through a registry. Plugins never
+import `core`. They depend on `plugin-sdk`, and the ATEM and HyperDeck plugins
+also on `device-ftp`. A dependency-cruiser rule in CI enforces this, and
+forbids circular imports. That is what keeps adding an encoder a matter of
+writing a package.
 
 ## Development
 
@@ -449,6 +511,9 @@ pnpm smoke         # runs the built artifact, as Docker does
 
 `pnpm smoke` exists because Vitest bundles, which hides problems that only
 appear in the shipped output under native ESM. Run it before trusting a build.
+
+The full list of checks CI runs, and how to write a plugin, is in
+[CONTRIBUTING.md](./CONTRIBUTING.md).
 
 ## Read the plan
 
@@ -467,7 +532,7 @@ Start with [`docs/plan/README.md`](./docs/plan/README.md).
 
 ## Alerts
 
-Add a channel under **Alerts**. Google Chat needs a webhook from the space
+Add a channel under **Notifications**. Google Chat needs a webhook from the space
 (Apps & integrations > Webhooks); the URL carries a key and token, so it is
 stored encrypted and never shown again.
 
@@ -483,8 +548,9 @@ threaded together in Chat rather than scattered across the space.
 ## A note on network security
 
 The Blackmagic control interfaces are all unauthenticated and unencrypted —
-the ATEM protocol, HyperDeck on TCP 9993, and the Streaming Encoder and Web
-Presenter REST API on port 80. Anyone who can reach the device can take it
+the ATEM protocol, HyperDeck on TCP 9993, the Streaming Encoder and Web
+Presenter REST API on port 80, and the anonymous FTP server on TCP 21 that
+ATEM and HyperDeck serve their recordings from. Anyone who can reach the device can take it
 over, regardless of what this app does. Put the gear and this app on a
 trusted control VLAN. The app's own password protects the app, not the
 devices behind it.
