@@ -68,6 +68,62 @@ describe('materializeSeries', () => {
     expect(occurrences(id)).toHaveLength(3)
   })
 
+  describe('with the clock inside an occurrence', () => {
+    // 09:30 CST on the first Sunday: the 09:00–10:30 service is on air.
+    const MID_SERVICE = '2026-03-01T15:30:00Z'
+
+    it('neither throws nor duplicates the occurrence on air', () => {
+      const id = createSeries()
+      materializeSeries(db, id, { clock, horizonMs: 21 * 86_400_000 })
+      const onAir = occurrences(id)[0]!
+
+      clock.set(MID_SERVICE)
+      const result = materializeSeries(db, id, { clock, horizonMs: 21 * 86_400_000 })
+
+      expect(result.created).toBe(1) // only the week that came into the horizon
+      const rows = occurrences(id)
+      expect(rows.filter((o) => o.scheduled_start === onAir.scheduled_start)).toHaveLength(1)
+      expect(rows[0]!.id).toBe(onAir.id)
+    })
+
+    it('leaves a running occurrence alone when the series changes under it', () => {
+      const id = createSeries()
+      materializeSeries(db, id, { clock, horizonMs: 21 * 86_400_000 })
+      const onAir = occurrences(id)[0]!
+      db.prepare("UPDATE occurrence SET status = 'running' WHERE id = ?").run(onAir.id)
+
+      clock.set(MID_SERVICE)
+      db.prepare('UPDATE event_series SET duration_ms = ? WHERE id = ?').run(2 * 3_600_000, id)
+      bumpSeriesVersion(db, id, clock)
+      materializeSeries(db, id, { clock, horizonMs: 21 * 86_400_000 })
+
+      const after = occurrences(id).find((o) => o.id === onAir.id)!
+      expect(after.scheduled_end).toBe(onAir.scheduled_end)
+      expect(after.status).toBe('running')
+    })
+
+    it('does not remove an occurrence in progress when the rule stops producing it', () => {
+      const id = createSeries()
+      materializeSeries(db, id, { clock, horizonMs: 21 * 86_400_000 })
+      const onAir = occurrences(id)[0]!
+
+      clock.set(MID_SERVICE)
+      db.prepare("UPDATE event_series SET rrule = 'FREQ=WEEKLY;BYDAY=SA' WHERE id = ?").run(id)
+      bumpSeriesVersion(db, id, clock)
+      materializeSeries(db, id, { clock, horizonMs: 21 * 86_400_000 })
+
+      expect(occurrences(id).some((o) => o.id === onAir.id)).toBe(true)
+    })
+
+    it('materializeAll survives every series being mid-occurrence', () => {
+      createSeries()
+      createSeries({ label: 'Second' })
+      materializeAll(db, { clock, horizonMs: 21 * 86_400_000 })
+      clock.set(MID_SERVICE)
+      expect(() => materializeAll(db, { clock, horizonMs: 21 * 86_400_000 })).not.toThrow()
+    })
+  })
+
   it('extends the horizon without disturbing what exists', () => {
     const id = createSeries()
     materializeSeries(db, id, { clock, horizonMs: 14 * 86_400_000 })

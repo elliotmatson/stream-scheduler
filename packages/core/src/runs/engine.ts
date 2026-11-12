@@ -78,6 +78,8 @@ export type OutputProgress = 'pending' | 'started' | 'stopped' | 'failed'
  */
 export class RunEngine {
   private readonly logger: Logger
+  /** The last error logged for each run that would not advance. */
+  private readonly reportedErrors = new Map<string, string>()
 
   constructor(private readonly deps: EngineDeps) {
     this.logger = deps.logger ?? silentLogger
@@ -90,12 +92,22 @@ export class RunEngine {
   async recover(): Promise<string[]> {
     const recovered: string[] = []
     for (const run of this.deps.store.listActiveRuns()) {
-      await reconcileRun(run.id, await this.planFor(run), this.executorDeps())
-      recovered.push(run.id)
-      this.logger.info('recovered a run interrupted by a restart', {
-        runId: run.id,
-        state: run.state,
-      })
+      // One run that cannot be reconciled must not leave the rest
+      // unreconciled, nor stop the app from starting at all.
+      try {
+        await reconcileRun(run.id, await this.planFor(run), this.executorDeps())
+        recovered.push(run.id)
+        this.logger.info('recovered a run interrupted by a restart', {
+          runId: run.id,
+          state: run.state,
+        })
+      } catch (error) {
+        this.logger.error('could not recover a run interrupted by a restart', {
+          runId: run.id,
+          state: run.state,
+          error: describeError(error),
+        })
+      }
     }
     return recovered
   }
@@ -105,23 +117,52 @@ export class RunEngine {
     const now = this.deps.clock.now()
 
     for (const occurrenceId of this.dueOccurrences(now)) {
-      const run = this.deps.store.createRun(
-        occurrenceId,
-        await this.deps.planner.plan(occurrenceId),
-      )
+      let plan: RunPlan | undefined
+      let planError: unknown
+      try {
+        plan = await this.deps.planner.plan(occurrenceId)
+      } catch (error) {
+        planError = error
+      }
+      // An occurrence that cannot be planned still gets a run, failed on
+      // the spot. That puts it on the Runs page and in an alert rather
+      // than in a log line repeated every five seconds, and it stops the
+      // occurrence being due again on the next tick.
+      const run = this.deps.store.createRun(occurrenceId, plan ?? [])
       this.deps.db
         .prepare("UPDATE occurrence SET status = 'running' WHERE id = ?")
         .run(occurrenceId)
       report.created.push(run.id)
       this.logger.info('created a run', { runId: run.id, occurrenceId })
+      if (planError !== undefined) {
+        await this.fail(run, [], planFailure(planError))
+        report.failed.push(run.id)
+      }
     }
 
     for (const run of this.deps.store.listActiveRuns()) {
-      const before = run.state
-      const after = await this.advance(run.id)
-      if (after !== before) report.advanced.push(run.id)
-      if (after === 'failed') report.failed.push(run.id)
-      if (after === 'completed') report.completed.push(run.id)
+      // Each run is isolated: one that throws is logged and the others
+      // still advance. Without this, a single bad run would stop every
+      // other service from starting, on every tick, for as long as it
+      // stayed bad.
+      try {
+        const before = run.state
+        const after = await this.advance(run.id)
+        if (after !== before) report.advanced.push(run.id)
+        if (after === 'failed') report.failed.push(run.id)
+        if (after === 'completed') report.completed.push(run.id)
+        this.reportedErrors.delete(run.id)
+      } catch (error) {
+        const message = describeError(error)
+        // Logged once per distinct error, not every five seconds.
+        if (this.reportedErrors.get(run.id) !== message) {
+          this.reportedErrors.set(run.id, message)
+          this.logger.error('could not advance a run; the others carry on', {
+            runId: run.id,
+            error: message,
+          })
+        }
+      }
     }
     return report
   }
@@ -151,7 +192,20 @@ export class RunEngine {
     if (isTerminal(run.state)) return false
 
     const timeline = this.timelineFor(run)
-    const plan = await this.planFor(run)
+    let plan: RunPlan
+    try {
+      plan = await this.planFor(run)
+    } catch (error) {
+      // The event was edited into something that cannot be planned — its
+      // device deleted, its destination removed. Before anything has been
+      // done that is a plain failure. Once steps have run, failing would
+      // compensate against a plan that cannot be built, so the error is
+      // left to the tick to report and the run is retried next time.
+      const touched = this.deps.store.steps(run.id).some((step) => step.state !== 'pending')
+      if (touched) throw error
+      await this.fail(run, [], planFailure(error))
+      return true
+    }
     const now = this.deps.clock.now()
 
     if (timeline.outputs.length === 0) {
@@ -718,3 +772,17 @@ export class RunEngine {
 
 /** Enough for a full day's outputs to prepare, start, stop and close out. */
 const MAX_PASSES = 500
+
+function describeError(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
+}
+
+/** The failure recorded for a run whose plan could not be built. */
+function planFailure(error: unknown): RunFailure {
+  return {
+    code: 'plan_failed',
+    message: `This event could not be planned: ${describeError(error)}`,
+    remediation:
+      "Check the event's streams and recordings point at devices and services that still exist.",
+  }
+}

@@ -70,9 +70,16 @@ export function materializeSeries(
   const now = options.clock.now()
   const horizonEnd = now + (options.horizonMs ?? DEFAULT_HORIZON_MS)
 
+  // Reaches back one duration so the occurrence on air right now is found.
+  // `expandOccurrences` returns anything overlapping `now`, and missing that
+  // row here would insert it a second time and trip the unique index — in
+  // the middle of the very service the scheduler is meant to be running.
   const existing = db
     .prepare('SELECT * FROM occurrence WHERE series_id = ? AND scheduled_start >= ?')
-    .all(seriesId, now) as OccurrenceRow[]
+    .all(seriesId, now - series.duration_ms) as OccurrenceRow[]
+  // Only what has not started yet may be removed or reported as detached:
+  // an occurrence in progress is history in the making.
+  const upcoming = existing.filter((row) => row.scheduled_start >= now)
 
   // A paired series has no rule to expand: the plan source says how many
   // services there are and when, and inventing occurrences from a rule
@@ -80,21 +87,22 @@ export function materializeSeries(
   // nothing to tell them apart. Past the last published plan the calendar
   // is deliberately empty — which is honest, and is what was asked for.
   if (series.plan_source_id && series.plan_group_id) {
-    return clearRuleOccurrences(db, existing)
+    return clearRuleOccurrences(db, upcoming)
   }
   const byStart = new Map(existing.map((row) => [row.scheduled_start, row]))
-  const detached = existing.filter((row) => row.overrides !== null)
+  const detached = upcoming.filter((row) => row.overrides !== null)
 
   const wanted = series.enabled ? expandOccurrences(scheduleOf(series), now, horizonEnd) : []
   const wantedStarts = new Set(wanted.map((o) => o.start))
 
   const insert = db.prepare(
     `INSERT INTO occurrence (id, series_id, scheduled_start, scheduled_end, local_date, status, series_version)
-     VALUES (?, ?, ?, ?, ?, 'pending', ?)`,
+     VALUES (?, ?, ?, ?, ?, 'pending', ?)
+     ON CONFLICT (series_id, scheduled_start) DO NOTHING`,
   )
   const refresh = db.prepare(
     `UPDATE occurrence SET scheduled_end = ?, local_date = ?, series_version = ?
-     WHERE id = ? AND overrides IS NULL`,
+     WHERE id = ? AND overrides IS NULL AND status IN ('pending', 'skipped')`,
   )
   const remove = db.prepare('DELETE FROM occurrence WHERE id = ?')
 
@@ -109,7 +117,7 @@ export function materializeSeries(
     for (const occurrence of wanted) {
       const current = byStart.get(occurrence.start)
       if (!current) {
-        insert.run(
+        const inserted = insert.run(
           randomUUID(),
           seriesId,
           occurrence.start,
@@ -117,7 +125,7 @@ export function materializeSeries(
           occurrence.localDate,
           series.version,
         )
-        result.created++
+        result.created += inserted.changes
         continue
       }
       if (current.overrides !== null) continue // detached; the user owns this one
@@ -126,12 +134,16 @@ export function materializeSeries(
         current.local_date !== occurrence.localDate ||
         current.series_version !== series.version
       if (changed) {
-        refresh.run(occurrence.end, occurrence.localDate, series.version, current.id)
-        result.updated++
+        result.updated += refresh.run(
+          occurrence.end,
+          occurrence.localDate,
+          series.version,
+          current.id,
+        ).changes
       }
     }
 
-    for (const row of existing) {
+    for (const row of upcoming) {
       if (wantedStarts.has(row.scheduled_start)) continue
       if (row.overrides !== null) continue // never delete an occurrence a user edited
       if (row.status !== 'pending') continue // something already ran or is running

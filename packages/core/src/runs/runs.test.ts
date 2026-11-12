@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { ManualClock } from '@scheduler/plugin-sdk'
+import { DeviceError, ManualClock } from '@scheduler/plugin-sdk'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { openTestDatabase, type Db } from '../db/index.js'
 import { Scrubber } from '../secrets/scrubber.js'
@@ -365,6 +365,50 @@ describe('executePhase', () => {
 
     await prepare(run.id, plan)
     expect(store.step(run.id, 0).attempts).toBe(1)
+  })
+
+  it('stops at once on an error that says another attempt cannot help', async () => {
+    const occurrenceId = seedOccurrence()
+    const plan = (plannerFor(new FakeBroadcastService()).plan(occurrenceId) as RunPlan).map(
+      (step, index): StepDefinition =>
+        index === 0
+          ? {
+              ...step,
+              async execute() {
+                // The shape a spent quota or a revoked token arrives in.
+                throw Object.assign(new Error('quota spent'), {
+                  code: 'quota-exhausted',
+                  retryable: false,
+                })
+              },
+            }
+          : step,
+    )
+    const run = store.createRun(occurrenceId, plan)
+
+    const result = await prepare(run.id, plan)
+    expect(result.ok).toBe(false)
+    expect(store.step(run.id, 0).attempts).toBe(1)
+    expect(result.ok === false && result.failure.code).toBe('quota-exhausted')
+  })
+
+  it('still retries an error that does not say either way', async () => {
+    const occurrenceId = seedOccurrence()
+    const plan = (plannerFor(new FakeBroadcastService()).plan(occurrenceId) as RunPlan).map(
+      (step, index): StepDefinition =>
+        index === 0
+          ? {
+              ...step,
+              async execute() {
+                throw new DeviceError('unreachable', 'The encoder did not answer.')
+              },
+            }
+          : step,
+    )
+    const run = store.createRun(occurrenceId, plan)
+
+    await prepare(run.id, plan)
+    expect(store.step(run.id, 0).attempts).toBe(3)
   })
 
   it('skips steps already done, so a resumed phase does not repeat work', async () => {
@@ -957,6 +1001,120 @@ describe('RunEngine', () => {
  * every step boundary, in both the "call landed" and "call never landed"
  * cases, and assert exactly one broadcast per service afterwards.
  */
+describe('a run that cannot be planned', () => {
+  /** A second occurrence of the same event, an hour after the first. */
+  function laterOccurrence(of: string): string {
+    const id = randomUUID()
+    db.prepare(
+      `INSERT INTO occurrence (id, series_id, scheduled_start, scheduled_end, local_date, status, series_version)
+       SELECT ?, series_id, scheduled_start + ?, scheduled_end + ?, local_date, 'pending', 1
+       FROM occurrence WHERE id = ?`,
+    ).run(id, HOUR, HOUR, of)
+    return id
+  }
+
+  it('is failed on the spot rather than retried every tick', async () => {
+    const occurrenceId = seedOccurrence()
+    const failures: string[] = []
+    const engine = engineFor(
+      {
+        plan() {
+          throw new Error('the encoder this stream names was deleted')
+        },
+      },
+      (event) => failures.push(event.failure.code),
+    )
+
+    clock.set(START - 30 * MINUTE)
+    await engine.tick()
+    await engine.tick()
+
+    const runs = db.prepare('SELECT * FROM run WHERE occurrence_id = ?').all(occurrenceId) as {
+      failure: string
+      state: string
+    }[]
+    expect(runs).toHaveLength(1)
+    expect(runs[0]!.state).toBe('failed')
+    expect(JSON.parse(runs[0]!.failure).code).toBe('plan_failed')
+    expect(JSON.parse(runs[0]!.failure).message).toMatch(/encoder this stream names was deleted/)
+    expect(occurrenceStatus(occurrenceId)).toBe('failed')
+    expect(failures).toEqual(['plan_failed'])
+  })
+
+  it('does not stop another event from going ahead', async () => {
+    const world = new FakeBroadcastService()
+    const broken = seedOccurrence()
+    const healthy = laterOccurrence(broken)
+    const real = plannerFor(world)
+    const engine = engineFor({
+      plan(occurrenceId, options) {
+        if (occurrenceId === broken) throw new Error('no such device')
+        return real.plan(occurrenceId, options)
+      },
+    })
+
+    clock.set(START + 30 * MINUTE) // the later one's T-30
+    await engine.tick()
+
+    expect(occurrenceStatus(broken)).toBe('failed')
+    const run = db.prepare('SELECT state FROM run WHERE occurrence_id = ?').get(healthy) as {
+      state: string
+    }
+    expect(run.state).not.toBe('failed')
+    expect(world.liveCount).toBe(2)
+  })
+
+  it('leaves the other runs advancing when one throws part-way through', async () => {
+    const world = new FakeBroadcastService()
+    const first = seedOccurrence({ graceMs: 8 * HOUR })
+    const second = laterOccurrence(first)
+    const real = plannerFor(world)
+    let breakFirst = false
+    const engine = engineFor({
+      plan(occurrenceId, options) {
+        if (breakFirst && occurrenceId === first) throw new Error('the database is having a moment')
+        return real.plan(occurrenceId, options)
+      },
+    })
+
+    clock.set(START + 30 * MINUTE) // both prepared
+    await engine.tick()
+    breakFirst = true
+
+    // The first run has done work, so it is not failed: it is left for the
+    // next tick. The second still goes on air at its own time.
+    clock.set(START + HOUR + 2 * HOUR)
+    await expect(engine.tick()).resolves.toBeDefined()
+    expect(world.log).toContain('start Main // 9:00')
+    const secondRun = db.prepare('SELECT state FROM run WHERE occurrence_id = ?').get(second) as {
+      state: string
+    }
+    expect(secondRun.state).toBe('running')
+    const firstRun = db.prepare('SELECT state FROM run WHERE occurrence_id = ?').get(first) as {
+      state: string
+    }
+    expect(firstRun.state).not.toBe('failed')
+  })
+
+  it('does not stop the others being recovered after a restart', async () => {
+    const world = new FakeBroadcastService()
+    const first = seedOccurrence()
+    const second = laterOccurrence(first)
+    const real = plannerFor(world)
+    store.createRun(first, real.plan(first) as RunPlan)
+    const secondRun = store.createRun(second, real.plan(second) as RunPlan)
+
+    const engine = engineFor({
+      plan(occurrenceId, options) {
+        if (occurrenceId === first) throw new Error('unplannable')
+        return real.plan(occurrenceId, options)
+      },
+    })
+
+    await expect(engine.recover()).resolves.toEqual([secondRun.id])
+  })
+})
+
 describe('crash recovery', () => {
   const crashPoints = [
     {

@@ -46,9 +46,10 @@ import { recordingsSweptNotification } from './notify/retention-events.js'
 /**
  * How long a tick may run before the next one stops waiting for it.
  *
- * Comfortably longer than a healthy pass — devices, engine, telemetry and
- * the outbox — and far shorter than a service, so a wedged tick costs
- * seconds rather than a morning.
+ * Far shorter than a service, so a wedged tick costs seconds rather than a
+ * morning. It is not always longer than a healthy pass: starting a stream
+ * waits for the device to settle and retries, which can take over a minute,
+ * so an abandoned tick may still be working when the next one begins.
  */
 export const TICK_DEADLINE_MS = 60_000
 
@@ -460,8 +461,11 @@ export class Application {
 
   /** Resolves interrupted runs, fills the horizon, and starts the loop. */
   async start(): Promise<void> {
-    await this.engine.recover()
-    this.materialize()
+    // Neither may stop the app from coming up. A boot that fails over one
+    // bad run or one bad series leaves every other service unscheduled,
+    // and a restart mid-service is exactly when that matters most.
+    await this.stage('recovering interrupted runs', () => this.engine.recover())
+    await this.stage('filling the schedule', () => this.materialize())
     // The sweep waits an hour rather than running on the first tick. It
     // is the one job here that destroys something, and a restart — a
     // crash loop most of all — must not be a way to trigger it. Nothing
@@ -509,28 +513,34 @@ export class Application {
     this.tickStartedAt = this.clock.now()
     try {
       const now = this.clock.now()
+      // Each stage is isolated from the others. One that throws is logged
+      // and the rest still run: a bad series must not stop a run from
+      // starting, and a failing alert channel must not stop devices from
+      // reconnecting.
       if (now - this.lastMaterializedAt > 60 * 60_000) {
-        this.materialize()
+        // Marked before the work, so a stage that throws waits the hour
+        // like everything else rather than being retried every tick.
         this.lastMaterializedAt = now
+        await this.stage('filling the schedule', () => this.materialize())
         // Paired series get their occurrences from the source rather than
         // from a rule, so reading the plans belongs with the same hourly
         // work. Hourly is right for a schedule people publish days ahead —
         // and the freeze at prepare time means a change arriving in the
         // last hour would not have been acted on anyway.
-        await this.syncPlans()
+        await this.stage('reading plans', () => this.syncPlans())
         // Expired and revoked sessions go with it. Nothing depends on this
         // happening promptly — `verify` already refuses them — so it rides
         // along with the other hourly work rather than owning a timer.
-        this.auth.sessions.sweep()
+        await this.stage('sweeping sessions', () => this.auth.sessions.sweep())
       }
-      await this.connections.tick()
-      await this.engine.tick()
+      await this.stage('checking devices', () => this.connections.tick())
+      await this.stage('advancing runs', () => this.engine.tick())
 
       // Pre-flight is hourly: the checks reach out to every device and
       // service, and doing that every five seconds would be rude to both.
       if (now - this.lastPreflightAt > 60 * 60_000) {
         this.lastPreflightAt = now
-        await this.preflight.run()
+        await this.stage('pre-flight checks', () => this.preflight.run())
       }
 
       // And so is the sweep, on the same reasoning and after the checks:
@@ -538,22 +548,20 @@ export class Application {
       // acting on within the hour.
       if (now - this.lastSweepAt > 60 * 60_000) {
         this.lastSweepAt = now
-        await this.sweep()
+        await this.stage('sweeping recordings', () => this.sweep())
       }
 
       // The backup's own cadence is stored rather than held here, because
       // it has to survive a restart: a container in a crash loop would
       // otherwise take a backup on every boot and prune the useful ones
       // out of the directory within the hour.
-      if (backupDue(this.db, now)) this.backup(now)
+      await this.stage('taking a backup', () => {
+        if (backupDue(this.db, now)) this.backup(now)
+      })
       // After the engine, so a run that has just gone on air is sampled
       // rather than waiting a whole interval to appear on its own timeline.
-      await this.telemetry.tick()
-      await this.notifier.flush()
-    } catch (error) {
-      this.logger.error('scheduler tick failed', {
-        error: error instanceof Error ? error.message : String(error),
-      })
+      await this.stage('sampling telemetry', () => this.telemetry.tick())
+      await this.stage('sending alerts', () => this.notifier.flush())
     } finally {
       if (this.tickToken === token) this.ticking = false
       for (const listener of this.tickListeners) {
@@ -565,6 +573,17 @@ export class Application {
           })
         }
       }
+    }
+  }
+
+  /** Runs one stage of the loop, logging rather than propagating a failure. */
+  private async stage(name: string, work: () => unknown): Promise<void> {
+    try {
+      await work()
+    } catch (error) {
+      this.logger.error(`scheduler stage failed: ${name}`, {
+        error: error instanceof Error ? error.message : String(error),
+      })
     }
   }
 
