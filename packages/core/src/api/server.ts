@@ -98,12 +98,24 @@ export async function createServer(options: ServerOptions): Promise<FastifyInsta
   // screen, which is what `setExposed` is for.
   app.setExposed(!isLoopback(host))
   if (!isLoopback(host) && !app.auth.required) {
-    app.logger.warn(
-      `Listening on ${host} with no password. Anyone who can reach this port ` +
-        `can start broadcasts and drive your devices. Set one in the app, or ` +
-        `with SCHEDULER_UI_PASSWORD, or publish to 127.0.0.1 ` +
-        `(-p 127.0.0.1:8500:8500) instead.`,
-    )
+    if (app.authProxy) {
+      // Said out loud at every start, because it is the one line that
+      // explains why this install has no lock of its own. Somebody reading
+      // the log after moving the container should find the assumption
+      // written down rather than having to infer it.
+      app.logger.info(
+        `Listening on ${host} with no password, trusting something in front of ` +
+          `it to sign people in (SCHEDULER_AUTH_PROXY). Anything that reaches ` +
+          `this port directly, bypassing that, is unauthenticated.`,
+      )
+    } else {
+      app.logger.warn(
+        `Listening on ${host} with no password. Anyone who can reach this port ` +
+          `can start broadcasts and drive your devices. Set one in the app, or ` +
+          `with SCHEDULER_UI_PASSWORD, or publish to 127.0.0.1 ` +
+          `(-p 127.0.0.1:8500:8500) instead.`,
+      )
+    }
   }
 
   const fastify = Fastify({ logger: false, bodyLimit: 2 * 1024 * 1024 })

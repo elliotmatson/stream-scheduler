@@ -222,6 +222,18 @@ The app does not verify Access's JWT. If it did, the password could come off
 honestly; until then two sign-ins is the price of not leaving a hole behind
 the one you can see.
 
+**If you take it off anyway**, set `SCHEDULER_AUTH_PROXY=true` and use the
+base `docker-compose.yml` rather than the overlay, which will not start
+without a password. That variable adds no protection whatsoever — it only
+tells the app that the lock is somebody else's job, so it stops warning
+that it has none and the status screen stops flagging it. Everything above
+still applies: publish no ports, keep the container off any network that
+other people's containers share, and understand that the tunnel is then the
+only thing between the app and whoever finds it.
+
+It is read fresh at every start rather than stored, so moving the container
+out from behind the proxy brings the warnings back by itself.
+
 ### Backups
 
 The app takes one of its own every day and keeps the last fourteen, in
@@ -241,14 +253,15 @@ empty ever since.
 
 ## Configuration
 
-| Variable                | Default      | Meaning                                                                   |
-| ----------------------- | ------------ | ------------------------------------------------------------------------- |
-| `SCHEDULER_CONFIG_DIR`  | per-platform | Database, logs, master key                                                |
-| `SCHEDULER_SECRET`      | —            | Derives the master key when no keychain or key file is available          |
-| `SCHEDULER_HOST`        | `127.0.0.1`  | Listen address. Anything but loopback with no password set logs a warning |
-| `SCHEDULER_PORT`        | `8500`       | Listen port                                                               |
-| `SCHEDULER_UI_PASSWORD` | —            | Sets the first password on a new install. Read once, then the app owns it |
-| `SCHEDULER_LOG_LEVEL`   | `info`       | `debug`, `info`, `warn`, `error`                                          |
+| Variable                | Default      | Meaning                                                                                             |
+| ----------------------- | ------------ | --------------------------------------------------------------------------------------------------- |
+| `SCHEDULER_CONFIG_DIR`  | per-platform | Database, logs, master key                                                                          |
+| `SCHEDULER_SECRET`      | —            | Derives the master key when no keychain or key file is available                                    |
+| `SCHEDULER_HOST`        | `127.0.0.1`  | Listen address. Anything but loopback with no password set logs a warning                           |
+| `SCHEDULER_PORT`        | `8500`       | Listen port                                                                                         |
+| `SCHEDULER_UI_PASSWORD` | —            | Sets the first password on a new install. Read once, then the app owns it                           |
+| `SCHEDULER_AUTH_PROXY`  | `false`      | Says a proxy in front already signs people in. Silences the no-password warning; adds no protection |
+| `SCHEDULER_LOG_LEVEL`   | `info`       | `debug`, `info`, `warn`, `error`                                                                    |
 
 ## Connecting YouTube
 

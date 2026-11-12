@@ -59,6 +59,7 @@ export function registerAuthRoutes(fastify: FastifyInstance, app: Application): 
     required: app.auth.required,
     signedIn: app.auth.allows(tokenFrom(request)),
     seededFromEnvironment: app.auth.seededFromEnvironment,
+    authProxy: app.authProxy,
     minPasswordLength: MIN_PASSWORD_LENGTH,
   }))
 

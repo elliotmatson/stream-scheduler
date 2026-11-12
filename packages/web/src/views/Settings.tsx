@@ -320,8 +320,23 @@ function Security({
       <p className="muted" style={{ marginTop: 0 }}>
         {session.required
           ? 'One password, shared by everyone who runs this. Changing it signs everybody out, including you on your other devices.'
-          : 'No password is set, so anyone who can reach this address can start a broadcast and drive your devices. On a booth machine nobody else can reach, that is a reasonable way to run it.'}
+          : session.authProxy
+            ? 'No password is set here, because this install is configured to trust something in front of it to sign people in. That is a reasonable way to run it, and the warning about being reachable from the network is switched off to match.'
+            : 'No password is set, so anyone who can reach this address can start a broadcast and drive your devices. On a booth machine nobody else can reach, that is a reasonable way to run it.'}
       </p>
+
+      {/* Where somebody wondering why there is no nag will look. Worth
+          saying what the assumption actually rests on, because the one
+          failure mode is a route that reaches this port without going
+          through the thing doing the signing in. */}
+      {session.authProxy ? (
+        <p className="muted" style={{ marginTop: 0 }}>
+          <code>SCHEDULER_AUTH_PROXY</code> is set, so this app expects a proxy in front of it —
+          Cloudflare Access or similar — to have signed people in already. Anything that reaches
+          this port without going through it is not authenticated at all, so keep the port off the
+          network. Unset the variable and restart to put the warnings back.
+        </p>
+      ) : null}
 
       {/* Said once, where somebody about to change it will read it. The
           variable is almost always still sitting in a compose file, and

@@ -82,6 +82,23 @@ export interface AppOptions {
    * without touching `process.env`, the same way the master key does it.
    */
   uiPassword?: string | undefined
+  /**
+   * Whether something in front of this app already signs people in.
+   *
+   * A deliberate statement about how the container was deployed, which is
+   * why it comes from the environment on every boot and is not a setting
+   * somebody can tick. Behind Cloudflare Access, or any proxy that
+   * authenticates before it forwards, "no password" is the correct
+   * configuration rather than an oversight — and the warning that says
+   * otherwise is then both wrong and permanent, which is how people learn
+   * to ignore warnings.
+   *
+   * Read fresh each start on purpose. Moving the container out from behind
+   * that proxy changes the compose file, and the warning has to come back
+   * when it does. A stored flag would survive exactly the change that
+   * makes it untrue.
+   */
+  authProxy?: boolean
   /** How long a signed-in session lasts. */
   sessionTtlMs?: number
 }
@@ -139,6 +156,7 @@ export class Application {
   private readonly tickListeners = new Set<() => void>()
   private timer: NodeJS.Timeout | undefined
   private reachableFromNetwork = false
+  private readonly trustsProxyAuth: boolean
   private ticking = false
   /** When the in-flight tick began, for the overrun deadline. */
   private tickStartedAt = 0
@@ -170,6 +188,7 @@ export class Application {
     clock: Clock
     tickIntervalMs: number
     horizonMs: number
+    authProxy: boolean
     links: { origin: string; configured: boolean }
     restored?: RestoreApplied
   }) {
@@ -222,6 +241,7 @@ export class Application {
     this.logger = init.logger
     this.clock = init.clock
     this.tickIntervalMs = init.tickIntervalMs
+    this.trustsProxyAuth = init.authProxy
     this.horizonMs = init.horizonMs
     this.links = init.links
     this.restored = init.restored
@@ -245,6 +265,14 @@ export class Application {
 
   setExposed(exposed: boolean): void {
     this.reachableFromNetwork = exposed
+  }
+
+  /**
+   * True when the operator has said something in front of this signs
+   * people in, so an install with no password of its own is deliberate.
+   */
+  get authProxy(): boolean {
+    return this.trustsProxyAuth
   }
 
   /**
@@ -418,6 +446,7 @@ export class Application {
       clock,
       tickIntervalMs: options.tickIntervalMs ?? 5_000,
       horizonMs: options.horizonMs ?? DEFAULT_HORIZON_MS,
+      authProxy: options.authProxy === true,
       links,
     })
   }

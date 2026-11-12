@@ -9,6 +9,7 @@ import { Application } from '../app.js'
 import { silentLogger } from '../log.js'
 import { createServer } from './server.js'
 import { SESSION_COOKIE } from './auth-routes.js'
+import { buildDashboard } from './dashboard.js'
 
 /**
  * The gate, from the outside.
@@ -25,7 +26,9 @@ let clock: ManualClock
 let app: Application
 let server: FastifyInstance
 
-async function boot(options: { uiPassword?: string } = {}): Promise<void> {
+async function boot(
+  options: { uiPassword?: string; authProxy?: boolean; host?: string } = {},
+): Promise<void> {
   dir = mkdtempSync(join(tmpdir(), 'scheduler-auth-api-'))
   clock = new ManualClock(Date.parse('2026-03-08T14:00:00Z'))
   app = Application.create({
@@ -34,8 +37,12 @@ async function boot(options: { uiPassword?: string } = {}): Promise<void> {
     logger: silentLogger,
     plugins: [mockPlugin({ now: () => clock.now() })],
     ...(options.uiPassword === undefined ? {} : { uiPassword: options.uiPassword }),
+    ...(options.authProxy === undefined ? {} : { authProxy: options.authProxy }),
   })
-  server = await createServer({ app })
+  server = await createServer({
+    app,
+    ...(options.host === undefined ? {} : { host: options.host }),
+  })
 }
 
 afterEach(async () => {
@@ -262,5 +269,44 @@ describe('with the password set by the environment', () => {
       required: true,
       seededFromEnvironment: true,
     })
+  })
+})
+
+describe('an install behind something that signs people in', () => {
+  const securityItems = (): unknown[] =>
+    buildDashboard(app).attention.filter((item) => item.kind === 'security')
+
+  it('stops warning that it has no password', async () => {
+    // The warning is right for a bare port and wrong behind Cloudflare
+    // Access, and a permanent warning nobody can act on is how a security
+    // list stops being read at all.
+    await boot({ authProxy: true, host: '0.0.0.0' })
+    expect(securityItems()).toHaveLength(0)
+  })
+
+  it('still warns when nothing was said about a proxy', async () => {
+    await boot({ host: '0.0.0.0' })
+    expect(securityItems()).toHaveLength(1)
+  })
+
+  it('tells the UI, so the missing password can be explained', async () => {
+    await boot({ authProxy: true })
+    const response = await server.inject({ method: 'GET', url: '/api/session' })
+    expect(response.json()).toMatchObject({ required: false, authProxy: true })
+  })
+
+  it('is off unless it was asked for', async () => {
+    await boot()
+    expect(app.authProxy).toBe(false)
+    const response = await server.inject({ method: 'GET', url: '/api/session' })
+    expect(response.json()).toMatchObject({ authProxy: false })
+  })
+
+  it('does not disable a password that is set', async () => {
+    // The two are not exclusive. Somebody who wants both locks keeps both,
+    // and trusting a proxy must never unlock an install that has its own.
+    await boot({ authProxy: true, uiPassword: PASSWORD })
+    const refused = await server.inject({ method: 'GET', url: '/api/devices' })
+    expect(refused.statusCode).toBe(401)
   })
 })

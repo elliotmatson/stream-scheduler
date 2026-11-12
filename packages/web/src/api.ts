@@ -656,6 +656,9 @@ export interface SessionState {
   /** The stored password originally came from SCHEDULER_UI_PASSWORD. It can
    *  still be changed here; that variable is no longer read. */
   seededFromEnvironment: boolean
+  /** Something in front of this app signs people in, so having no password
+   *  of its own is deliberate. Set by SCHEDULER_AUTH_PROXY at startup. */
+  authProxy: boolean
   minPasswordLength: number
 }
 
