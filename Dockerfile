@@ -91,14 +91,18 @@ ENV SCHEDULER_CONFIG_DIR=/config \
 
 EXPOSE 8500
 
-# SCHEDULER_SECRET is required: without a key source the app refuses to start
-# rather than writing stream keys and OAuth tokens to disk in the clear.
+# Stream keys and OAuth tokens are encrypted with a master key: derived from
+# SCHEDULER_SECRET when it is set, otherwise generated into /config/master.key
+# on first start. See docs/operations.md for keeping it.
 #
 # SCHEDULER_HOST is 0.0.0.0 because a container has to listen on all of its
 # own interfaces for -p to reach it. That is not the same as being on the
-# LAN: what decides who can reach it is the address you publish to. There is
-# no authentication yet, so publish to 127.0.0.1 unless you mean to share it.
+# LAN: what decides who can reach it is the address you publish to. Set a
+# password, or publish to 127.0.0.1, unless you mean to share it.
+#
+# The port comes from the environment, so a container moved off 8500 does
+# not go unhealthy.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
-  CMD curl -fsS http://127.0.0.1:8500/healthz || exit 1
+  CMD sh -c 'curl -fsS "http://127.0.0.1:${SCHEDULER_PORT:-8500}/healthz"' || exit 1
 
 ENTRYPOINT ["node", "dist/main.js"]

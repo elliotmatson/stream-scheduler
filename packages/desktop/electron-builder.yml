@@ -17,7 +17,9 @@ mac:
   # notarization are a real cost line, not an optional polish step.
   hardenedRuntime: true
   gatekeeperAssess: false
-  notarize: true
+  # Off until there is an Apple Developer ID to notarize with (issue #11).
+  # On without credentials, every `pnpm dist` on a Mac fails at the end.
+  notarize: false
 
 win:
   target: [nsis]

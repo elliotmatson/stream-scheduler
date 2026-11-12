@@ -88,6 +88,9 @@ jobs:
           retention-days: 7
 
   docker:
+    # Only once every check has passed. Without this a push to main could
+    # publish an image whose tests failed.
+    needs: check
     runs-on: ubuntu-latest
     permissions:
       contents: read

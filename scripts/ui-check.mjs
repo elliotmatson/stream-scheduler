@@ -130,14 +130,16 @@ async function everyScreenRenders(browser, base) {
         check(`${screen.name} renders in ${theme}`, false, String(error).split('\n')[0])
         await shoot(page, `${screen.name}-${theme}`)
       }
-    }
 
-    // Nothing may scroll sideways at a laptop width. Phone width is
-    // checked separately, below — that is where this actually goes wrong.
-    const overflow = await page.evaluate(
-      () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
-    )
-    check(`nothing overflows sideways in ${theme}`, overflow <= 1, `${overflow}px`)
+      // Nothing may scroll sideways at a laptop width, on any screen. Phone
+      // width is checked separately, below — that is where this actually
+      // goes wrong. Measured per screen: measured once after the loop, it
+      // only ever looked at the last one.
+      const overflow = await page.evaluate(
+        () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
+      )
+      check(`${screen.name} does not overflow sideways in ${theme}`, overflow <= 1, `${overflow}px`)
+    }
 
     check(`${theme}: no console errors`, problems.length === 0, problems.slice(0, 3).join(' | '))
     if (problems.length > 0) await shoot(page, `console-${theme}`)
