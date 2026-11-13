@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import { api, type Device, type Occurrence } from '../api.ts'
-import { ConfirmButton, CopyButton, ErrorBanner, IconButton, StatusPill } from '../components.tsx'
+import { ErrorBanner, IconButton, StatusPill } from '../components.tsx'
 import { IconClose } from '../icons.tsx'
 import { dateTimeIn, timeIn } from '../format.ts'
 
@@ -30,7 +30,6 @@ export function OccurrencePopover({
 }): ReactNode {
   const [busy, setBusy] = useState(false)
   const [problem, setProblem] = useState<string>()
-  const [links, setLinks] = useState<{ label: string; url: string }[]>()
   const box = useRef<HTMLDivElement>(null)
 
   // Closed by Escape or a click anywhere else, like any popover.
@@ -69,8 +68,6 @@ export function OccurrencePopover({
     .map((id) => devices.find((device) => device.id === id)?.label)
     .filter(Boolean)
   const pending = occurrence.status === 'pending'
-  const rearmable =
-    ['failed', 'cancelled'].includes(occurrence.status) && occurrence.scheduledEnd > Date.now()
 
   // Kept on screen: placed beside the click, pulled back in at the edges.
   const width = 300
@@ -101,60 +98,21 @@ export function OccurrencePopover({
 
       <ErrorBanner error={problem} />
 
-      {links && links.length > 0 ? (
-        <div className="row">
-          {links.map((link) => (
-            <CopyButton key={link.url} value={link.url} label={`Copy ${link.label}`} />
-          ))}
-        </div>
-      ) : null}
-
-      <div className="row" style={{ flexWrap: 'wrap', gap: 6, marginTop: 8 }}>
-        <button
-          className="primary"
-          onClick={() =>
-            navigate(
-              occurrence.runId ? `/runs/${occurrence.runId}` : `/occurrences/${occurrence.id}`,
-            )
-          }
-        >
+      {/* Two things, always the same two: open it, or leave this date out.
+          Everything else — going live, preparing, editing — is on the
+          page Open goes to, where there is room to say what it does. */}
+      <div className="row" style={{ gap: 6, marginTop: 8 }}>
+        <button className="primary" onClick={() => navigate(`/occurrences/${occurrence.id}`)}>
           Open
         </button>
-        <button onClick={() => navigate('/events')}>Edit event</button>
         {pending ? (
-          <>
-            <button
-              disabled={busy}
-              title="Creates the broadcast now, so its link can go out ahead of the day."
-              onClick={() =>
-                void act(
-                  async () => setLinks((await api.prepareNow(occurrence.id)).links),
-                  () => {},
-                )
-              }
-            >
-              Prepare now
-            </button>
-            <ConfirmButton
-              className=""
-              label="Start now"
-              confirmLabel="Go on air now?"
-              disabled={busy}
-              onConfirm={() => void act(() => api.startNow(occurrence.id))}
-            />
-            <button disabled={busy} onClick={() => void act(() => api.skip(occurrence.id))}>
-              Skip
-            </button>
-          </>
+          <button disabled={busy} onClick={() => void act(() => api.skip(occurrence.id))}>
+            Skip
+          </button>
         ) : null}
         {occurrence.status === 'skipped' ? (
           <button disabled={busy} onClick={() => void act(() => api.unskip(occurrence.id))}>
             Unskip
-          </button>
-        ) : null}
-        {rearmable ? (
-          <button disabled={busy} onClick={() => void act(() => api.rearm(occurrence.id))}>
-            Schedule again
           </button>
         ) : null}
       </div>

@@ -5,7 +5,6 @@ import { useTheme, type ThemePreference } from './theme.ts'
 import {
   IconBrand,
   IconDevices,
-  IconEvents,
   IconMoon,
   IconRuns,
   IconNotifications,
@@ -20,7 +19,7 @@ import { Dashboard } from './views/Dashboard.tsx'
 import { AttentionBell } from './views/AttentionBell.tsx'
 import { Schedule } from './views/Schedule.tsx'
 import { Devices } from './views/Devices.tsx'
-import { SeriesList } from './views/SeriesList.tsx'
+import { NewEvent, SeriesPage } from './views/EventPages.tsx'
 import { RunDetail, Runs } from './views/RunDetail.tsx'
 import { OccurrenceDetail } from './views/OccurrenceDetail.tsx'
 import { Notifications } from './views/Notifications.tsx'
@@ -53,7 +52,6 @@ const NAV = [
   // booth leaves open, and everything else is for setting up.
   { to: '/', label: 'Home', icon: <IconNow /> },
   { to: '/schedule', label: 'Schedule', icon: <IconSchedule /> },
-  { to: '/events', label: 'Events', icon: <IconEvents /> },
   { to: '/devices', label: 'Devices', icon: <IconDevices /> },
   { to: '/services', label: 'Services', icon: <IconServices /> },
   { to: '/runs', label: 'Event logs', icon: <IconRuns /> },
@@ -261,7 +259,11 @@ function Route({
   if (path === '/schedule') return <Schedule navigate={navigate} />
   if (path === '/devices') return <Devices navigate={navigate} />
   if (path === '/services') return <Services />
-  if (path === '/events') return <SeriesList />
+  if (path === '/new') return <NewEvent navigate={navigate} />
+  const oneSeries = /^\/series\/(.+)$/.exec(path)
+  if (oneSeries) return <SeriesPage seriesId={oneSeries[1]!} navigate={navigate} />
+  // The old Events page: its job is the schedule's now.
+  if (path === '/events') return <Schedule navigate={navigate} />
   if (path === '/runs') return <Runs navigate={navigate} />
   if (path === '/notifications') return <Notifications />
   return <Dashboard navigate={navigate} />
@@ -280,7 +282,17 @@ function NavLink({
   icon: ReactNode
   navigate: (path: string) => void
 }): ReactNode {
-  const active = to === '/' ? path === '/' || path.startsWith('/occurrences') : path.startsWith(to)
+  // An event's own pages belong to the schedule, which is where they are
+  // reached from.
+  const underSchedule = ['/occurrences', '/new', '/series', '/events'].some((prefix) =>
+    path.startsWith(prefix),
+  )
+  const active =
+    to === '/'
+      ? path === '/'
+      : to === '/schedule'
+        ? path.startsWith(to) || underSchedule
+        : path.startsWith(to)
   return (
     <a
       className="nav-link"

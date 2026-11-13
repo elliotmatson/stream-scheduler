@@ -1,16 +1,7 @@
 import { useMemo, useState } from 'react'
 import type { CSSProperties, ReactNode } from 'react'
 import { api, useLiveRefresh, useResource, type Occurrence } from '../api.ts'
-import {
-  Card,
-  ConfirmButton,
-  CopyButton,
-  Empty,
-  ErrorBanner,
-  PageHead,
-  StatusPill,
-  toneFor,
-} from '../components.tsx'
+import { Card, Empty, ErrorBanner, PageHead, StatusPill, toneFor } from '../components.tsx'
 import { OccurrencePopover } from './OccurrencePopover.tsx'
 import {
   dateTimeIn,
@@ -115,7 +106,7 @@ export function Schedule({ navigate }: { navigate: (path: string) => void }): Re
                 List
               </button>
             </div>
-            <button className="primary" onClick={() => navigate('/events')}>
+            <button className="primary" onClick={() => navigate('/new')}>
               Add an event
             </button>
           </>
@@ -210,7 +201,7 @@ export function Schedule({ navigate }: { navigate: (path: string) => void }): Re
         // do next. This does.
         <div className="banner info">
           Nothing is scheduled yet.{' '}
-          <button className="link" onClick={() => navigate('/events')}>
+          <button className="link" onClick={() => navigate('/new')}>
             Add an event
           </button>
         </div>
@@ -233,7 +224,10 @@ export function Schedule({ navigate }: { navigate: (path: string) => void }): Re
           move={move}
         />
       ) : (
-        <ScheduleList occurrences={shown} navigate={navigate} reload={reload} />
+        <>
+          <ScheduleList occurrences={shown} navigate={navigate} reload={reload} />
+          <NotScheduled navigate={navigate} />
+        </>
       )}
 
       {picked ? (
@@ -711,11 +705,6 @@ function ScheduleList({
   const [busy, setBusy] = useState<string>()
   const [error, setError] = useState<string>()
 
-  const [links, setLinks] = useState<{
-    occurrenceId: string
-    links: { label: string; url: string }[]
-  }>()
-
   const act = async (id: string, action: () => Promise<unknown>): Promise<void> => {
     setBusy(id)
     setError(undefined)
@@ -786,83 +775,20 @@ function ScheduleList({
                   <StatusPill status={occurrence.runState ?? occurrence.status} />
                 </td>
                 <td>
+                  {/* The same two as the calendar's popover. */}
                   <div className="row">
-                    {occurrence.runId ? (
-                      <button
-                        onClick={() => navigate(`/runs/${occurrence.runId}`)}
-                        title="Every step this run has taken, and what the device said back."
-                      >
-                        Timeline
-                      </button>
-                    ) : null}
+                    <button onClick={() => navigate(`/occurrences/${occurrence.id}`)}>Open</button>
                     {occurrence.status === 'pending' ? (
-                      <>
-                        <button
-                          title="This one date on its own: what it is called, when it runs, and what goes out."
-                          onClick={() => navigate(`/occurrences/${occurrence.id}`)}
-                        >
-                          Open
-                        </button>
-                        {/* Makes the broadcast now, so an unlisted link can
-                            go out ahead of the day. The outputs still start
-                            at their own times. */}
-                        <button
-                          disabled={busy === occurrence.id}
-                          title="Creates the broadcast now, so the link can go out ahead of the day. Nothing goes on air."
-                          onClick={() =>
-                            void act(occurrence.id, async () => {
-                              const prepared = await api.prepareNow(occurrence.id)
-                              setLinks({ occurrenceId: occurrence.id, links: prepared.links })
-                            })
-                          }
-                        >
-                          Prepare now
-                        </button>
-                        {/* Puts it on air this minute: asked twice. */}
-                        <ConfirmButton
-                          className=""
-                          label="Start now"
-                          confirmLabel="Go on air now?"
-                          disabled={busy === occurrence.id}
-                          title="Runs it now, without waiting for its time."
-                          onConfirm={() =>
-                            void act(occurrence.id, () => api.startNow(occurrence.id))
-                          }
-                        />
-                        <button
-                          disabled={busy === occurrence.id}
-                          title="Leaves this date alone. The rest of the event carries on."
-                          onClick={() => void act(occurrence.id, () => api.skip(occurrence.id))}
-                        >
-                          Skip
-                        </button>
-                      </>
-                    ) : null}
-                    {['failed', 'cancelled'].includes(occurrence.status) &&
-                    occurrence.scheduledEnd > Date.now() ? (
                       <button
                         disabled={busy === occurrence.id}
-                        title="Puts this date back on the schedule, to run at its time."
-                        onClick={() => void act(occurrence.id, () => api.rearm(occurrence.id))}
+                        onClick={() => void act(occurrence.id, () => api.skip(occurrence.id))}
                       >
-                        Schedule again
+                        Skip
                       </button>
-                    ) : null}
-                    {links?.occurrenceId === occurrence.id && links.links.length > 0 ? (
-                      <span className="links">
-                        {links.links.map((link) => (
-                          <CopyButton
-                            key={link.url}
-                            value={link.url}
-                            label={`Copy ${link.label}`}
-                          />
-                        ))}
-                      </span>
                     ) : null}
                     {occurrence.status === 'skipped' ? (
                       <button
                         disabled={busy === occurrence.id}
-                        title="Puts this date back on."
                         onClick={() => void act(occurrence.id, () => api.unskip(occurrence.id))}
                       >
                         Unskip
@@ -880,3 +806,27 @@ function ScheduleList({
 }
 
 export { toneFor }
+
+/**
+ * Events with no dates coming, which the calendar cannot show.
+ *
+ * Every event is reached through one of its dates, so one that has none —
+ * finished, or following a Planning Center service type with nothing
+ * published yet — needs a way in of its own. Hidden when there are none.
+ */
+function NotScheduled({ navigate }: { navigate: (path: string) => void }): ReactNode {
+  const { data } = useResource(() => api.series(), [])
+  const idle = (data ?? []).filter((series) => series.nextAt === null)
+  if (idle.length === 0) return null
+  return (
+    <Card title="Not on the schedule">
+      <div className="row" style={{ gap: 6 }}>
+        {idle.map((series) => (
+          <button key={series.id} onClick={() => navigate(`/series/${series.id}`)}>
+            {series.label}
+          </button>
+        ))}
+      </div>
+    </Card>
+  )
+}
