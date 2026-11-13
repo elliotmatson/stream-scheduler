@@ -5,14 +5,17 @@ import { draftOf, editOf, type Draft } from '../occurrence-edit.ts'
 import {
   Card,
   ConfirmButton,
+  CopyButton,
   Empty,
   ErrorBanner,
-  Fact,
   Field,
   PageHead,
+  StatusPill,
   TemplateTokens,
 } from '../components.tsx'
-import { dateTimeIn, duration, localDateKey, shortZone, timeIn } from '../format.ts'
+import { TagEditor } from '../tags.tsx'
+import { EventForm } from './EventForm.tsx'
+import { dateTimeIn, shortZone, timeIn } from '../format.ts'
 
 /**
  * One morning of a repeating event, and changing just that one.
@@ -36,7 +39,11 @@ export function OccurrenceDetail({
   navigate: (path: string) => void
 }): ReactNode {
   const { data, error, reload } = useResource(() => api.occurrence(occurrenceId), [occurrenceId])
+  const { data: allSeries, reload: reloadSeries } = useResource(() => api.series(), [])
   const [problem, setProblem] = useState<string>()
+  const [busy, setBusy] = useState(false)
+  const [links, setLinks] = useState<{ label: string; url: string }[]>()
+  const [scope, setScope] = useState<'one' | 'all'>('one')
 
   if (error) {
     return (
@@ -46,89 +53,107 @@ export function OccurrenceDetail({
           back={{ to: '/schedule', label: 'Back to the schedule', onNavigate: navigate }}
         />
         <ErrorBanner error={error} />
+        <p className="muted">If you just moved it, it is on the schedule at its new time.</p>
       </>
     )
   }
   if (!data) return null
 
   const zone = data.timezone
+  const series = allSeries?.find((entry) => entry.id === data.seriesId)
+  // Whether "this one or all of them" is a real question.
+  const repeats = Boolean(series && (series.rrule || series.planSourceId))
+  const running = data.runState === 'running' || data.status === 'running'
+  const pending = data.status === 'pending' && !running
+  const rearmable = ['failed', 'cancelled'].includes(data.status) && data.scheduledEnd > Date.now()
   const past = data.status !== 'pending'
+
+  const act = async (action: () => Promise<unknown>): Promise<void> => {
+    setBusy(true)
+    setProblem(undefined)
+    try {
+      await action()
+      reload()
+    } catch (err) {
+      setProblem(err instanceof Error ? err.message : String(err))
+    } finally {
+      setBusy(false)
+    }
+  }
 
   return (
     <>
       <PageHead
         title={data.label}
-        subtitle={`${dateTimeIn(data.scheduledStart, zone)} ${shortZone(data.scheduledStart, zone)} · ${duration(data.scheduledEnd - data.scheduledStart)}`}
+        subtitle={`${dateTimeIn(data.scheduledStart, zone)}–${timeIn(data.scheduledEnd, zone)} ${shortZone(data.scheduledStart, zone)}${series && repeats ? ` · ${series.describes}` : ''}`}
         back={{ to: '/schedule', label: 'Back to the schedule', onNavigate: navigate }}
-        actions={
-          data.runId ? (
-            <button onClick={() => navigate(`/runs/${data.runId}`)}>Open the run</button>
-          ) : null
-        }
+        actions={<StatusPill status={data.runState ?? data.status} />}
       />
       <ErrorBanner error={problem} />
 
       <div className="stack">
-        <Card>
-          <div className="row" style={{ gap: 18 }}>
-            <Fact
-              label="Event"
-              value={data.seriesLabel}
-              tip="The repeating event this is one of."
-            />
-            <Fact label="Date" value={localDateKey(data.scheduledStart, zone)} />
-            <Fact
-              label="Starts"
-              value={`${timeIn(data.scheduledStart, zone)} ${shortZone(data.scheduledStart, zone)}`}
-            />
-            <Fact label="Runs for" value={duration(data.scheduledEnd - data.scheduledStart)} />
-            <Fact label="State" value={data.status} />
-          </div>
-
-          {data.detached ? (
-            <p className="muted" style={{ marginBottom: 0, fontSize: 12 }}>
-              Changed on its own, so it no longer follows «{data.seriesLabel}». Editing the event
-              will leave this one where it is.
-              {data.overrides.movedFrom === undefined
-                ? ''
-                : ` Moved from ${dateTimeIn(data.overrides.movedFrom, zone)}.`}
-            </p>
-          ) : null}
-
-          <div className="row" style={{ marginTop: 10 }}>
-            <button
-              title="Opens the event itself, where a change applies to every date it has."
-              onClick={() => navigate('/events')}
-            >
-              Edit every one of them
-            </button>
-            {data.detached ? (
+        {/* What can be done to it right now, and nothing that cannot. */}
+        <div className="row">
+          {pending ? (
+            <>
+              <button
+                disabled={busy}
+                title="Creates the broadcast now, so its link can go out. Nothing goes on air."
+                onClick={() =>
+                  void act(async () => setLinks((await api.prepareNow(data.id)).links))
+                }
+              >
+                Prepare now
+              </button>
               <ConfirmButton
-                label="Put this one back on the event"
-                confirmLabel="Really undo the changes?"
-                disabled={past}
-                onConfirm={() => {
-                  setProblem(undefined)
-                  api
-                    .revertOccurrence(data.id)
-                    .then(reload, (err: Error) => setProblem(err.message))
-                }}
+                className=""
+                label="Start now"
+                confirmLabel="Go on air now?"
+                disabled={busy}
+                onConfirm={() => void act(() => api.startNow(data.id))}
               />
-            ) : null}
-          </div>
-        </Card>
+              <button disabled={busy} onClick={() => void act(() => api.skip(data.id))}>
+                Skip
+              </button>
+            </>
+          ) : null}
+          {running && data.runId ? (
+            <ConfirmButton
+              label="Stop now"
+              confirmLabel="Stop every stream and recording?"
+              disabled={busy}
+              onConfirm={() =>
+                void act(() => api.cancelRun(data.runId!, 'Stopped from the event page.'))
+              }
+            />
+          ) : null}
+          {data.status === 'skipped' ? (
+            <button disabled={busy} onClick={() => void act(() => api.unskip(data.id))}>
+              Unskip
+            </button>
+          ) : null}
+          {rearmable ? (
+            <button disabled={busy} onClick={() => void act(() => api.rearm(data.id))}>
+              Schedule again
+            </button>
+          ) : null}
+          {data.runId ? (
+            <button onClick={() => navigate(`/runs/${data.runId}`)}>Event log</button>
+          ) : null}
+        </div>
 
-        {past ? (
-          <Card title="Just this one">
-            <Empty>This is {data.status}, so it can no longer be changed. What ran, ran.</Empty>
-          </Card>
-        ) : (
-          <EditOne detail={data} onSaved={reload} onProblem={setProblem} />
-        )}
+        {links && links.length > 0 ? (
+          <div className="banner info">
+            Ready to share:{' '}
+            {links.map((link) => (
+              <CopyButton key={link.url} value={link.url} label={`Copy ${link.label}`} />
+            ))}
+          </div>
+        ) : null}
 
         <Card title="What goes out">
           {data.outputs.length === 0 ? (
-            <Empty>This event has no outputs set up.</Empty>
+            <Empty>Nothing streams or records yet. Add a stream under All events.</Empty>
           ) : (
             <div className="stack" style={{ gap: 8 }}>
               {data.outputs.map((output) => (
@@ -151,6 +176,74 @@ export function OccurrenceDetail({
             </div>
           )}
         </Card>
+
+        {/* Editing. A repeating event asks which: this date on its own, or
+            every date — the question every calendar asks. A one-off has
+            only itself, so it goes straight to the form. */}
+        {repeats ? (
+          <div className="toggle" role="group" aria-label="What to change">
+            <button aria-pressed={scope === 'one'} onClick={() => setScope('one')}>
+              This event only
+            </button>
+            <button aria-pressed={scope === 'all'} onClick={() => setScope('all')}>
+              All events in the series
+            </button>
+          </div>
+        ) : null}
+
+        {repeats && scope === 'one' ? (
+          past ? (
+            <Card>
+              <Empty>This has already {data.status}, so it can no longer be changed.</Empty>
+            </Card>
+          ) : (
+            <>
+              <EditOne detail={data} onSaved={reload} onProblem={setProblem} />
+              {data.detached ? (
+                <p className="muted" style={{ margin: 0 }}>
+                  Changed on its own, so changes to the series leave it alone.{' '}
+                  <ConfirmButton
+                    className="link"
+                    label="Undo the changes"
+                    confirmLabel="Really undo them?"
+                    onConfirm={() => void act(() => api.revertOccurrence(data.id))}
+                  />
+                </p>
+              ) : null}
+            </>
+          )
+        ) : series ? (
+          <>
+            <EventForm
+              key={`${series.id}-${series.version}`}
+              series={series}
+              onDone={() => {
+                reloadSeries()
+                reload()
+              }}
+            />
+            <Card>
+              <div className="row" style={{ justifyContent: 'space-between' }}>
+                <TagEditor
+                  kind="series"
+                  id={series.id}
+                  tags={series.tags ?? []}
+                  onChanged={reloadSeries}
+                />
+                <ConfirmButton
+                  label={repeats ? 'Delete the whole series' : 'Delete this event'}
+                  confirmLabel={repeats ? 'Delete it and every date?' : 'Delete it?'}
+                  onConfirm={() =>
+                    void act(async () => {
+                      await api.deleteSeries(series.id)
+                      navigate('/schedule')
+                    })
+                  }
+                />
+              </div>
+            </Card>
+          </>
+        ) : null}
       </div>
     </>
   )

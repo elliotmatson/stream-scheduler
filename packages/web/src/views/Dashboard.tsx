@@ -111,7 +111,7 @@ export function Dashboard({ navigate }: { navigate: (path: string) => void }): R
           {data.next.length === 0 ? (
             <Empty>
               Nothing scheduled in the next week.{' '}
-              <button className="link" onClick={() => navigate('/events')}>
+              <button className="link" onClick={() => navigate('/new')}>
                 Add an event
               </button>
             </Empty>

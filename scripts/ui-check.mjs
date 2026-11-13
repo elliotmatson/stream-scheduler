@@ -41,7 +41,7 @@ const check = (name, condition, detail = '') => tally.check(name, condition, det
 const SCREENS = [
   { route: '/', name: 'Home', sees: 'h1:text-is("Home")' },
   { route: '/schedule', name: 'Schedule', sees: '.calendar' },
-  { route: '/events', name: 'Events', sees: 'h1:text-is("Events")' },
+  { route: '/new', name: 'Add an event', sees: 'h1:text-is("Add an event")' },
   { route: '/devices', name: 'Devices', sees: 'h1:text-is("Devices")' },
   { route: '/services', name: 'Services', sees: 'h1:text-is("Services")' },
   { route: '/runs', name: 'Event logs', sees: 'h1:text-is("Event logs")' },
@@ -268,8 +268,7 @@ async function discoveryAndPreview(browser, base) {
   await page.locator('.discovered li').first().waitFor({ timeout: TIMEOUT })
   check('discovery lists what it found', (await page.locator('.discovered li').count()) > 0)
 
-  await page.goto(`${base}/#/events`)
-  await page.getByRole('button', { name: 'Add an event' }).click()
+  await page.goto(`${base}/#/new`)
   const field = (label) =>
     page
       .locator('label.field', { has: page.locator(`span.field-label:text-is("${label}")`) })
@@ -623,8 +622,9 @@ async function makeSkipAndRemoveAnEvent(browser, base) {
   const field = (label) =>
     page.locator('label.field', { has: page.locator(`span.field-label:text-is("${label}")`) })
 
-  await page.goto(`${base}/#/events`)
-  await page.getByRole('button', { name: 'Add an event' }).click()
+  // Added from the schedule, which is where events live now.
+  await page.goto(`${base}/#/schedule`)
+  await page.getByRole('button', { name: 'Add an event' }).first().click()
   await field('Name').first().locator('input').fill(NAME)
 
   // The stream goes in before the event exists.
@@ -639,11 +639,9 @@ async function makeSkipAndRemoveAnEvent(browser, base) {
   check('Create says what it is about to make', true)
   await create.click()
   // Saving keeps the form open on the new event, so its outputs can still
-  // be changed; the list catches up once it is closed.
+  // be changed; Done goes back to the schedule.
   await page.getByRole('button', { name: 'Done', exact: true }).click()
-
-  const card = page.locator('.card', { has: page.locator('h2', { hasText: NAME }) })
-  await card.first().waitFor({ timeout: TIMEOUT })
+  await page.locator('h1:text-is("Schedule")').waitFor({ timeout: TIMEOUT })
   const series = (await apiAt(base, 'GET', '/api/series')).find((s) => s.label === NAME)
   const outputs = series ? await apiAt(base, 'GET', `/api/series/${series.id}/outputs`) : []
   const outputList = Array.isArray(outputs) ? outputs : (outputs.outputs ?? [])
@@ -672,15 +670,12 @@ async function makeSkipAndRemoveAnEvent(browser, base) {
     mine.map((o) => o.status).join(', '),
   )
 
-  // And removing it, which asks first.
-  await page.goto(`${base}/#/events`)
-  const remove = card.first().getByRole('button', { name: 'Remove' })
-  await remove.click()
-  await card
-    .first()
-    .getByRole('button', { name: /^Remove it/ })
-    .click()
-  await card.first().waitFor({ state: 'detached', timeout: TIMEOUT })
+  // And removing it, from its own page, which asks first.
+  await row.getByRole('button', { name: 'Open', exact: true }).click()
+  await page.locator('h1', { hasText: NAME }).waitFor({ timeout: TIMEOUT })
+  await page.getByRole('button', { name: 'Delete this event' }).click()
+  await page.getByRole('button', { name: 'Delete it?' }).click()
+  await page.locator('h1:text-is("Schedule")').waitFor({ timeout: TIMEOUT })
   const left = (await apiAt(base, 'GET', '/api/series')).some((s) => s.label === NAME)
   check('removing it removes it', !left)
 
