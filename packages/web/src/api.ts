@@ -20,6 +20,10 @@ export interface Occurrence {
   runState: string | null
   /** The devices its outputs use. */
   deviceIds?: string[]
+  /** Whether it streams, records, or both. */
+  kinds?: ('stream' | 'recording')[]
+  /** The event's own tags. */
+  tags?: string[]
 }
 
 /** What somebody changed about one occurrence, and nothing else. */

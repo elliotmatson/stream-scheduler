@@ -71,8 +71,19 @@ export function Schedule({ navigate }: { navigate: (path: string) => void }): Re
   // this month is a question people ask about the gear, not the events.
   const devices = useResource(() => api.devices(), []).data ?? []
   const [deviceFilter, setDeviceFilter] = useState('')
+  const [tagFilter, setTagFilter] = useState('')
+  const [kindFilter, setKindFilter] = useState<'' | 'stream' | 'recording'>('')
+  const knownTags = [
+    ...new Set([
+      ...(data ?? []).flatMap((occurrence) => occurrence.tags ?? []),
+      ...(tagFilter ? [tagFilter] : []),
+    ]),
+  ].sort()
   const shown = (data ?? []).filter(
-    (occurrence) => !deviceFilter || (occurrence.deviceIds ?? []).includes(deviceFilter),
+    (occurrence) =>
+      (!tagFilter || (occurrence.tags ?? []).includes(tagFilter)) &&
+      (!kindFilter || (occurrence.kinds ?? []).includes(kindFilter)) &&
+      (!deviceFilter || (occurrence.deviceIds ?? []).includes(deviceFilter)),
   )
 
   // A click opens a summary with the things people do to one date, rather
@@ -87,76 +98,110 @@ export function Schedule({ navigate }: { navigate: (path: string) => void }): Re
     <>
       <PageHead
         title="Schedule"
-        subtitle="Every date each event falls on, and what became of it."
         actions={
           <>
-            {devices.length > 1 ? (
-              <select
-                aria-label="Show events using"
-                value={deviceFilter}
-                onChange={(event) => setDeviceFilter(event.target.value)}
-              >
-                <option value="">All devices</option>
-                {devices.map((device) => (
-                  <option key={device.id} value={device.id}>
-                    {device.label}
-                  </option>
-                ))}
-              </select>
-            ) : null}
+            {/* Smallest span to largest, then the list. */}
             <div className="toggle">
               <button aria-pressed={view === 'day'} onClick={() => setView('day')}>
                 Day
               </button>
-              <button aria-pressed={view === 'month'} onClick={() => setView('month')}>
-                Month
-              </button>
               <button aria-pressed={view === 'week'} onClick={() => setView('week')}>
                 Week
+              </button>
+              <button aria-pressed={view === 'month'} onClick={() => setView('month')}>
+                Month
               </button>
               <button aria-pressed={view === 'list'} onClick={() => setView('list')}>
                 List
               </button>
             </div>
-            {view === 'list' ? null : (
-              <div className="row">
-                <button
-                  onClick={() => shift(-1)}
-                  aria-label={
-                    view === 'day'
-                      ? 'Previous day'
-                      : view === 'week'
-                        ? 'Previous week'
-                        : 'Previous month'
-                  }
-                >
-                  ←
-                </button>
-                <strong style={{ minWidth: 150, textAlign: 'center' }}>
-                  {view === 'day'
-                    ? dayStart.toLocaleDateString(undefined, {
-                        weekday: 'long',
-                        month: 'long',
-                        day: 'numeric',
-                      })
-                    : view === 'week'
-                      ? weekLabel(weekStart)
-                      : monthLabel(anchor.getFullYear(), anchor.getMonth())}
-                </strong>
-                <button
-                  onClick={() => shift(1)}
-                  aria-label={
-                    view === 'day' ? 'Next day' : view === 'week' ? 'Next week' : 'Next month'
-                  }
-                >
-                  →
-                </button>
-                <button onClick={() => setAnchor(new Date())}>Today</button>
-              </div>
-            )}
+            <button className="primary" onClick={() => navigate('/events')}>
+              Add an event
+            </button>
           </>
         }
       />
+
+      {/* Where you are on the left, what you are looking at on the right. */}
+      <div className="schedule-bar">
+        {view === 'list' ? (
+          <span />
+        ) : (
+          <div className="row">
+            <button onClick={() => setAnchor(new Date())}>Today</button>
+            <button
+              onClick={() => shift(-1)}
+              aria-label={
+                view === 'day'
+                  ? 'Previous day'
+                  : view === 'week'
+                    ? 'Previous week'
+                    : 'Previous month'
+              }
+            >
+              ←
+            </button>
+            <button
+              onClick={() => shift(1)}
+              aria-label={
+                view === 'day' ? 'Next day' : view === 'week' ? 'Next week' : 'Next month'
+              }
+            >
+              →
+            </button>
+            <strong>
+              {view === 'day'
+                ? dayStart.toLocaleDateString(undefined, {
+                    weekday: 'long',
+                    month: 'long',
+                    day: 'numeric',
+                  })
+                : view === 'week'
+                  ? weekLabel(weekStart)
+                  : monthLabel(anchor.getFullYear(), anchor.getMonth())}
+            </strong>
+          </div>
+        )}
+        <div className="row">
+          {devices.length > 1 ? (
+            <select
+              aria-label="Device"
+              value={deviceFilter}
+              onChange={(event) => setDeviceFilter(event.target.value)}
+            >
+              <option value="">All devices</option>
+              {devices.map((device) => (
+                <option key={device.id} value={device.id}>
+                  {device.label}
+                </option>
+              ))}
+            </select>
+          ) : null}
+          {knownTags.length > 0 ? (
+            <select
+              aria-label="Tag"
+              value={tagFilter}
+              onChange={(event) => setTagFilter(event.target.value)}
+            >
+              <option value="">All tags</option>
+              {knownTags.map((tag) => (
+                <option key={tag} value={tag}>
+                  {tag}
+                </option>
+              ))}
+            </select>
+          ) : null}
+          <select
+            aria-label="Streams or recordings"
+            value={kindFilter}
+            onChange={(event) => setKindFilter(event.target.value as '' | 'stream' | 'recording')}
+          >
+            <option value="">Streams and recordings</option>
+            <option value="stream">Streams</option>
+            <option value="recording">Recordings</option>
+          </select>
+        </div>
+      </div>
 
       <ErrorBanner error={error ?? move.problem} />
 
