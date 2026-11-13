@@ -60,7 +60,10 @@ export function DeviceFiles({
   // one out of names.
   const [path, setPath] = useState<string>()
   const [pending, setPending] = useState<{ confirm: string; files: string[] }>()
-  const [result, setResult] = useState<{ removed: string[]; failed: { name: string }[] }>()
+  const [result, setResult] = useState<{
+    removed: string[]
+    failed: { name: string; reason?: string }[]
+  }>()
   const [busy, setBusy] = useState(false)
   const [problem, setProblem] = useState<string>()
 
@@ -231,9 +234,28 @@ export function DeviceFiles({
           ) : null}
 
           {result ? (
-            <div className="banner info">
+            <div className={result.failed.length > 0 ? 'banner error' : 'banner info'}>
               Removed {result.removed.length}
               {result.failed.length > 0 ? `, ${result.failed.length} refused` : ''}.
+              {/* Each refusal with the device's reason, the same reason
+                  grouped: eight folders refused for one cause is one line. */}
+              {result.failed.length > 0 ? (
+                <ul style={{ margin: '6px 0 0', paddingLeft: 18 }}>
+                  {Object.entries(
+                    result.failed.reduce<Record<string, string[]>>((groups, entry) => {
+                      const reason = entry.reason ?? 'No reason given.'
+                      return { ...groups, [reason]: [...(groups[reason] ?? []), entry.name] }
+                    }, {}),
+                  ).map(([reason, names]) => (
+                    <li key={reason}>
+                      {reason}{' '}
+                      <span className="muted">
+                        ({names.length === 1 ? names[0] : `${names.length} items`})
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              ) : null}
             </div>
           ) : null}
 

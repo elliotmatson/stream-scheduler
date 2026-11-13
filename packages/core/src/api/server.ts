@@ -1893,7 +1893,9 @@ function registerRoutes(fastify: FastifyInstance, app: Application): void {
       deviceId: id,
       nodeId,
       removed,
-      failed: failed.map((entry) => entry.name),
+      // With the device's own reason: "8 refused" with nothing after it is
+      // a report nobody can act on.
+      failed,
     })
     return { deleted: true, removed, failed }
   })
