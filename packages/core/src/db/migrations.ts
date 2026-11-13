@@ -613,6 +613,43 @@ UPDATE destination SET config = json_remove(config, '$.autoStartStop')
  WHERE plugin_id = 'youtube';
 `,
   },
+  {
+    id: 17,
+    name: 'roll-moves-onto-outputs',
+    sql: `
+-- "Start early" and "Keep going after" were the event's, the same for
+-- every output in it. They become each output's own: a start that can be
+-- before the service, and for an output that runs until the service ends,
+-- how long it keeps going after.
+ALTER TABLE event_output ADD COLUMN stop_after_ms INTEGER NOT NULL DEFAULT 0;
+
+-- What each output did before, kept exactly: it starts as much earlier as
+-- the event's start-early said, a fixed-length one runs that much longer
+-- plus the keep-going, and one that follows the service keeps going by
+-- the keep-going.
+UPDATE event_output SET
+  offset_ms = offset_ms
+    - (SELECT preroll_ms FROM event_series s WHERE s.id = event_output.series_id),
+  duration_ms = duration_ms + CASE WHEN follows_window = 1 THEN 0 ELSE
+    (SELECT preroll_ms + postroll_ms FROM event_series s WHERE s.id = event_output.series_id)
+  END,
+  stop_after_ms = CASE WHEN follows_window = 1 THEN
+    (SELECT postroll_ms FROM event_series s WHERE s.id = event_output.series_id)
+  ELSE 0 END;
+
+UPDATE event_series SET preroll_ms = 0, postroll_ms = 0;
+`,
+  },
+  {
+    id: 18,
+    name: 'one-event-per-plan',
+    sql: `
+-- An event following Planning Center can be one per service time (each
+-- time its own broadcast, which is how it has always worked) or one per
+-- plan (the morning's times together, as one event).
+ALTER TABLE event_series ADD COLUMN plan_mode TEXT NOT NULL DEFAULT 'time';
+`,
+  },
 ]
 
 interface GraphNode {

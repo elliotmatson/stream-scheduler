@@ -250,6 +250,8 @@ describe('as a plan source', () => {
     expect(services).toHaveLength(2)
     expect(services[0]).toEqual({
       externalId: 'time-1',
+      // Which plan it is in, so an event can be one per plan.
+      planId: 'plan-1',
       startsAt: Date.parse('2026-09-20T14:00:00Z'),
       endsAt: Date.parse('2026-09-20T15:15:00Z'),
       detail: {

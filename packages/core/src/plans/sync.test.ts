@@ -11,7 +11,7 @@ import { SecretVault } from '../secrets/vault.js'
 import { keyFileSource, resolveMasterKey } from '../secrets/master-key.js'
 import { materializeSeries } from '../schedule/materialize.js'
 import { PlanSourceRegistry } from './registry.js'
-import { syncAll, syncSeries } from './sync.js'
+import { byPlan, syncAll, syncSeries } from './sync.js'
 
 /**
  * Turning published service times into occurrences.
@@ -529,5 +529,42 @@ describe('pairing a series that already had a rule', () => {
 
     expect(result.detached).toBe(before)
     expect(occurrences()).toHaveLength(before)
+  })
+})
+
+describe('one event per plan', () => {
+  const MIN = 60_000
+  const time = (id: string, planId: string | undefined, start: number, end?: number) => ({
+    externalId: id,
+    ...(planId === undefined ? {} : { planId }),
+    startsAt: start,
+    ...(end === undefined ? {} : { endsAt: end }),
+    detail: { planTitle: 'Advent 1', timeName: `${id} service` },
+  })
+
+  it('runs from the first time’s start to the last one’s end', () => {
+    const merged = byPlan(
+      [time('9', 'p1', 0, 75 * MIN), time('11', 'p1', 120 * MIN, 195 * MIN)],
+      90 * MIN,
+    )
+    expect(merged).toEqual([
+      {
+        externalId: 'plan:p1',
+        planId: 'p1',
+        startsAt: 0,
+        endsAt: 195 * MIN,
+        // The plan's title carries over; one time's name would be wrong.
+        detail: { planTitle: 'Advent 1' },
+      },
+    ])
+  })
+
+  it('uses the event’s length for a time with no end', () => {
+    expect(byPlan([time('9', 'p1', 0)], 90 * MIN)[0]!.endsAt).toBe(90 * MIN)
+  })
+
+  it('leaves a time with no plan as it is', () => {
+    const loose = time('x', undefined, 5 * MIN)
+    expect(byPlan([loose], 90 * MIN)).toEqual([loose])
   })
 })

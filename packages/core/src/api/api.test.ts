@@ -435,6 +435,75 @@ describe('making an event in one go', () => {
   })
 })
 
+describe('the default timezone', () => {
+  it('is unset until somebody sets it, then remembered', async () => {
+    expect((await get('/api/settings/general')).json).toEqual({ timezone: null })
+    const set = await server.inject({
+      method: 'PUT',
+      url: '/api/settings/general',
+      payload: { timezone: 'America/Chicago' },
+    })
+    expect(set.statusCode).toBe(200)
+    expect((await get('/api/settings/general')).json).toEqual({ timezone: 'America/Chicago' })
+  })
+
+  it('refuses a zone that does not exist', async () => {
+    const set = await server.inject({
+      method: 'PUT',
+      url: '/api/settings/general',
+      payload: { timezone: 'Mars/Olympus' },
+    })
+    expect(set.statusCode).toBe(409)
+  })
+})
+
+describe('starting before the event', () => {
+  it('lets a stream start before the service, as long as its broadcast exists by then', async () => {
+    const { seriesId, deviceId, credentialId } = await seedEverything()
+    const early = await post(`/api/series/${seriesId}/outputs`, {
+      kind: 'stream',
+      label: 'Early',
+      offsetMs: -10 * MINUTE,
+      durationMs: 60 * MINUTE,
+      credentialId,
+      deviceId,
+      nodeId: 'stream',
+    })
+    expect(early.status).toBe(201)
+  })
+
+  it('refuses one that would go live before its broadcast is made', async () => {
+    const { seriesId, deviceId, credentialId } = await seedEverything()
+    // Broadcasts are made 30 minutes early by default.
+    const tooEarly = await post(`/api/series/${seriesId}/outputs`, {
+      kind: 'stream',
+      label: 'Too early',
+      offsetMs: -45 * MINUTE,
+      durationMs: 60 * MINUTE,
+      credentialId,
+      deviceId,
+      nodeId: 'stream',
+    })
+    expect(tooEarly.status).toBe(409)
+    expect(tooEarly.json.message ?? tooEarly.json.error).toMatch(/at least 46 min/)
+  })
+
+  it('refuses moving Prepare early later than an early output', async () => {
+    const { seriesId, deviceId, credentialId } = await seedEverything()
+    await post(`/api/series/${seriesId}/outputs`, {
+      kind: 'stream',
+      label: 'Early',
+      offsetMs: -20 * MINUTE,
+      durationMs: 60 * MINUTE,
+      credentialId,
+      deviceId,
+      nodeId: 'stream',
+    })
+    const later = await patch(`/api/series/${seriesId}`, { prepareLeadMs: 10 * MINUTE })
+    expect(later.status).toBe(409)
+  })
+})
+
 describe('the calendar', () => {
   it('says which devices each date uses, so it can be narrowed to one', async () => {
     const { deviceId } = await seedEverything()
@@ -1408,9 +1477,12 @@ describe('outputs', () => {
     expect(outputs[0].durationMs).toBe(90 * MINUTE)
   })
 
-  it('refuses an output that would start before its event opens', async () => {
+  it('refuses an output that would start before its broadcast is made', async () => {
     const { outputId } = await seedEverything()
-    expect((await patch(`/api/outputs/${outputId}`, { offsetMs: -30 * MINUTE })).status).toBe(400)
+    // Starting before the event is fine; starting before the 30 minutes
+    // of preparing is not.
+    expect((await patch(`/api/outputs/${outputId}`, { offsetMs: -10 * MINUTE })).status).toBe(200)
+    expect((await patch(`/api/outputs/${outputId}`, { offsetMs: -30 * MINUTE })).status).toBe(409)
   })
 
   it('reports two outputs that would fight over the same encoder', async () => {

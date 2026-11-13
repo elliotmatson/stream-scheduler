@@ -47,6 +47,55 @@ function seedSeries(db: Database.Database): void {
   ).run(now, now, now)
 }
 
+describe('moving start early and keep going onto outputs', () => {
+  it('keeps every output on air exactly when it was', () => {
+    const db = new Database(':memory:')
+    db.pragma('foreign_keys = ON')
+    db.exec(
+      `CREATE TABLE schema_migration (id INTEGER PRIMARY KEY, name TEXT NOT NULL, applied_at INTEGER NOT NULL)`,
+    )
+    const record = db.prepare(
+      'INSERT INTO schema_migration (id, name, applied_at) VALUES (?, ?, ?)',
+    )
+    for (const migration of migrations.filter((m) => m.id < 17)) {
+      db.exec(migration.sql)
+      migration.convert?.(db)
+      record.run(migration.id, migration.name, Date.now())
+    }
+    const MIN = 60_000
+    // Ten minutes early, five minutes over.
+    db.prepare(
+      `INSERT INTO event_series (id, label, timezone, dtstart, duration_ms, preroll_ms, postroll_ms, created_at, updated_at)
+       VALUES ('s', 'Sunday', 'America/Chicago', 0, ?, ?, ?, 0, 0)`,
+    ).run(90 * MIN, 10 * MIN, 5 * MIN)
+    const output = db.prepare(
+      `INSERT INTO event_output (id, series_id, kind, label, position, offset_ms, duration_ms, follows_window, templates, enabled, created_at)
+       VALUES (?, 's', 'stream', ?, ?, ?, ?, ?, '{}', 1, 0)`,
+    )
+    output.run('fixed', '9:00', 0, 0, 75 * MIN, 0)
+    output.run('follows', 'Main', 1, 0, 90 * MIN, 1)
+
+    migrate(db)
+
+    const row = (id: string) =>
+      db
+        .prepare('SELECT offset_ms, duration_ms, stop_after_ms FROM event_output WHERE id = ?')
+        .get(id)
+    // Was on from -10 to 75+5: still is, on its own numbers.
+    expect(row('fixed')).toEqual({ offset_ms: -10 * MIN, duration_ms: 90 * MIN, stop_after_ms: 0 })
+    // Follows the window: starts as early, and keeps going the same five.
+    expect(row('follows')).toEqual({
+      offset_ms: -10 * MIN,
+      duration_ms: 90 * MIN,
+      stop_after_ms: 5 * MIN,
+    })
+    expect(db.prepare('SELECT preroll_ms, postroll_ms FROM event_series').get()).toEqual({
+      preroll_ms: 0,
+      postroll_ms: 0,
+    })
+  })
+})
+
 describe('the event-output migration', () => {
   it('drops the old "let YouTube start and stop" setting, and only from YouTube', () => {
     const db = new Database(':memory:')

@@ -55,7 +55,7 @@ import { registerNotifyRoutes } from './notify-routes.js'
 import { registerBackupRoutes } from './backup-routes.js'
 import { registerOAuthRoutes } from './oauth-routes.js'
 import { registerPlanRoutes } from './plan-routes.js'
-import { clearPlanOccurrences, syncSeries } from '../plans/sync.js'
+import { byPlan, clearPlanOccurrences, syncSeries } from '../plans/sync.js'
 import { originOf } from './origin.js'
 
 export interface ServerOptions {
@@ -735,6 +735,7 @@ function registerRoutes(fastify: FastifyInstance, app: Application): void {
         // would show times that are never going to happen.
         planSourceId: z.string().optional(),
         planGroupId: z.string().optional(),
+        planMode: z.enum(['time', 'plan']).default('time'),
         /** What each date sends out, so the preview can list it under the
          *  date with its own names rendered. */
         outputs: z.array(PREVIEW_OUTPUT).default([]),
@@ -820,6 +821,8 @@ function registerRoutes(fastify: FastifyInstance, app: Application): void {
      */
     planSourceId: z.string().nullable().optional(),
     planGroupId: z.string().nullable().optional(),
+    /** One event per service time, or one per plan. */
+    planMode: z.enum(['time', 'plan']).default('time'),
   })
 
   fastify.get('/api/series', async () => {
@@ -870,6 +873,7 @@ function registerRoutes(fastify: FastifyInstance, app: Application): void {
     for (const output of outputs) {
       assertDeliverable(output)
       assertRightKindOfDevice(app, output)
+      assertPreparedInTime(output, body.prepareLeadMs)
     }
 
     const id = randomUUID()
@@ -879,8 +883,8 @@ function registerRoutes(fastify: FastifyInstance, app: Application): void {
         `INSERT INTO event_series
          (id, label, timezone, rrule, dtstart, duration_ms, exdates,
           prepare_lead_ms, preroll_ms, postroll_ms, late_start_grace_ms, templates, version, enabled,
-          plan_source_id, plan_group_id, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?)`,
+          plan_source_id, plan_group_id, plan_mode, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?)`,
       ).run(
         id,
         body.label,
@@ -897,6 +901,7 @@ function registerRoutes(fastify: FastifyInstance, app: Application): void {
         body.enabled ? 1 : 0,
         pairingColumns(app, body).sourceId,
         pairingColumns(app, body).groupId,
+        body.planMode,
         now,
         now,
       )
@@ -922,12 +927,17 @@ function registerRoutes(fastify: FastifyInstance, app: Application): void {
     if (body.dtstartLocal)
       merged.dtstart = resolveDtstart({ ...merged, dtstartLocal: body.dtstartLocal })
     assertSchedulable(merged)
+    // Preparing later than an output is meant to start would leave it
+    // going live onto a broadcast that does not exist yet.
+    for (const output of outputsForSeries(db, id)) {
+      assertPreparedInTime(output, merged.prepareLeadMs)
+    }
 
     db.prepare(
       `UPDATE event_series SET label = ?, timezone = ?, rrule = ?,
          dtstart = ?, duration_ms = ?, exdates = ?, prepare_lead_ms = ?, preroll_ms = ?, postroll_ms = ?,
          late_start_grace_ms = ?, templates = ?, enabled = ?,
-         plan_source_id = ?, plan_group_id = ? WHERE id = ?`,
+         plan_source_id = ?, plan_group_id = ?, plan_mode = ? WHERE id = ?`,
     ).run(
       merged.label,
       merged.timezone,
@@ -943,6 +953,7 @@ function registerRoutes(fastify: FastifyInstance, app: Application): void {
       merged.enabled ? 1 : 0,
       pairingColumns(app, merged).sourceId,
       pairingColumns(app, merged).groupId,
+      merged.planMode,
       id,
     )
     bumpSeriesVersion(db, id, app.clock)
@@ -1009,12 +1020,25 @@ function registerRoutes(fastify: FastifyInstance, app: Application): void {
   const outputBody = z.object({
     kind: z.enum(['stream', 'recording']),
     label: z.string().min(1),
-    offsetMs: z.number().int().nonnegative().default(0),
+    /** From the window's start. Negative starts before it: a stream up
+     *  ten minutes before the service. */
+    offsetMs: z
+      .number()
+      .int()
+      .min(-12 * 3_600_000)
+      .default(0),
     durationMs: z.number().int().positive(),
     /** Run until the window closes instead of for `durationMs`. What a
      *  stream wants when the schedule comes from a plan whose services are
      *  not the same length two weeks running. */
     followsWindow: z.boolean().default(false),
+    /** How long one that follows the window keeps going after it closes. */
+    stopAfterMs: z
+      .number()
+      .int()
+      .nonnegative()
+      .max(12 * 3_600_000)
+      .default(0),
     destinationId: z.string().nullable().default(null),
     credentialId: z.string().nullable().default(null),
     /** Where it runs. Required: an output with no hardware is an event that
@@ -1052,9 +1076,9 @@ function registerRoutes(fastify: FastifyInstance, app: Application): void {
     db.prepare(
       `INSERT INTO event_output
          (id, series_id, kind, label, position, offset_ms, duration_ms, follows_window,
-          destination_id, credential_id,
+          stop_after_ms, destination_id, credential_id,
           device_id, node_id, templates, settings, enabled, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).run(
       outputId,
       seriesId,
@@ -1064,6 +1088,7 @@ function registerRoutes(fastify: FastifyInstance, app: Application): void {
       body.offsetMs,
       body.durationMs,
       body.followsWindow ? 1 : 0,
+      body.stopAfterMs,
       body.destinationId,
       body.credentialId,
       body.deviceId,
@@ -1096,6 +1121,7 @@ function registerRoutes(fastify: FastifyInstance, app: Application): void {
     const body = outputBody.parse(request.body)
     assertDeliverable(body)
     assertRightKindOfDevice(app, body)
+    assertPreparedInTime(body, prepareLeadOf(db, id))
 
     const next =
       body.position ??
@@ -1126,10 +1152,11 @@ function registerRoutes(fastify: FastifyInstance, app: Application): void {
     const merged = { ...current, ...body }
     assertDeliverable(merged)
     assertRightKindOfDevice(app, merged)
+    assertPreparedInTime(merged, prepareLeadOf(db, current.seriesId))
 
     db.prepare(
       `UPDATE event_output SET kind = ?, label = ?, position = ?, offset_ms = ?, duration_ms = ?,
-         follows_window = ?,
+         follows_window = ?, stop_after_ms = ?,
          destination_id = ?, credential_id = ?, device_id = ?, node_id = ?, templates = ?, settings = ?,
          enabled = ?
        WHERE id = ?`,
@@ -1140,6 +1167,7 @@ function registerRoutes(fastify: FastifyInstance, app: Application): void {
       merged.offsetMs,
       merged.durationMs,
       merged.followsWindow ? 1 : 0,
+      merged.stopAfterMs,
       merged.destinationId,
       merged.credentialId,
       merged.deviceId,
@@ -1521,6 +1549,34 @@ function registerRoutes(fastify: FastifyInstance, app: Application): void {
    * number on it comes from the same instant — a dashboard whose halves
    * disagree is worse than no dashboard.
    */
+  // -- general settings ---------------------------------------------------
+
+  /**
+   * The timezone new events are in unless they say otherwise.
+   *
+   * Null until somebody sets it, and the browser's own zone is used then:
+   * a container's zone is usually UTC, which is nobody's Sunday.
+   */
+  fastify.get('/api/settings/general', async () => {
+    const row = db.prepare("SELECT value FROM setting WHERE key = 'default_timezone'").get() as
+      { value: string } | undefined
+    return { timezone: row?.value ?? null }
+  })
+
+  fastify.put('/api/settings/general', async (request) => {
+    const { timezone } = z.object({ timezone: z.string().min(1) }).parse(request.body)
+    try {
+      new Intl.DateTimeFormat('en-US', { timeZone: timezone })
+    } catch {
+      throw new ConflictError(`"${timezone}" is not a timezone this server knows.`)
+    }
+    db.prepare(
+      `INSERT INTO setting (key, value) VALUES ('default_timezone', ?)
+       ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+    ).run(timezone)
+    return { timezone }
+  })
+
   fastify.get('/api/dashboard', async () => buildDashboard(app))
 
   /** Just what needs somebody, for the bell every screen carries. */
@@ -2040,6 +2096,7 @@ async function previewFromPlan(
     count: number
     planSourceId?: string | undefined
     planGroupId?: string | undefined
+    planMode: 'time' | 'plan'
     outputs: z.infer<typeof PREVIEW_OUTPUT>[]
   },
 ): Promise<unknown> {
@@ -2056,7 +2113,9 @@ async function previewFromPlan(
   }
 
   const now = app.clock.now()
-  const upcoming = services.filter((service) => service.startsAt > now).slice(0, body.count)
+  const upcoming = (body.planMode === 'plan' ? byPlan(services, body.durationMs) : services)
+    .filter((service) => service.startsAt > now)
+    .slice(0, body.count)
 
   return {
     describes:
@@ -2239,6 +2298,7 @@ interface SeriesRowShape {
   enabled: number
   plan_source_id: string | null
   plan_group_id: string | null
+  plan_mode?: string
   plan_synced_at: number | null
   plan_error: string | null
 }
@@ -2295,6 +2355,7 @@ function toSeriesDto(row: SeriesRowShape) {
     enabled: row.enabled === 1,
     planSourceId: row.plan_source_id,
     planGroupId: row.plan_group_id,
+    planMode: row.plan_mode === 'plan' ? ('plan' as const) : ('time' as const),
     // So the UI can say "last read nine minutes ago" and show what went
     // wrong, which is the difference between a pairing you can trust and
     // one you have to go and check in Planning Center.
@@ -2502,6 +2563,32 @@ function assertRightKindOfDevice(
  * app gets to resolve, and one with neither is a stream that would silently
  * do nothing at 09:00.
  */
+/**
+ * An output may start before the event, but not before its broadcast exists.
+ *
+ * Broadcasts are made "Prepare early" before the event. A stream set to
+ * start earlier than that would go live onto nothing, so it is refused
+ * while it can still be fixed, with the number that would fix it.
+ */
+function assertPreparedInTime(
+  output: { label: string; offsetMs: number },
+  prepareLeadMs: number,
+): void {
+  // A minute's slack: preparing takes a moment, and starting in the same
+  // minute the broadcast is made is cutting it fine.
+  if (output.offsetMs >= -prepareLeadMs + 60_000) return
+  const before = Math.round(-output.offsetMs / 60_000)
+  throw new ConflictError(
+    `"${output.label}" starts ${before} min before the event, but its broadcast is only made ${Math.round(prepareLeadMs / 60_000)} min before. Set Prepare early to at least ${before + 1} min.`,
+  )
+}
+
+function prepareLeadOf(db: Db, seriesId: string): number {
+  const row = db.prepare('SELECT prepare_lead_ms FROM event_series WHERE id = ?').get(seriesId) as
+    { prepare_lead_ms: number } | undefined
+  return row?.prepare_lead_ms ?? 30 * 60_000
+}
+
 function assertDeliverable(
   output: Pick<EventOutput, 'kind' | 'destinationId' | 'credentialId' | 'label'>,
 ): void {

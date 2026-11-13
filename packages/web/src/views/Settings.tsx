@@ -11,6 +11,7 @@ import {
 import { Card, ConfirmButton, ErrorBanner, Field, PageHead } from '../components.tsx'
 import { PlanSourceCard } from './PlanSource.tsx'
 import { dateTimeIn, relative } from '../format.ts'
+import { commonZones, zoneChoices, zoneName } from '../zones.ts'
 
 /**
  * The things that belong to the install rather than to an event.
@@ -33,10 +34,12 @@ export function Settings({ onSessionChanged }: { onSessionChanged: () => void })
 
   return (
     <>
-      <PageHead title="Settings" subtitle="Who can reach this install, and how to get it back." />
+      <PageHead title="Settings" />
       <ErrorBanner error={error} />
 
       <div className="stack">
+        <TimeZoneCard />
+
         {data ? (
           <Security
             session={data}
@@ -492,5 +495,56 @@ function Schedule({
             }.`}
       </p>
     </div>
+  )
+}
+
+/**
+ * The timezone every event is in unless it says otherwise.
+ *
+ * One answer for the whole install, set once, rather than a question on
+ * every event: a church is in one place, and a 418-entry list on the
+ * event form was the first thing a volunteer met.
+ */
+function TimeZoneCard(): ReactNode {
+  const browser = Intl.DateTimeFormat().resolvedOptions().timeZone
+  const { data, reload } = useResource(() => api.generalSettings(), [])
+  const [problem, setProblem] = useState<string>()
+  const current = data?.timezone ?? browser
+
+  return (
+    <Card title="Time zone">
+      <ErrorBanner error={problem} />
+      <Field
+        label="Events are in"
+        hint={data?.timezone ? undefined : 'Not set yet, so this browser’s zone is used.'}
+      >
+        <select
+          value={current}
+          onChange={(event) => {
+            setProblem(undefined)
+            api
+              .setGeneralSettings({ timezone: event.target.value })
+              .then(reload, (err: Error) => setProblem(err.message))
+          }}
+        >
+          <optgroup label="Common">
+            {commonZones(current).map((zone) => (
+              <option key={zone} value={zone}>
+                {zoneName(zone)}
+              </option>
+            ))}
+          </optgroup>
+          <optgroup label="Everywhere else">
+            {zoneChoices(current)
+              .filter((zone) => !commonZones(current).includes(zone))
+              .map((zone) => (
+                <option key={zone} value={zone}>
+                  {zone.replace(/_/g, ' ')}
+                </option>
+              ))}
+          </optgroup>
+        </select>
+      </Field>
+    </Card>
   )
 }

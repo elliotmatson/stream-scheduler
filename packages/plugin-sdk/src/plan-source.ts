@@ -42,6 +42,9 @@ export interface PlanGroup {
  */
 export interface PlannedService {
   externalId: string
+  /** The plan this time belongs to, where the source has plans with several
+   *  times in them. Lets an event be one per plan rather than one per time. */
+  planId?: string
   /** Epoch ms. A real instant, so a moved service needs no timezone. */
   startsAt: number
   /** Epoch ms. Absent where the source has no end time, in which case the
