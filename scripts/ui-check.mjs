@@ -509,7 +509,7 @@ async function theFileBrowser(browser, base) {
   // and a deck serves every mounted card at its root, so the way to the
   // others is through the browser — which lives entirely in the page and
   // is invisible to every other kind of test here.
-  await files.getByRole('button', { name: 'Read the media' }).first().click()
+  // The list reads itself when the panel opens; nothing to press.
   const crumb = files.locator('code').first()
   await crumb.waitFor({ timeout: TIMEOUT })
 

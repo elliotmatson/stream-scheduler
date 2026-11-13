@@ -432,8 +432,8 @@ function DevicePanel({
             ))}
             {/* Said once under the list rather than beside every line. */}
             <p className="muted" style={{ margin: 0, fontSize: 12 }}>
-              Most browsers no longer open ftp:// — if nothing happens, copy the address and paste
-              it into Finder (Go &gt; Connect to Server) or Windows Explorer.
+              If the link does nothing, paste it into Finder (Go &gt; Connect to Server) or Windows
+              Explorer.
             </p>
           </div>
         ) : null}
@@ -470,15 +470,14 @@ function DevicePanel({
         <div className="stack" style={{ marginTop: 16, gap: 6 }}>
           <span className="field-label">Tags</span>
           <TagEditor kind="device" id={device.id} tags={device.tags ?? []} onChanged={onTagged} />
-          <p className="muted" style={{ margin: 0, fontSize: 12 }}>
-            Your own labels, for finding this on the device list. Nothing here changes what the
-            device does.
-          </p>
         </div>
       </aside>
     </>
   )
 }
+
+/** The stream-target choice that opens the boxes for a new one. */
+const NEW_TARGET = '__new__'
 
 /**
  * Drive one node by hand.
@@ -492,7 +491,10 @@ function DevicePanel({
  * that it accepted the command.
  */
 function NodeControls({ device, node }: { device: Device; node: DeviceNode }): ReactNode {
-  const [open, setOpen] = useState(false)
+  // Open, and read, as soon as the panel is: what the device is doing is
+  // what somebody opened it to see, and pressing a button to find out was
+  // a step nobody should need.
+  const [open, setOpen] = useState(true)
   const [state, setState] = useState<NodeState | null>()
   const [busy, setBusy] = useState<string>()
   const [error, setError] = useState<string>()
@@ -513,7 +515,7 @@ function NodeControls({ device, node }: { device: Device; node: DeviceNode }): R
   const [typingQuality, setTypingQuality] = useState(false)
   // Only fetched for a node that can be pointed somewhere, and only once
   // the panel is open.
-  const { data: credentials } = useResource(
+  const { data: credentials, reload: reloadCredentials } = useResource(
     () =>
       open && node.supports.includes('applyStreamTarget') ? api.credentials() : Promise.resolve([]),
     [open, node.id],
@@ -537,6 +539,11 @@ function NodeControls({ device, node }: { device: Device; node: DeviceNode }): R
   }
 
   const read = (): void => void run('read', () => api.nodeState(device.id, node.id))
+  useEffect(() => {
+    if (connected) read()
+    // Once per panel; pushes keep it current after that.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [device.id, node.id, connected])
 
   /**
    * Erase a card, asking the deck twice as its protocol requires.
@@ -582,14 +589,29 @@ function NodeControls({ device, node }: { device: Device; node: DeviceNode }): R
       ),
     )
 
-  /** Point the encoder at a saved target, with the profile if one is picked. */
+  const [newTarget, setNewTarget] = useState({ label: '', url: '', key: '' })
+
+  /** Point the encoder at a target, saving a new one first if it was typed. */
   const point = (): void =>
-    void run('point', () =>
-      api.pointAtTarget(device.id, node.id, {
-        credentialId,
+    void run('point', async () => {
+      let id = credentialId
+      if (id === NEW_TARGET) {
+        id = (
+          await api.createCredential({
+            label: newTarget.label || newTarget.url,
+            ingestUrl: newTarget.url,
+            key: newTarget.key,
+          })
+        ).id
+        setCredentialId(id)
+        setNewTarget({ label: '', url: '', key: '' })
+        reloadCredentials()
+      }
+      return api.pointAtTarget(device.id, node.id, {
+        credentialId: id,
         ...(quality ? { quality } : {}),
-      }),
-    )
+      })
+    })
 
   const streaming = state?.streaming
   const recording = state?.recording
@@ -613,29 +635,22 @@ function NodeControls({ device, node }: { device: Device; node: DeviceNode }): R
   return (
     <details
       open={open}
-      onToggle={(event) => {
-        const nowOpen = (event.currentTarget as HTMLDetailsElement).open
-        setOpen(nowOpen)
-        if (nowOpen && state === undefined && connected) read()
-      }}
+      onToggle={(event) => setOpen((event.currentTarget as HTMLDetailsElement).open)}
     >
-      <summary title="Open to see what this part of the device is doing, and to drive it by hand.">
-        {node.label}
-      </summary>
+      <summary>{node.label}</summary>
 
       <div className="stack" style={{ marginTop: 10 }}>
         {!connected ? (
           <p className="muted" style={{ margin: 0 }}>
-            Not connected. Press Connect above first.
+            Not connected.
           </p>
         ) : (
           <>
             {device.inUseBy.length > 0 ? (
               <div className="banner warn">
                 {device.inUseBy.map((entry) => entry.label).join(', ')}{' '}
-                {device.inUseBy.length === 1 ? 'is' : 'are'} mid-run on this device. Anything you do
-                here the scheduler may undo at the next start or stop in its window — to end it
-                properly, stop the run on its own page.
+                {device.inUseBy.length === 1 ? 'is' : 'are'} running on this device. To end it, stop
+                it on its event page.
               </div>
             ) : null}
 
@@ -644,14 +659,7 @@ function NodeControls({ device, node }: { device: Device; node: DeviceNode }): R
                 {error}
                 {/* The most likely failure on this screen, and the message
                     alone does not say what to do about it. */}
-                {/no stream target/i.test(error) ? (
-                  <>
-                    {' '}
-                    This encoder has not been pointed anywhere yet. Put it on an event, which
-                    applies the key when the event starts — a stream key never travels through this
-                    screen.
-                  </>
-                ) : null}
+                {/no stream target/i.test(error) ? <> Set a stream target below first.</> : null}
               </div>
             ) : null}
 
@@ -660,12 +668,7 @@ function NodeControls({ device, node }: { device: Device; node: DeviceNode }): R
                 recorder. */}
             {readOnly ? (
               <p className="muted" style={{ margin: 0 }}>
-                Nothing to drive here. This node{' '}
-                {node.roles.includes('router')
-                  ? 'routes signal'
-                  : 'does neither streaming nor recording'}
-                , which is the operator's job at the desk rather than the scheduler's — so this
-                panel only reports what it is set to.
+                Shown for reference; nothing here to control.
               </p>
             ) : null}
 
@@ -793,15 +796,13 @@ function NodeControls({ device, node }: { device: Device; node: DeviceNode }): R
             {node.supports.includes('applyStreamTarget') ? (
               <div className="stack" style={{ gap: 8 }}>
                 <div className="row" style={{ gap: 10, alignItems: 'flex-end' }}>
-                  <Field
-                    label="Stream key"
-                    hint="One of the saved keys, chosen by name. The key itself never reaches this screen."
-                  >
+                  <Field label="Stream target">
                     <select
                       value={credentialId}
                       onChange={(event) => setCredentialId(event.target.value)}
                     >
                       <option value="">{LEAVE_AS_IS}</option>
+                      <option value={NEW_TARGET}>New server and key…</option>
                       {(credentials ?? [])
                         .filter((credential) => credential.ingestUrl)
                         .map((credential) => (
@@ -846,30 +847,62 @@ function NodeControls({ device, node }: { device: Device; node: DeviceNode }): R
                     </Field>
                   ) : null}
                   <button
-                    disabled={busy !== undefined || !credentialId || device.inUseBy.length > 0}
+                    disabled={
+                      busy !== undefined ||
+                      !credentialId ||
+                      device.inUseBy.length > 0 ||
+                      (credentialId === NEW_TARGET && (!newTarget.url || !newTarget.key))
+                    }
                     onClick={point}
                   >
-                    {busy === 'point' ? 'Applying…' : 'Apply to the device'}
+                    {busy === 'point' ? 'Applying…' : 'Apply'}
                   </button>
                 </div>
-                <p className="muted" style={{ margin: 0 }}>
-                  {device.inUseBy.length > 0
-                    ? 'Off while an event is mid-run on this device: re-pointing it would move the stream.'
-                    : !credentialId
-                      ? 'Pick a saved target to apply. The quality goes with it — the device takes both in ' +
-                        'one command, so there is no way to send one alone.'
-                      : 'Pushes the key and the quality to the device now. For a one-off: an event points ' +
-                        'its own encoder when it starts, which overwrites this.'}
-                </p>
+                {/* A target typed here is saved as a stream key, so it can be
+                    picked again — here or on an event — without retyping. */}
+                {credentialId === NEW_TARGET ? (
+                  <div className="row" style={{ gap: 10 }}>
+                    <Field label="Name">
+                      <input
+                        value={newTarget.label}
+                        placeholder="Facebook Live"
+                        onChange={(event) =>
+                          setNewTarget({ ...newTarget, label: event.target.value })
+                        }
+                      />
+                    </Field>
+                    <Field label="Server URL">
+                      <input
+                        value={newTarget.url}
+                        placeholder={streaming?.targetUrl ?? 'rtmps://…'}
+                        onChange={(event) =>
+                          setNewTarget({ ...newTarget, url: event.target.value })
+                        }
+                      />
+                    </Field>
+                    <Field label="Stream key">
+                      <input
+                        type="password"
+                        autoComplete="new-password"
+                        value={newTarget.key}
+                        onChange={(event) =>
+                          setNewTarget({ ...newTarget, key: event.target.value })
+                        }
+                      />
+                    </Field>
+                  </div>
+                ) : null}
+                {device.inUseBy.length > 0 ? (
+                  <p className="muted" style={{ margin: 0 }}>
+                    Off while an event is running on this device.
+                  </p>
+                ) : null}
               </div>
             ) : null}
 
             {canRecord ? (
               <div className="row" style={{ gap: 10, alignItems: 'flex-end' }}>
-                <Field
-                  label="Filename"
-                  hint="Needed before a recording can start. A scheduled event names its own."
-                >
+                <Field label="Filename" hint="For a recording started here. Events name their own.">
                   <input
                     value={filename}
                     placeholder="2026-09-06 rehearsal"
@@ -906,12 +939,8 @@ function NodeControls({ device, node }: { device: Device; node: DeviceNode }): R
             ) : null}
 
             <div className="row">
-              <button
-                disabled={busy !== undefined}
-                title="Asks the device what it is doing now. It also reports changes by itself while this panel is open."
-                onClick={read}
-              >
-                {busy === 'read' ? 'Reading…' : 'Read state'}
+              <button disabled={busy !== undefined} onClick={read}>
+                {busy === 'read' ? 'Reading…' : 'Refresh'}
               </button>
               {(
                 [
@@ -958,15 +987,6 @@ function NodeControls({ device, node }: { device: Device; node: DeviceNode }): R
                   ),
                 )}
             </div>
-
-            {readOnly ? null : (
-              <p className="muted" style={{ margin: 0 }}>
-                {canStream
-                  ? 'Starting a stream sends it wherever this device is already pointed. '
-                  : ''}
-                Every button here is read back off the device before it reports success.
-              </p>
-            )}
           </>
         )}
       </div>
