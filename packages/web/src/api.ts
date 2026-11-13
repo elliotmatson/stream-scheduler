@@ -753,6 +753,8 @@ export const api = {
       body: JSON.stringify(body),
     }),
   dashboard: () => request<Dashboard>('/api/dashboard'),
+  /** What needs somebody, on its own, for the button every screen has. */
+  attention: () => request<{ items: Dashboard['attention'] }>('/api/attention'),
   runs: () => request<Run[]>('/api/runs'),
   run: (id: string) => request<Run>(`/api/runs/${id}`),
   /** Forgets a finished run, its steps and its readings. Recordings stay. */

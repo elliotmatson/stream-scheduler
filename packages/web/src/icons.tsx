@@ -100,6 +100,18 @@ export function IconNotifications(): ReactNode {
   )
 }
 
+/** A warning triangle, for what needs somebody. Not the bell, which is
+ *  where alerts are sent from. */
+export function IconAttention(): ReactNode {
+  return (
+    <Glyph>
+      <path d="M8 2.2 14.3 13a.6.6 0 0 1-.5.9H2.2a.6.6 0 0 1-.5-.9L8 2.2Z" />
+      <path d="M8 6.5v3.2" />
+      <path d="M8 11.6v.1" />
+    </Glyph>
+  )
+}
+
 export function IconSystem(): ReactNode {
   return (
     <Glyph>

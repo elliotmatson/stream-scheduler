@@ -17,6 +17,7 @@ import {
   IconSystem,
 } from './icons.tsx'
 import { Dashboard } from './views/Dashboard.tsx'
+import { AttentionBell } from './views/AttentionBell.tsx'
 import { Schedule } from './views/Schedule.tsx'
 import { Devices } from './views/Devices.tsx'
 import { SeriesList } from './views/SeriesList.tsx'
@@ -50,7 +51,7 @@ function useHashRoute(): [string, (path: string) => void] {
 const NAV = [
   // What is on air now comes before what is planned: this is the screen a
   // booth leaves open, and everything else is for setting up.
-  { to: '/', label: 'Now', icon: <IconNow /> },
+  { to: '/', label: 'Home', icon: <IconNow /> },
   { to: '/schedule', label: 'Schedule', icon: <IconSchedule /> },
   { to: '/events', label: 'Events', icon: <IconEvents /> },
   { to: '/devices', label: 'Devices', icon: <IconDevices /> },
@@ -155,6 +156,7 @@ function SignedIn({
           </div>
 
           <div className="sidebar-foot">
+            <AttentionBell navigate={navigate} />
             {liveRuns > 0 ? (
               <span
                 className="pill live"

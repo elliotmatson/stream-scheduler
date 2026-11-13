@@ -1,3 +1,4 @@
+import { readableFormat } from './dashboard.js'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -580,14 +581,15 @@ describe('the status screen', () => {
     expect(row.activity).toBe('idle')
 
     // A row that says only "idle" is a row nobody reads. What is on the
-    // input, how much card is left and what it is set to record at are all
-    // things that are wrong on the Sunday a service fails to record.
+    // input and how much card is left are what is wrong on the Sunday a
+    // service fails to record. The quality it is set to is setup, and is
+    // left to the device's own page.
     const facts = Object.fromEntries(
       row.facts.map((fact: { label: string; value: string }) => [fact.label, fact.value]),
     )
     expect(facts['Card']).toBe('4h left')
-    expect(facts['Input']).toBe('1080p50 on SDI')
-    expect(facts['Quality']).toBe('standard')
+    expect(facts['Input']).toBe('1080p50')
+    expect(facts['Quality']).toBeUndefined()
     // Always at least the type, so no device is ever a bare name.
     expect(facts['Type']).toBe('Mock device')
   })
@@ -613,6 +615,20 @@ describe('the status screen', () => {
         message: expect.stringContaining('40 min of recording left'),
       }),
     ])
+
+    // The same list on its own, for the button on every screen.
+    expect((await get('/api/attention')).json.items).toEqual(dashboard.attention)
+  })
+})
+
+describe('reading a device at a glance', () => {
+  it('writes a frame rate the way people do', () => {
+    expect(readableFormat('1080p5994')).toBe('1080p59.94')
+    expect(readableFormat('2160p2398')).toBe('2160p23.98')
+    expect(readableFormat('1080i5000')).toBe('1080i50')
+    // Anything not in the deck's shorthand is left as it came.
+    expect(readableFormat('720p60')).toBe('720p60')
+    expect(readableFormat('NTSC')).toBe('NTSC')
   })
 })
 

@@ -49,7 +49,7 @@ import {
 } from '../events/occurrence-overrides.js'
 import { assertUnreferenced, ConflictError, NotFoundError } from './errors.js'
 import { hostnameOf, registerHostCheck } from './host-check.js'
-import { buildDashboard, outputsOf } from './dashboard.js'
+import { attention, buildDashboard, outputsOf } from './dashboard.js'
 import { registerAuthGate, registerAuthRoutes, tokenFrom } from './auth-routes.js'
 import { registerNotifyRoutes } from './notify-routes.js'
 import { registerBackupRoutes } from './backup-routes.js'
@@ -1506,6 +1506,9 @@ function registerRoutes(fastify: FastifyInstance, app: Application): void {
    * disagree is worse than no dashboard.
    */
   fastify.get('/api/dashboard', async () => buildDashboard(app))
+
+  /** Just what needs somebody, for the bell every screen carries. */
+  fastify.get('/api/attention', async () => ({ items: attention(app, Date.now()) }))
 
   // -- runs ---------------------------------------------------------------
 
