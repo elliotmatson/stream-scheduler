@@ -119,9 +119,22 @@ export const connectFtp: FtpConnect = async ({ host, port }) => {
       await client.remove(path)
     },
     removeDirectory: async (path) => {
-      // Recursive, because a recording folder is never empty and RMD on a
-      // directory with contents is refused by every server worth the name.
-      await client.removeDir(path)
+      // Our own walk rather than the library's: it changes directory and
+      // asks the server where it is at every level, which a device's small
+      // FTP server does not reliably answer, and it lists with its own
+      // defaults rather than the listing that works here.
+      await removeTree(
+        {
+          entries,
+          removeFile: async (file) => {
+            await client.remove(file)
+          },
+          removeEmptyDirectory: async (directory) => {
+            await client.removeEmptyDir(directory)
+          },
+        },
+        path,
+      )
     },
     close: async () => {
       client.close()
@@ -225,4 +238,31 @@ export function parseListDate(
   return at > now + 86_400_000
     ? new Date(year - 1, month, day, Number(match[3]), Number(match[4])).getTime()
     : at
+}
+
+/** What `removeTree` needs from a server: list, delete a file, delete a folder. */
+export interface TreeRemover {
+  entries(directory: string): Promise<{ name: string; isDirectory: boolean }[]>
+  removeFile(path: string): Promise<void>
+  removeEmptyDirectory(path: string): Promise<void>
+}
+
+/**
+ * Removes a folder and everything in it, by full path at every step.
+ *
+ * A recording folder on an ATEM in ISO mode holds the programme file, one
+ * file per camera in a subfolder, the project, and on a card that has been
+ * near a Mac an AppleDouble sidecar beside each. All of it has to go first:
+ * no server removes a folder that is not empty. Housekeeping files are
+ * deleted too, here, because they are what would otherwise keep it from
+ * being empty.
+ */
+export async function removeTree(server: TreeRemover, directory: string): Promise<void> {
+  for (const entry of await server.entries(directory)) {
+    if (entry.name === '.' || entry.name === '..') continue
+    const path = ftpPath(directory, entry.name)
+    if (entry.isDirectory) await removeTree(server, path)
+    else await server.removeFile(path)
+  }
+  await server.removeEmptyDirectory(directory)
 }
