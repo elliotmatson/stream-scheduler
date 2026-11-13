@@ -441,6 +441,18 @@ describe('the calendar', () => {
     const list = await get(`/api/occurrences?from=${START - MINUTE}&to=${START + 60 * MINUTE}`)
     expect(list.json[0].deviceIds).toEqual([deviceId])
   })
+
+  it('says whether each date streams or records, and carries its tags', async () => {
+    const { seriesId } = await seedEverything()
+    await server.inject({
+      method: 'PUT',
+      url: `/api/tags/series/${seriesId}`,
+      payload: { tags: ['AND'] },
+    })
+    const list = await get(`/api/occurrences?from=${START - MINUTE}&to=${START + 60 * MINUTE}`)
+    expect(list.json[0].kinds).toEqual(['stream'])
+    expect(list.json[0].tags).toEqual(['AND'])
+  })
 })
 
 describe('scheduling a date again', () => {

@@ -2139,3 +2139,13 @@ button.link:hover {
   padding-left: 16px;
   font-size: 12.5px;
 }
+
+/* Under the Schedule heading: the date on the left, the filters on the right. */
+.schedule-bar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 14px;
+}

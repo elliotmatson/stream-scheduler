@@ -1185,6 +1185,8 @@ function registerRoutes(fastify: FastifyInstance, app: Application): void {
     const from = query.from ?? app.clock.now() - 7 * 86_400_000
     const to = query.to ?? app.clock.now() + 60 * 86_400_000
     const devicesBySeries: Record<string, string[]> = {}
+    const kindsBySeries: Record<string, ('stream' | 'recording')[]> = {}
+    const tagsBySeries: Record<string, string[]> = {}
 
     return (
       db
@@ -1208,8 +1210,19 @@ function registerRoutes(fastify: FastifyInstance, app: Application): void {
           )
           .all(row.series_id) as { device_id: string }[]
       ).map((output) => output.device_id))
+      // Whether it streams, records or both, and the event's own tags: the
+      // other two ways the schedule is narrowed.
+      const kinds = (kindsBySeries[row.series_id] ??= (
+        db
+          .prepare('SELECT DISTINCT kind FROM event_output WHERE series_id = ? AND enabled = 1')
+          .all(row.series_id) as { kind: 'stream' | 'recording' }[]
+      ).map((output) => output.kind))
+      const tags = (tagsBySeries[row.series_id] ??=
+        app.tags.forMany('series', [row.series_id]).get(row.series_id) ?? [])
       return {
         deviceIds,
+        kinds,
+        tags,
         id: row.id,
         seriesId: row.series_id,
         seriesLabel: row.series_label,
