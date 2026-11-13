@@ -210,6 +210,10 @@ function OutputRow(props: RowProps): ReactNode {
     (entry) => entry.device.id === draft.deviceId && entry.node.id === draft.nodeId,
   )
   const offset = offsetFrom(series, draft.startsAt)
+  // A paired event has no clock time of its own: Planning Center says when
+  // each service starts. So an output is placed relative to the service,
+  // and a clock box here would only show a made-up time.
+  const paired = Boolean(series.planSourceId && series.planGroupId)
 
   return (
     <div className="card inner">
@@ -221,43 +225,57 @@ function OutputRow(props: RowProps): ReactNode {
             onChange={(event) => set('label', event.target.value)}
           />
         </Field>
-        <Field label="Starts">
-          <input
-            type="time"
-            value={draft.startsAt}
-            onChange={(event) => set('startsAt', event.target.value)}
-          />
-        </Field>
-        <Field label="Runs for (min)" hint={draft.followsWindow ? 'Set by the event.' : undefined}>
-          <input
-            type="number"
-            min={1}
-            value={draft.minutes}
-            disabled={draft.followsWindow}
-            onChange={(event) => set('minutes', Number(event.target.value))}
-          />
-        </Field>
+        {paired ? (
+          <Field label="Starts (min after service start)">
+            <input
+              type="number"
+              min={0}
+              value={Math.round(offset / 60_000)}
+              onChange={(event) =>
+                set('startsAt', clockAt(series, Math.max(0, Number(event.target.value)) * 60_000))
+              }
+            />
+          </Field>
+        ) : (
+          <Field label="Starts">
+            <input
+              type="time"
+              value={draft.startsAt}
+              onChange={(event) => set('startsAt', event.target.value)}
+            />
+          </Field>
+        )}
+        {/* Hidden rather than greyed out: with the box ticked the event's
+            own length decides, and a number here would only mislead. */}
+        {draft.followsWindow ? null : (
+          <Field label="Runs for (min)">
+            <input
+              type="number"
+              min={1}
+              value={draft.minutes}
+              onChange={(event) => set('minutes', Number(event.target.value))}
+            />
+          </Field>
+        )}
       </div>
 
-      <label className="row" style={{ gap: 8 }}>
+      <label className="row" style={{ gap: 8, flexWrap: 'nowrap' }}>
         <input
           type="checkbox"
           checked={draft.followsWindow}
           onChange={(event) => set('followsWindow', event.target.checked)}
         />
         <span>
-          Run until the event ends
-          <span className="muted">
-            {' '}
-            — rather than for a set number of minutes. What you want when the length is not the same
-            every week.
-          </span>
+          {paired ? 'Run until the service ends' : 'Run until the event ends'}
+          <span className="muted"> — for services that vary in length</span>
         </span>
       </label>
 
       {offset < 0 ? (
         <div className="banner warn">
-          That is before the event opens at {timeOf(series)}. Move the event's start, or this one.
+          {paired
+            ? 'That is before the service starts.'
+            : `That is before the event opens at ${timeOf(series)}. Move the event's start, or this one.`}
         </div>
       ) : null}
       {/* An output that follows the window cannot run past it, so the
