@@ -5,7 +5,6 @@ import {
   useResource,
   type Account,
   type Credential,
-  type Destination,
   type DestinationProvider,
   type OAuthClient,
 } from '../api.ts'
@@ -33,14 +32,12 @@ export function Services(): ReactNode {
   const providers = useResource(() => api.destinationProviders(), [])
   const clients = useResource(() => api.oauthClients(), [])
   const accounts = useResource(() => api.accounts(), [])
-  const destinations = useResource(() => api.destinations(), [])
   const credentials = useResource(() => api.credentials(), [])
   const [error, setError] = useState<string>()
 
   const reloadAll = (): void => {
     clients.reload()
     accounts.reload()
-    destinations.reload()
   }
 
   const guard = async (action: () => Promise<unknown>, after: () => void): Promise<void> => {
@@ -59,17 +56,10 @@ export function Services(): ReactNode {
     <>
       <PageHead
         title="Services"
-        subtitle="Where streams go: the accounts that make their own broadcasts, and keys for everything else."
+        subtitle="Accounts that make their own broadcasts, and stream keys for everything else."
       />
       <ErrorBanner
-        error={
-          error ??
-          providers.error ??
-          clients.error ??
-          accounts.error ??
-          destinations.error ??
-          credentials.error
-        }
+        error={error ?? providers.error ?? clients.error ?? accounts.error ?? credentials.error}
       />
 
       <div className="stack">
@@ -79,9 +69,6 @@ export function Services(): ReactNode {
             provider={provider}
             clients={(clients.data ?? []).filter((client) => client.provider === provider.id)}
             accounts={(accounts.data ?? []).filter((account) => account.provider === provider.id)}
-            destinations={(destinations.data ?? []).filter(
-              (destination) => destination.providerId === provider.id,
-            )}
             onChanged={reloadAll}
             onError={setError}
           />
@@ -102,20 +89,17 @@ function ProviderSection({
   provider,
   clients,
   accounts,
-  destinations,
   onChanged,
   onError,
 }: {
   provider: DestinationProvider
   clients: OAuthClient[]
   accounts: Account[]
-  destinations: Destination[]
   onChanged: () => void
   onError: (message: string | undefined) => void
 }): ReactNode {
   const [showSetup, setShowSetup] = useState(false)
   const [busy, setBusy] = useState(false)
-  const [addingDestination, setAddingDestination] = useState(false)
   const [editing, setEditing] = useState<string>()
 
   const act = async (action: () => Promise<unknown>): Promise<void> => {
@@ -176,7 +160,7 @@ function ProviderSection({
 
       {showSetup ? <Instructions provider={provider.id} /> : null}
 
-      <h3>1. This install's OAuth client</h3>
+      <h3>Sign-in app</h3>
       {clients.length === 0 ? (
         <p className="muted">None yet. Setup steps shows how to make one.</p>
       ) : (
@@ -197,98 +181,51 @@ function ProviderSection({
       )}
       <AddOAuthClient provider={provider.id} onAdded={onChanged} onError={onError} />
 
-      <h3>2. Connected accounts</h3>
+      <h3>Accounts</h3>
       {accounts.length === 0 ? (
         <p className="muted">
-          No account is connected, so nothing can be scheduled to {provider.displayName} yet.
+          No account is connected, so nothing can stream to {provider.displayName} yet.
         </p>
       ) : (
         <ul className="plain">
           {accounts.map((account) => (
-            <li key={account.id} className="row" style={{ justifyContent: 'space-between' }}>
-              <span>
-                {account.displayName} <StatusPill status={account.status} />
-                {account.status === 'reauth_required' ? (
-                  <span className="muted"> — connect it again; its sign-in expired.</span>
-                ) : null}
-              </span>
-              <ConfirmButton
-                label="Disconnect"
-                disabled={busy}
-                onConfirm={() => void act(() => api.deleteAccount(account.id))}
-              />
-            </li>
-          ))}
-        </ul>
-      )}
-
-      <h3>3. Destinations</h3>
-      <p className="muted" style={{ marginTop: 0 }}>
-        {provider.id === 'youtube'
-          ? 'One account plus how its broadcasts are set up: who can watch, and which playlist they go in.'
-          : 'One account plus how its streams are set up.'}
-      </p>
-      {destinations.length === 0 ? null : (
-        <ul className="plain">
-          {destinations.map((destination) =>
-            editing === destination.id ? (
-              <li key={destination.id}>
-                <DestinationForm
+            <li key={account.id}>
+              <div className="row" style={{ justifyContent: 'space-between' }}>
+                <span>
+                  {account.displayName} <StatusPill status={account.status} />
+                  {account.status === 'reauth_required' ? (
+                    <span className="muted"> — its sign-in expired; connect it again.</span>
+                  ) : (
+                    <span className="muted"> {summarise(provider, account.settings)}</span>
+                  )}
+                </span>
+                <span className="row">
+                  <button
+                    onClick={() => setEditing(editing === account.id ? undefined : account.id)}
+                  >
+                    {editing === account.id ? 'Close' : 'Settings'}
+                  </button>
+                  <ConfirmButton
+                    label="Disconnect"
+                    disabled={busy}
+                    onConfirm={() => void act(() => api.deleteAccount(account.id))}
+                  />
+                </span>
+              </div>
+              {editing === account.id && account.destinationId ? (
+                <AccountSettings
                   provider={provider}
-                  accounts={accounts}
-                  destination={destination}
+                  account={account}
                   onDone={() => {
                     setEditing(undefined)
                     onChanged()
                   }}
                   onError={onError}
                 />
-              </li>
-            ) : (
-              <li key={destination.id} className="row" style={{ justifyContent: 'space-between' }}>
-                <span>
-                  {destination.label}{' '}
-                  <span className="muted">
-                    {/* The provider's own labels, not the stored keys: nobody
-                        outside this codebase calls it a playlistId. */}
-                    {[
-                      accounts.find((account) => account.id === destination.accountId)?.displayName,
-                      ...Object.entries(destination.config).map(([key, value]) =>
-                        describeSetting(provider, key, value),
-                      ),
-                    ]
-                      .filter(Boolean)
-                      .join(' · ')}
-                  </span>
-                </span>
-                <span className="row">
-                  <button onClick={() => setEditing(destination.id)}>Edit</button>
-                  <ConfirmButton
-                    label="Remove"
-                    disabled={busy}
-                    onConfirm={() => void act(() => api.deleteDestination(destination.id))}
-                  />
-                </span>
-              </li>
-            ),
-          )}
+              ) : null}
+            </li>
+          ))}
         </ul>
-      )}
-
-      {accounts.length === 0 ? null : addingDestination ? (
-        <DestinationForm
-          provider={provider}
-          accounts={accounts}
-          onDone={() => {
-            setAddingDestination(false)
-            onChanged()
-          }}
-          onError={onError}
-        />
-      ) : (
-        <button className="primary" onClick={() => setAddingDestination(true)}>
-          Add a destination
-        </button>
       )}
     </Card>
   )
@@ -389,45 +326,45 @@ function AddOAuthClient({
   )
 }
 
-/** Adds a destination, or edits one. The same fields either way. */
-function DestinationForm({
+/**
+ * An account's broadcast defaults: who can watch, which playlist finished
+ * videos go in, the description when an event has none.
+ *
+ * What a destination used to be, without the second list to keep in step:
+ * one account, one set of defaults, and a stream that wants something else
+ * says so on the stream.
+ */
+function AccountSettings({
   provider,
-  accounts,
-  destination,
+  account,
   onDone,
   onError,
 }: {
   provider: DestinationProvider
-  accounts: Account[]
-  /** Absent when adding. */
-  destination?: Destination
+  account: Account
   onDone: () => void
   onError: (message: string | undefined) => void
 }): ReactNode {
-  const [label, setLabel] = useState(destination?.label ?? '')
-  const [accountId, setAccountId] = useState(destination?.accountId ?? accounts[0]?.id ?? '')
-  const [config, setConfig] = useState<Record<string, unknown>>(destination?.config ?? {})
+  const [config, setConfig] = useState<Record<string, unknown>>(account.settings)
   const [saving, setSaving] = useState(false)
   const [playlists, setPlaylists] = useState<{ id: string; label: string }[]>()
 
-  // `accountRef` is filled in from the picker above, not typed by hand.
+  // `accountRef` is the account itself, not something to type.
   const fields = provider.configSchema.filter((field) => field.id !== 'accountRef')
   const wantsPlaylists = fields.some(
     (field) => field.type === 'dropdown' && field.choicesFrom === 'playlists',
   )
 
-  // Asked of the channel itself, and re-asked when the account changes or
-  // the operator presses Refresh — a playlist made a minute ago in YouTube
-  // should not need a page reload. A service that will not answer is not an
-  // error here: the field stays empty and the destination saves without one.
+  // Asked of the channel itself, and re-asked on Refresh — a playlist made
+  // a minute ago in YouTube should not need a page reload.
   const loadPlaylists = useCallback((): void => {
-    if (!wantsPlaylists || !accountId) return
+    if (!wantsPlaylists) return
     setPlaylists(undefined)
     api
-      .playlists(provider.id, accountId)
+      .playlists(provider.id, account.id)
       .then((result) => setPlaylists(result.playlists.map((p) => ({ id: p.id, label: p.title }))))
       .catch(() => setPlaylists([]))
-  }, [provider.id, accountId, wantsPlaylists])
+  }, [provider.id, account.id, wantsPlaylists])
 
   useEffect(loadPlaylists, [loadPlaylists])
 
@@ -435,21 +372,7 @@ function DestinationForm({
     setSaving(true)
     onError(undefined)
     try {
-      if (destination) {
-        // Not the account: a destination is settings for *that* channel, and
-        // repointing it would move every event already using it.
-        await api.updateDestination(destination.id, {
-          label: label || provider.displayName,
-          config,
-        })
-      } else {
-        await api.createDestination({
-          providerId: provider.id,
-          label: label || provider.displayName,
-          accountId,
-          config,
-        })
-      }
+      await api.updateDestination(account.destinationId!, { config })
       onDone()
     } catch (err) {
       onError(err instanceof Error ? err.message : String(err))
@@ -459,34 +382,7 @@ function DestinationForm({
   }
 
   return (
-    <div className="stack" style={{ maxWidth: 560 }}>
-      <Field label="Name" hint="What you will call it here, e.g. “Main channel, unlisted”.">
-        <input
-          value={label}
-          placeholder={provider.displayName}
-          onChange={(event) => setLabel(event.target.value)}
-        />
-      </Field>
-      <Field
-        label="Account"
-        hint={
-          destination
-            ? 'Fixed once set: changing it would move every event pointing here.'
-            : 'The connected account these broadcasts are made on.'
-        }
-      >
-        <select
-          value={accountId}
-          disabled={destination !== undefined}
-          onChange={(event) => setAccountId(event.target.value)}
-        >
-          {accounts.map((account) => (
-            <option key={account.id} value={account.id}>
-              {account.displayName}
-            </option>
-          ))}
-        </select>
-      </Field>
+    <div className="stack" style={{ maxWidth: 560, margin: '10px 0 16px' }}>
       <ConfigFields
         fields={fields}
         values={config}
@@ -496,12 +392,21 @@ function DestinationForm({
       />
       <div className="row">
         <button className="primary" disabled={saving} onClick={() => void save()}>
-          {saving ? 'Saving…' : destination ? 'Save' : 'Add'}
+          {saving ? 'Saving…' : 'Save'}
         </button>
         <button onClick={onDone}>Cancel</button>
       </div>
     </div>
   )
+}
+
+/** "Public · Worship Reviews" — the defaults on one line beside the name. */
+function summarise(provider: DestinationProvider, settings: Record<string, unknown>): string {
+  return Object.entries(settings)
+    .filter(([key]) => key === 'privacy')
+    .map(([key, value]) => describeSetting(provider, key, value))
+    .filter(Boolean)
+    .join(' · ')
 }
 
 function StreamKeys({

@@ -55,6 +55,14 @@ export interface EventOutput {
  * expressible choice rather than the absence of one.
  */
 export interface OutputSettings {
+  /**
+   * How this one stream's broadcast differs from its account's defaults.
+   *
+   * The account says who can watch and which playlist videos go in; one
+   * stream on a morning — the unlisted rehearsal feed, say — can say
+   * otherwise without a second set of account settings to keep in step.
+   */
+  broadcast?: { privacy?: 'public' | 'unlisted' | 'private'; playlistId?: string }
   /** Encoder quality profile, in the device's own vocabulary. */
   quality?: string
   /** Which slot or disk a recorder writes to. */
@@ -170,6 +178,21 @@ function parseSettings(raw: string): OutputSettings {
     const parsed = JSON.parse(raw) as Record<string, unknown>
     if (!parsed || typeof parsed !== 'object') return {}
     const out: OutputSettings = {}
+    const broadcast = parsed.broadcast as { privacy?: unknown; playlistId?: unknown } | undefined
+    if (broadcast && typeof broadcast === 'object') {
+      const kept: NonNullable<OutputSettings['broadcast']> = {}
+      if (
+        broadcast.privacy === 'public' ||
+        broadcast.privacy === 'unlisted' ||
+        broadcast.privacy === 'private'
+      ) {
+        kept.privacy = broadcast.privacy
+      }
+      if (typeof broadcast.playlistId === 'string' && broadcast.playlistId) {
+        kept.playlistId = broadcast.playlistId
+      }
+      if (Object.keys(kept).length > 0) out.broadcast = kept
+    }
     if (typeof parsed.quality === 'string' && parsed.quality) out.quality = parsed.quality
     if (typeof parsed.slot === 'number' && Number.isInteger(parsed.slot)) out.slot = parsed.slot
     // Shape only. Whether a given number *means* anything is retention's

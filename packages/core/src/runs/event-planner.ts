@@ -252,8 +252,7 @@ export class EventPlanner implements RunPlanner {
   ): StepDefinition {
     const registry = this.registryOrThrow(output)
     const destinationId = output.destinationId!
-    const metadata = (): DestinationMetadata =>
-      this.metadataFor(destinationId, entry, context, templates)
+    const metadata = (): DestinationMetadata => this.metadataFor(output, entry, context, templates)
 
     return {
       kind: `${output.id}.prepare`,
@@ -262,7 +261,10 @@ export class EventPlanner implements RunPlanner {
       label: `${output.label}: create the broadcast`,
       request: { destination: destinationId },
       execute: async (ctx) => {
-        const destination = await registry.open(destinationId, { runId: ctx.runId })
+        const destination = await registry.open(destinationId, {
+          runId: ctx.runId,
+          overrides: overridesOf(output),
+        })
         try {
           const result = await destination.prepare({
             idempotencyKey: ctx.idempotencyKey,
@@ -275,7 +277,10 @@ export class EventPlanner implements RunPlanner {
         }
       },
       reconcile: async (ctx) => {
-        const destination = await registry.open(destinationId, { runId: ctx.runId })
+        const destination = await registry.open(destinationId, {
+          runId: ctx.runId,
+          overrides: overridesOf(output),
+        })
         try {
           const existing = await destination.reconcile({
             idempotencyKey: ctx.idempotencyKey,
@@ -392,11 +397,14 @@ export class EventPlanner implements RunPlanner {
       execute: async (ctx) => {
         const externalId = ctx.outputs[`${output.id}.prepare`]?.externalId
         if (!externalId) return
-        const destination = await registry.open(destinationId, { runId: ctx.runId })
+        const destination = await registry.open(destinationId, {
+          runId: ctx.runId,
+          overrides: overridesOf(output),
+        })
         try {
           await destination.finalize({
             externalId,
-            metadata: this.metadataFor(destinationId, entry, context, templates),
+            metadata: this.metadataFor(output, entry, context, templates),
           })
         } finally {
           await destination.dispose()
@@ -613,23 +621,28 @@ export class EventPlanner implements RunPlanner {
   }
 
   private metadataFor(
-    destinationId: string,
+    output: EventOutput,
     entry: OutputWindow,
     context: TemplateContext,
     templates: OutputTemplates,
   ): DestinationMetadata {
     const row = this.deps.db
       .prepare('SELECT config FROM destination WHERE id = ?')
-      .get(destinationId) as { config: string } | undefined
-    const config = (row ? JSON.parse(row.config) : {}) as { privacy?: string }
+      .get(output.destinationId) as { config: string } | undefined
+    // The account's defaults, with this stream's own choices over them.
+    const config = {
+      ...((row ? JSON.parse(row.config) : {}) as { privacy?: string; description?: string }),
+      ...overridesOf(output),
+    }
+    // The event's description, else the account's default one. Rendered
+    // either way, so a default can say {{date}} too.
+    const description = templates.description || config.description
 
     return {
       // Rendered here rather than in the provider so every destination gets
       // the same names, and so a template mistake fails once, in prepare.
       title: templates.title ? renderTemplateOrThrow(templates.title, context) : context.event.name,
-      description: templates.description
-        ? renderTemplateOrThrow(templates.description, context)
-        : '',
+      description: description ? renderTemplateOrThrow(description, context) : '',
       // The output's own window, not the event's: a broadcast scheduled for
       // 7:00 when it actually airs at 11:00 is wrong on the channel page and
       // wrong in every subscriber's notification.
@@ -709,4 +722,13 @@ function destinationOf(request: string | null): string | undefined {
 
 function keyRef(runId: string, outputId: string): string {
   return `run-ingest:${runId}:${outputId}`
+}
+
+/** One stream's own broadcast choices, in the shape a destination's config has. */
+function overridesOf(output: EventOutput): Record<string, string> {
+  const broadcast = output.settings.broadcast ?? {}
+  return {
+    ...(broadcast.privacy === undefined ? {} : { privacy: broadcast.privacy }),
+    ...(broadcast.playlistId === undefined ? {} : { playlistId: broadcast.playlistId }),
+  }
 }

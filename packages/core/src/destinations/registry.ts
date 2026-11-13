@@ -106,7 +106,7 @@ export class DestinationRegistry {
    */
   async open(
     destinationId: string,
-    options: { runId?: string } = {},
+    options: { runId?: string; overrides?: ConfigValues } = {},
   ): Promise<DestinationInstance> {
     const row = this.deps.db
       .prepare('SELECT * FROM destination WHERE id = ?')
@@ -119,7 +119,8 @@ export class DestinationRegistry {
         destinationId,
         providerId: row.plugin_id,
         accountRef: row.account_id,
-        config: JSON.parse(row.config) as ConfigValues,
+        // One stream's own choices over its account's defaults.
+        config: { ...(JSON.parse(row.config) as ConfigValues), ...(options.overrides ?? {}) },
         ...(options.runId === undefined ? {} : { runId: options.runId }),
       }),
     )

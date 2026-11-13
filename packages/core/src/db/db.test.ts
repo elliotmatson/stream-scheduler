@@ -47,6 +47,63 @@ function seedSeries(db: Database.Database): void {
   ).run(now, now, now)
 }
 
+describe('folding destinations into accounts', () => {
+  it('leaves each account one set of defaults, and every stream airing as it did', () => {
+    const db = new Database(':memory:')
+    db.pragma('foreign_keys = ON')
+    db.exec(
+      `CREATE TABLE schema_migration (id INTEGER PRIMARY KEY, name TEXT NOT NULL, applied_at INTEGER NOT NULL)`,
+    )
+    const record = db.prepare(
+      'INSERT INTO schema_migration (id, name, applied_at) VALUES (?, ?, ?)',
+    )
+    for (const migration of migrations.filter((m) => m.id < 19)) {
+      db.exec(migration.sql)
+      migration.convert?.(db)
+      record.run(migration.id, migration.name, Date.now())
+    }
+    const account = db.prepare(
+      `INSERT INTO account (id, provider, external_id, display_name, secret_ref, scopes, created_at)
+       VALUES (?, 'youtube', ?, ?, 'ref', '', 0)`,
+    )
+    account.run('grace', 'UC1', 'Grace Worship')
+    account.run('empty', 'UC2', 'Grace Bible')
+    const destination = db.prepare(
+      "INSERT INTO destination (id, plugin_id, label, account_id, config, created_at) VALUES (?, 'youtube', ?, 'grace', ?, ?)",
+    )
+    destination.run('public', 'Main', JSON.stringify({ privacy: 'public', playlistId: 'PL1' }), 1)
+    destination.run('rehearsal', 'Unlisted', JSON.stringify({ privacy: 'unlisted' }), 2)
+    db.prepare(
+      `INSERT INTO event_series (id, label, timezone, dtstart, duration_ms, created_at, updated_at)
+       VALUES ('s', 'Sunday', 'America/Chicago', 0, 1, 0, 0)`,
+    ).run()
+    db.prepare(
+      `INSERT INTO event_output (id, series_id, kind, label, position, offset_ms, duration_ms, destination_id, templates, settings, enabled, created_at)
+       VALUES ('o', 's', 'stream', 'Rehearsal', 0, 0, 1, 'rehearsal', '{}', '{"quality":"High"}', 1, 0)`,
+    ).run()
+
+    migrate(db)
+
+    const rows = db
+      .prepare('SELECT id, label, account_id FROM destination ORDER BY account_id')
+      .all() as { id: string; label: string; account_id: string }[]
+    // One each, named after the account; the empty one got its own.
+    expect(rows.map((row) => [row.account_id, row.label])).toEqual([
+      ['empty', 'Grace Bible'],
+      ['grace', 'Grace Worship'],
+    ])
+    // The rehearsal stream points at the account and keeps its privacy.
+    const output = db
+      .prepare('SELECT destination_id, settings FROM event_output WHERE id = ?')
+      .get('o') as { destination_id: string; settings: string }
+    expect(output.destination_id).toBe('public')
+    expect(JSON.parse(output.settings)).toEqual({
+      quality: 'High',
+      broadcast: { privacy: 'unlisted' },
+    })
+  })
+})
+
 describe('moving start early and keep going onto outputs', () => {
   it('keeps every output on air exactly when it was', () => {
     const db = new Database(':memory:')

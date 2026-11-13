@@ -8,6 +8,7 @@ import {
   type Device,
   type EventOutput,
   type OutputInput,
+  type OutputSettings,
   type OutputsResponse,
   type DeviceNode,
   type NodeState,
@@ -219,6 +220,7 @@ function OutputRow(props: RowProps): ReactNode {
   // each service starts. So an output is placed relative to the service,
   // and a clock box here would only show a made-up time.
   const paired = Boolean(series.planSourceId && series.planGroupId)
+  const chosenDestination = props.destinations.find((entry) => entry.id === draft.destinationId)
   // Left blank, an output is named after where it goes, or the device it
   // records on: "Grace Worship", "HyperDeck — archive".
   const defaultLabel =
@@ -256,7 +258,7 @@ function OutputRow(props: RowProps): ReactNode {
             <option value="">{PICK_ONE}</option>
             {props.destinations.map((destination) => (
               <option key={destination.id} value={`destination:${destination.id}`}>
-                {destination.label}
+                {destination.label} ({providerName(destination.providerId)})
               </option>
             ))}
             {props.credentials.map((credential) => (
@@ -267,6 +269,15 @@ function OutputRow(props: RowProps): ReactNode {
           </select>
         </Field>
       ) : null}
+      {chosenDestination?.providerId === 'youtube' ? (
+        <BroadcastOverrides
+          destination={chosenDestination}
+          privacy={draft.privacy}
+          playlistId={draft.playlistId}
+          onChange={(next) => setDraft((current) => ({ ...current, ...next }))}
+        />
+      ) : null}
+
       {/* Only hardware that can actually do this. A recorder in a stream's
           picker is an invitation to a Sunday-morning failure, and the
           server refuses it anyway. */}
@@ -712,6 +723,9 @@ interface RowDraft {
   followsWindow: boolean
   /** Minutes it keeps going after the window, when it follows it. */
   stopAfter: number
+  /** This stream's own privacy and playlist; blank follows the account. */
+  privacy: '' | 'public' | 'unlisted' | 'private'
+  playlistId: string
   destinationId: string | null
   credentialId: string | null
   deviceId: string | null
@@ -744,6 +758,8 @@ function toDraft(
     // existing output keeps whatever it was set to.
     followsWindow: output?.followsWindow ?? true,
     stopAfter: Math.round((output?.stopAfterMs ?? 0) / 60_000),
+    privacy: output?.settings.broadcast?.privacy ?? '',
+    playlistId: output?.settings.broadcast?.playlistId ?? '',
     destinationId: output?.destinationId ?? null,
     credentialId: output?.credentialId ?? null,
     deviceId: output?.deviceId ?? null,
@@ -770,16 +786,14 @@ function toDraft(
   }
 }
 
-function settingsOf(draft: RowDraft): {
-  quality?: string
-  slot?: number
-  retention?: { keepDays?: number; keepLast?: number; minFreeHours?: number }
-} {
-  const out: {
-    quality?: string
-    slot?: number
-    retention?: { keepDays?: number; keepLast?: number; minFreeHours?: number }
-  } = {}
+function settingsOf(draft: RowDraft): OutputSettings {
+  const out: OutputSettings = {}
+  if (draft.destinationId && (draft.privacy || draft.playlistId)) {
+    out.broadcast = {
+      ...(draft.privacy ? { privacy: draft.privacy } : {}),
+      ...(draft.playlistId ? { playlistId: draft.playlistId } : {}),
+    }
+  }
   if (draft.quality) out.quality = draft.quality
   if (draft.slot) out.slot = Number(draft.slot)
 
@@ -927,5 +941,77 @@ export function DraftOutputs({
         ))}
       </div>
     </section>
+  )
+}
+
+/** "YouTube", "Twitch": a provider id the way people say it. */
+function providerName(id: string): string {
+  return id === 'youtube' ? 'YouTube' : id.charAt(0).toUpperCase() + id.slice(1)
+}
+
+/**
+ * One stream's own privacy and playlist, over its account's defaults.
+ *
+ * Closed until wanted: most streams go out the way their account says, and
+ * the one that does not — an unlisted rehearsal feed — is the exception.
+ */
+function BroadcastOverrides({
+  destination,
+  privacy,
+  playlistId,
+  onChange,
+}: {
+  destination: Destination
+  privacy: RowDraft['privacy']
+  playlistId: string
+  onChange: (next: Partial<Pick<RowDraft, 'privacy' | 'playlistId'>>) => void
+}): ReactNode {
+  const [open, setOpen] = useState(privacy !== '' || playlistId !== '')
+  const { data } = useResource(
+    () =>
+      open && destination.accountId
+        ? api
+            .playlists(destination.providerId, destination.accountId)
+            .catch(() => ({ playlists: [] }))
+        : Promise.resolve({ playlists: [] }),
+    [open, destination.providerId, destination.accountId],
+  )
+  const accountPrivacy = String(destination.config.privacy ?? 'public')
+  const accountPlaylist = data?.playlists.find(
+    (entry) => entry.id === destination.config.playlistId,
+  )
+
+  return (
+    <details open={open} onToggle={(event) => setOpen(event.currentTarget.open)}>
+      <summary>Privacy and playlist</summary>
+      <div className="row" style={{ marginTop: 8 }}>
+        <Field label="Privacy">
+          <select
+            value={privacy}
+            onChange={(event) => onChange({ privacy: event.target.value as RowDraft['privacy'] })}
+          >
+            <option value="">Account default ({accountPrivacy})</option>
+            <option value="public">Public</option>
+            <option value="unlisted">Unlisted</option>
+            <option value="private">Private</option>
+          </select>
+        </Field>
+        <Field label="Playlist">
+          <select
+            value={playlistId}
+            onChange={(event) => onChange({ playlistId: event.target.value })}
+          >
+            <option value="">
+              Account default{accountPlaylist ? ` (${accountPlaylist.title})` : ''}
+            </option>
+            {(data?.playlists ?? []).map((entry) => (
+              <option key={entry.id} value={entry.id}>
+                {entry.title}
+              </option>
+            ))}
+          </select>
+        </Field>
+      </div>
+    </details>
   )
 }

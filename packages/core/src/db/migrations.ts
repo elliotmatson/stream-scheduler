@@ -650,6 +650,15 @@ UPDATE event_series SET preroll_ms = 0, postroll_ms = 0;
 ALTER TABLE event_series ADD COLUMN plan_mode TEXT NOT NULL DEFAULT 'time';
 `,
   },
+  {
+    id: 19,
+    name: 'account-settings',
+    // A destination was an account plus how its broadcasts are set up, and
+    // an account could have several. Now each account has exactly one set
+    // of defaults, and a stream that wanted something else says so itself.
+    sql: '',
+    convert: foldDestinationsIntoAccounts,
+  },
 ]
 
 interface GraphNode {
@@ -809,5 +818,74 @@ function parseGraph(raw: string): { nodes: GraphNode[]; destinations: GraphDesti
     destinations: Array.isArray(graph.destinations)
       ? (graph.destinations as GraphDestination[])
       : [],
+  }
+}
+
+/**
+ * One set of broadcast defaults per account.
+ *
+ * Every account keeps (or gets) one destination row, named after it, which
+ * is its defaults. Any other destination on the same account is folded
+ * into the streams that used it: they point at the account's row and keep
+ * the privacy and playlist they had as their own, so nothing airs any
+ * differently. Then the extra row goes, and an index keeps it at one.
+ */
+function foldDestinationsIntoAccounts(db: MigrationDb): void {
+  const accounts = db.prepare('SELECT id, provider, display_name FROM account').all() as {
+    id: string
+    provider: string
+    display_name: string
+  }[]
+  const destinationsOf = db.prepare(
+    'SELECT id, config FROM destination WHERE account_id = ? ORDER BY created_at, id',
+  )
+  const outputsOf = db.prepare('SELECT id, settings FROM event_output WHERE destination_id = ?')
+  const repoint = db.prepare(
+    'UPDATE event_output SET destination_id = ?, settings = ? WHERE id = ?',
+  )
+  const drop = db.prepare('DELETE FROM destination WHERE id = ?')
+  const rename = db.prepare('UPDATE destination SET label = ? WHERE id = ?')
+  const create = db.prepare(
+    "INSERT INTO destination (id, plugin_id, label, account_id, config, created_at) VALUES (?, ?, ?, ?, '{}', ?)",
+  )
+
+  for (const account of accounts) {
+    const rows = destinationsOf.all(account.id) as { id: string; config: string }[]
+    if (rows.length === 0) {
+      create.run(randomUUID(), account.provider, account.display_name, account.id, Date.now())
+      continue
+    }
+    const [keep, ...extra] = rows as [
+      { id: string; config: string },
+      ...{ id: string; config: string }[],
+    ]
+    rename.run(account.display_name, keep.id)
+    const kept = parseConfig(keep.config)
+    for (const other of extra) {
+      const theirs = parseConfig(other.config)
+      const broadcast: Record<string, string> = {}
+      for (const key of ['privacy', 'playlistId'] as const) {
+        const value = theirs[key]
+        if (typeof value === 'string' && value && value !== kept[key]) broadcast[key] = value
+      }
+      for (const output of outputsOf.all(other.id) as { id: string; settings: string }[]) {
+        const settings = parseConfig(output.settings)
+        const merged = Object.keys(broadcast).length > 0 ? { ...settings, broadcast } : settings
+        repoint.run(keep.id, JSON.stringify(merged), output.id)
+      }
+      drop.run(other.id)
+    }
+  }
+  db.prepare(
+    'CREATE UNIQUE INDEX IF NOT EXISTS destination_one_per_account ON destination (account_id) WHERE account_id IS NOT NULL',
+  ).run()
+}
+
+function parseConfig(raw: string): Record<string, unknown> {
+  try {
+    const parsed = JSON.parse(raw) as unknown
+    return parsed && typeof parsed === 'object' ? (parsed as Record<string, unknown>) : {}
+  } catch {
+    return {}
   }
 }

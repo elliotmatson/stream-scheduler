@@ -235,6 +235,24 @@ describe('a scheduled event delivering to YouTube', () => {
     )
   })
 
+  it('uses one stream’s own privacy, and the account’s default description', async () => {
+    const { engine, outputId } = await fullPipeline({
+      privacy: 'public',
+      description: 'Live from {{event.name}}',
+    })
+    // This one stream is unlisted, whatever the account says.
+    db.prepare('UPDATE event_output SET settings = ? WHERE id = ?').run(
+      JSON.stringify({ broadcast: { privacy: 'unlisted' } }),
+      outputId,
+    )
+
+    clock.set(START - 30 * MINUTE)
+    await engine.tick()
+    const broadcast = [...youtube.broadcasts.values()][0]!
+    expect(broadcast.privacyStatus).toBe('unlisted')
+    expect(broadcast.description).toBe('Live from Sunday Service')
+  })
+
   it('never writes the issued stream key into the run timeline', async () => {
     const { engine } = await fullPipeline()
     clock.set(START - 30 * MINUTE)

@@ -40,6 +40,14 @@ const configSchema: ConfigField[] = [
     default: 'public',
   },
   {
+    type: 'textinput',
+    id: 'description',
+    label: 'Default description',
+    multiline: true,
+    tooltip:
+      'Used when an event has no description of its own. Can use the same {{tokens}} as a title.',
+  },
+  {
     type: 'checkbox',
     id: 'reusableStream',
     label: 'Reuse one ingestion stream',
