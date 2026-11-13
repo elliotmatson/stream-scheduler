@@ -773,7 +773,7 @@ function registerRoutes(fastify: FastifyInstance, app: Application): void {
         // 'skipped' or 'ambiguous' means this one falls in a DST gap or
         // repeat, and the UI flags it rather than quietly shifting the time.
         resolution: occurrence.resolution,
-        ...namesFor(body, occurrence.start, {
+        ...namesFor(body, occurrence.start, occurrence.end, {
           occurrenceStart: occurrence.start,
           timezone: body.timezone,
           event: { name: body.label },
@@ -2050,6 +2050,9 @@ const PREVIEW_OUTPUT = z.object({
   label: z.string(),
   kind: z.enum(['stream', 'recording']),
   offsetMs: z.number().int().default(0),
+  durationMs: z.number().int().positive().optional(),
+  followsWindow: z.boolean().default(false),
+  stopAfterMs: z.number().int().nonnegative().default(0),
   templates: z.record(z.string()).default({}),
 })
 
@@ -2062,12 +2065,14 @@ const PREVIEW_OUTPUT = z.object({
 function namesFor(
   body: { templates: Record<string, string>; outputs: z.infer<typeof PREVIEW_OUTPUT>[] },
   start: number,
+  end: number,
   context: Parameters<typeof renderTemplate>[1],
 ): ReturnType<typeof renderNames> & {
   outputs?: (ReturnType<typeof renderNames> & {
     label: string
     kind: 'stream' | 'recording'
     startsAt: number
+    endsAt: number
   })[]
 } {
   const names = renderNames(body.templates, context)
@@ -2078,6 +2083,12 @@ function namesFor(
       label: output.label,
       kind: output.kind,
       startsAt: start + output.offsetMs,
+      // When it comes off: with the event, plus its keep-going, or after
+      // its own length. The same rule the engine uses.
+      endsAt:
+        output.followsWindow || output.durationMs === undefined
+          ? Math.max(start + output.offsetMs, end) + output.stopAfterMs
+          : start + output.offsetMs + output.durationMs,
       ...renderNames({ ...body.templates, ...output.templates }, context),
     })),
   }
@@ -2135,7 +2146,7 @@ async function previewFromPlan(
       end: service.endsAt ?? service.startsAt + body.durationMs,
       localDate: localDateAt(service.startsAt, body.timezone),
       resolution: 'exact' as const,
-      ...namesFor(body, service.startsAt, {
+      ...namesFor(body, service.startsAt, service.endsAt ?? service.startsAt + body.durationMs, {
         occurrenceStart: service.startsAt,
         timezone: body.timezone,
         event: { name: body.label },

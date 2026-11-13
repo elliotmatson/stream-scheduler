@@ -18,6 +18,7 @@ import {
   PageHead,
   StatusPill,
 } from '../components.tsx'
+import { changedKeys, changesLabel, useUnsavedGuard } from '../unsaved.ts'
 
 /**
  * Where streams go.
@@ -347,6 +348,8 @@ function AccountSettings({
 }): ReactNode {
   const [config, setConfig] = useState<Record<string, unknown>>(account.settings)
   const [saving, setSaving] = useState(false)
+  const changed = changedKeys(account.settings, config)
+  useUnsavedGuard(changed.length > 0)
   const [playlists, setPlaylists] = useState<{ id: string; label: string }[]>()
 
   // `accountRef` is the account itself, not something to type.
@@ -390,11 +393,22 @@ function AccountSettings({
         runtimeChoices={{ playlists }}
         onRefreshChoices={(source) => source === 'playlists' && loadPlaylists()}
       />
-      <div className="row">
-        <button className="primary" disabled={saving} onClick={() => void save()}>
-          {saving ? 'Saving…' : 'Save'}
+      <div className="save-bar">
+        <button
+          className="primary"
+          disabled={saving || changed.length === 0}
+          onClick={() => void save()}
+        >
+          {saving
+            ? 'Saving…'
+            : changed.length > 0
+              ? `Save ${changesLabel(changed.length)}`
+              : 'Saved'}
         </button>
-        <button onClick={onDone}>Cancel</button>
+        {changed.length > 0 ? (
+          <button onClick={() => setConfig(account.settings)}>Revert</button>
+        ) : null}
+        <button onClick={onDone}>Close</button>
       </div>
     </div>
   )

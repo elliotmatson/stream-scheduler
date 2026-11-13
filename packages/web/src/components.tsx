@@ -109,14 +109,17 @@ export function Card({
 export function Field({
   label,
   hint,
+  changed,
   children,
 }: {
   label: string
   hint?: string
+  /** Differs from what is saved, so it is marked until it is. */
+  changed?: boolean
   children: ReactNode
 }): ReactNode {
   return (
-    <label className="field">
+    <label className={changed ? 'field changed' : 'field'}>
       <span className="field-label">{label}</span>
       {children}
       {hint ? <span className="field-hint">{hint}</span> : null}

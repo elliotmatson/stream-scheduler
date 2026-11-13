@@ -20,6 +20,7 @@ import { AttentionBell } from './views/AttentionBell.tsx'
 import { Schedule } from './views/Schedule.tsx'
 import { Devices } from './views/Devices.tsx'
 import { NewEvent, SeriesPage } from './views/EventPages.tsx'
+import { confirmLeave } from './unsaved.ts'
 import { RunDetail, Runs } from './views/RunDetail.tsx'
 import { OccurrenceDetail } from './views/OccurrenceDetail.tsx'
 import { Notifications } from './views/Notifications.tsx'
@@ -35,7 +36,23 @@ function useHashRoute(): [string, (path: string) => void] {
   const [path, setPath] = useState(() => window.location.hash.slice(1) || '/')
 
   useEffect(() => {
-    const onChange = (): void => setPath(window.location.hash.slice(1) || '/')
+    // The back button changes the hash before anything can ask, so a "no"
+    // puts the old one back rather than stopping the move.
+    let current = window.location.hash
+    let restoring = false
+    const onChange = (): void => {
+      if (restoring) {
+        restoring = false
+        return
+      }
+      if (!confirmLeave()) {
+        restoring = true
+        window.location.hash = current
+        return
+      }
+      current = window.location.hash
+      setPath(current.slice(1) || '/')
+    }
     window.addEventListener('hashchange', onChange)
     return () => window.removeEventListener('hashchange', onChange)
   }, [])

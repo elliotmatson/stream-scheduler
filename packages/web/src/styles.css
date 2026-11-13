@@ -2149,3 +2149,59 @@ button.link:hover {
   gap: 10px;
   margin-bottom: 14px;
 }
+
+/* An output's name with its on/off switch, the switch level with the box. */
+.output-head {
+  align-items: flex-end;
+  flex-wrap: nowrap;
+}
+.output-head > .field {
+  flex: 1;
+}
+.output-head > .row {
+  padding-bottom: 8px;
+}
+
+/* A field that differs from what is saved: a dot by its label and an
+   accent edge on the box, until it is saved or reverted. */
+.field.changed > .field-label::after {
+  content: ' •';
+  color: var(--accent);
+}
+.field.changed > input,
+.field.changed > select,
+.field.changed > textarea,
+.field.changed > .row > input,
+.field.changed > .row > select {
+  border-color: var(--accent);
+}
+/* Save, with how much it would save, and the way back. */
+.save-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+/* A collapsed output: one line that opens it, and its on/off switch. */
+.card.inner.output-summary {
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.output-summary-open {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  flex-wrap: wrap;
+}
+.output-summary-open:hover:not(:disabled) {
+  background: transparent;
+}
