@@ -1049,6 +1049,12 @@ function registerRoutes(fastify: FastifyInstance, app: Application): void {
     /** Absent keys mean "leave the device as it is". */
     settings: z
       .object({
+        broadcast: z
+          .object({
+            privacy: z.enum(['public', 'unlisted', 'private']).optional(),
+            playlistId: z.string().min(1).optional(),
+          })
+          .optional(),
         quality: z.string().min(1).optional(),
         slot: z.number().int().positive().optional(),
         // Bounded rather than free: a keepDays of 0 would make every

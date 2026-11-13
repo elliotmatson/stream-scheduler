@@ -17,6 +17,8 @@ export type ConfigField =
       required?: boolean
       regex?: string
       tooltip?: string
+      /** A box for a paragraph rather than a line. */
+      multiline?: boolean
     }
   | {
       type: 'number'

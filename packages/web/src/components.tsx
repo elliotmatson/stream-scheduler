@@ -240,6 +240,18 @@ export function ConfigFields({
           )
         }
 
+        if (field.type === 'textinput' && field.multiline) {
+          return (
+            <Field key={field.id} label={label} hint={hint}>
+              <textarea
+                rows={3}
+                value={String(values[field.id] ?? field.default ?? '')}
+                onChange={(event) => set(field.id, event.target.value)}
+              />
+            </Field>
+          )
+        }
+
         return (
           <Field key={field.id} label={label} hint={hint}>
             <input

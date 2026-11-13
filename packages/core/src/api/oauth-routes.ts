@@ -203,13 +203,14 @@ export function registerOAuthRoutes(fastify: FastifyInstance, app: Application):
           )
           .run(account.displayName, entry.clientRef, account.scopes.join(' '), existing.id)
       } else {
+        const accountId = randomUUID()
         app.db
           .prepare(
             `INSERT INTO account (id, provider, external_id, display_name, secret_ref, oauth_client_ref, scopes, created_at)
              VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
           )
           .run(
-            randomUUID(),
+            accountId,
             entry.provider,
             account.externalId,
             account.displayName,
@@ -218,6 +219,13 @@ export function registerOAuthRoutes(fastify: FastifyInstance, app: Application):
             account.scopes.join(' '),
             app.clock.now(),
           )
+        // Its broadcast defaults, ready to stream to straight away: a new
+        // account should not need a second form before it can be used.
+        app.db
+          .prepare(
+            "INSERT INTO destination (id, plugin_id, label, account_id, config, created_at) VALUES (?, ?, ?, ?, '{}', ?)",
+          )
+          .run(randomUUID(), entry.provider, account.displayName, accountId, app.clock.now())
       }
 
       app.logger.info('connected an account', {
@@ -243,7 +251,10 @@ export function registerOAuthRoutes(fastify: FastifyInstance, app: Application):
     (
       app.db
         .prepare(
-          'SELECT id, provider, external_id, display_name, status, scopes FROM account ORDER BY display_name',
+          `SELECT a.id, a.provider, a.external_id, a.display_name, a.status, a.scopes,
+                  d.id AS destination_id, d.config AS config
+             FROM account a LEFT JOIN destination d ON d.account_id = a.id
+            ORDER BY a.display_name`,
         )
         .all() as {
         id: string
@@ -252,6 +263,8 @@ export function registerOAuthRoutes(fastify: FastifyInstance, app: Application):
         display_name: string
         status: string
         scopes: string
+        destination_id: string | null
+        config: string | null
       }[]
     ).map((row) => ({
       id: row.id,
@@ -260,6 +273,9 @@ export function registerOAuthRoutes(fastify: FastifyInstance, app: Application):
       displayName: row.display_name,
       status: row.status,
       scopes: row.scopes.split(' '),
+      // Where a stream to this account points, and its broadcast defaults.
+      destinationId: row.destination_id,
+      settings: row.config ? (JSON.parse(row.config) as Record<string, unknown>) : {},
     })),
   )
 
@@ -316,6 +332,12 @@ export function registerOAuthRoutes(fastify: FastifyInstance, app: Application):
       ...(body.config as Record<string, never>),
       accountRef: body.accountId,
     })
+    // One set of broadcast defaults per account, made when it connects.
+    if (app.db.prepare('SELECT 1 FROM destination WHERE account_id = ?').get(body.accountId)) {
+      throw new ConflictError(
+        'This account already has its broadcast settings. Change them on the account instead.',
+      )
+    }
 
     const id = randomUUID()
     app.db
@@ -377,14 +399,22 @@ export function registerOAuthRoutes(fastify: FastifyInstance, app: Application):
 
   fastify.delete('/api/accounts/:id', async (request) => {
     const { id } = z.object({ id: z.string() }).parse(request.params)
-    const users = app.db.prepare('SELECT label FROM destination WHERE account_id = ?').all(id) as {
-      label: string
-    }[]
+    // Refused while any event still streams to it: disconnecting would
+    // leave those streams with nowhere to go, found out on a Sunday.
+    const users = app.db
+      .prepare(
+        `SELECT DISTINCT s.label FROM event_output eo
+           JOIN destination d ON d.id = eo.destination_id
+           JOIN event_series s ON s.id = eo.series_id
+          WHERE d.account_id = ?`,
+      )
+      .all(id) as { label: string }[]
     if (users.length > 0) {
       throw new ConflictError(
-        `This account still backs ${users.map((row) => `"${row.label}"`).join(', ')}. Remove those first.`,
+        `${users.map((row) => `"${row.label}"`).join(', ')} still stream${users.length === 1 ? 's' : ''} to this account. Change ${users.length === 1 ? 'it' : 'them'} first.`,
       )
     }
+    app.db.prepare('DELETE FROM destination WHERE account_id = ?').run(id)
     // The refresh token goes with it: a disconnected account that leaves a
     // live token in the vault is a credential nobody knows they still hold.
     const row = app.db.prepare('SELECT secret_ref FROM account WHERE id = ?').get(id) as

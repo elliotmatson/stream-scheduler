@@ -266,6 +266,7 @@ export type ConfigField =
       default?: string
       required?: boolean
       tooltip?: string
+      multiline?: boolean
     }
   | {
       type: 'number'
@@ -334,6 +335,10 @@ export interface Account {
   displayName: string
   status: string
   scopes: string[]
+  /** Where a stream to this account points: its broadcast defaults. */
+  destinationId: string | null
+  /** Those defaults — privacy, playlist, description and the rest. */
+  settings: Record<string, unknown>
 }
 
 export interface Destination {
@@ -482,6 +487,8 @@ export interface EventOutput {
 }
 
 export interface OutputSettings {
+  /** This stream's own broadcast choices, over its account's defaults. */
+  broadcast?: { privacy?: 'public' | 'unlisted' | 'private'; playlistId?: string }
   quality?: string
   slot?: number
   /** How long this output's recordings are worth keeping. Absent means
