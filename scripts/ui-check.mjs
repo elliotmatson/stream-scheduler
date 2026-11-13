@@ -288,6 +288,9 @@ async function discoveryAndPreview(browser, base) {
     (await sunday.getAttribute('aria-pressed')) === 'true',
   )
 
+  // Names live under More options, out of a volunteer's way.
+  await page.locator('details.more-options > summary').click()
+
   // The tokens are offered rather than described, so they have to be there
   // and they have to carry the real text: a chip that reads one thing and
   // copies another puts a broken template on a broadcast.

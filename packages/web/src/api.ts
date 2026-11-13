@@ -84,6 +84,8 @@ export interface Series {
   /** Set when this event's schedule comes from a plan source, not a rule. */
   planSourceId?: string | null
   planGroupId?: string | null
+  /** One event per service time, or one per plan. */
+  planMode?: 'time' | 'plan'
   /** When the plan was last read cleanly, and what went wrong if not. */
   planSyncedAt?: number | null
   planError?: string | null
@@ -465,6 +467,8 @@ export interface EventOutput {
   durationMs: number
   /** Run until the window closes rather than for `durationMs`. */
   followsWindow?: boolean
+  /** For one that follows the window: how long it keeps going after. */
+  stopAfterMs?: number
   destinationId: string | null
   credentialId: string | null
   /** Where it runs. Required in practice; null only on rows written before
@@ -605,6 +609,7 @@ export interface SchedulePreviewRequest {
   count?: number
   planSourceId?: string
   planGroupId?: string
+  planMode?: 'time' | 'plan'
   outputs?: {
     label: string
     kind: 'stream' | 'recording'
@@ -638,6 +643,7 @@ export interface SeriesInput {
   /** Null unpairs; both together pair. See the schedule-source routes. */
   planSourceId?: string | null
   planGroupId?: string | null
+  planMode?: 'time' | 'plan'
 }
 
 export class ApiError extends Error {
@@ -772,6 +778,13 @@ export const api = {
       body: JSON.stringify(body),
     }),
   dashboard: () => request<Dashboard>('/api/dashboard'),
+  /** Install-wide choices: for now, the timezone new events start in. */
+  generalSettings: () => request<{ timezone: string | null }>('/api/settings/general'),
+  setGeneralSettings: (input: { timezone: string }) =>
+    request<{ timezone: string }>('/api/settings/general', {
+      method: 'PUT',
+      body: JSON.stringify(input),
+    }),
   /** What needs somebody, on its own, for the button every screen has. */
   attention: () => request<{ items: Dashboard['attention'] }>('/api/attention'),
   runs: () => request<Run[]>('/api/runs'),

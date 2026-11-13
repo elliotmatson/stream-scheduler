@@ -28,6 +28,9 @@ export interface EventOutput {
    * and is what it goes back to when this is turned off.
    */
   followsWindow: boolean
+  /** For an output that follows the window: how long it keeps going after
+   *  the window closes. */
+  stopAfterMs: number
   /** A service that issues a key for each run. */
   destinationId: string | null
   /** A key entered by hand, used instead of a service. */
@@ -83,6 +86,7 @@ interface OutputRow {
   offset_ms: number
   duration_ms: number
   follows_window: number
+  stop_after_ms?: number
   destination_id: string | null
   credential_id: string | null
   device_id: string | null
@@ -122,6 +126,7 @@ export function toOutput(row: OutputRow): EventOutput {
     offsetMs: row.offset_ms,
     durationMs: row.duration_ms,
     followsWindow: row.follows_window === 1,
+    stopAfterMs: row.stop_after_ms ?? 0,
     destinationId: row.destination_id,
     credentialId: row.credential_id,
     deviceId: row.device_id,

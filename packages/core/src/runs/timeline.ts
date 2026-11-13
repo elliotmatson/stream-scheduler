@@ -172,7 +172,10 @@ function handOver(
   const result: OutputWindow[] = windows.map((entry) => ({
     ...entry,
     startAt: entry.startsAt - prerollMs,
-    stopAt: entry.endsAt + postrollMs,
+    // An output that follows the window keeps going by its own amount; the
+    // event-wide roll is from before that moved onto outputs, and is zero
+    // on anything migrated.
+    stopAt: entry.endsAt + postrollMs + (entry.output.followsWindow ? entry.output.stopAfterMs : 0),
   }))
   const lanes = new Map<string, OutputWindow[]>()
   for (const entry of result) {

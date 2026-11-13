@@ -38,6 +38,7 @@ export interface PairedSeriesRow {
   enabled: number
   plan_source_id: string | null
   plan_group_id: string | null
+  plan_mode?: string
 }
 
 export interface SyncResult {
@@ -126,7 +127,44 @@ export async function syncSeries(deps: SyncDeps, seriesId: string): Promise<Sync
     return { ...EMPTY, issues: [message] }
   }
 
-  return reconcile(deps, series, services)
+  return reconcile(
+    deps,
+    series,
+    series.plan_mode === 'plan' ? byPlan(services, series.duration_ms) : services,
+  )
+}
+
+/**
+ * A plan's times as one service: from the first one's start to the last
+ * one's end.
+ *
+ * What "one event per plan" means. The plan's own title and series carry
+ * over; a time's name does not, because there is no longer one time. A
+ * source that does not say which plan a time is in leaves that time as
+ * it is.
+ */
+export function byPlan(services: PlannedService[], durationMs: number): PlannedService[] {
+  const groups = new Map<string, PlannedService[]>()
+  const loose: PlannedService[] = []
+  for (const service of services) {
+    if (service.planId === undefined) loose.push(service)
+    else groups.set(service.planId, [...(groups.get(service.planId) ?? []), service])
+  }
+  const merged = [...groups.entries()].map(([planId, times]) => {
+    const sorted = [...times].sort((a, b) => a.startsAt - b.startsAt)
+    const first = sorted[0]!
+    const endsAt = Math.max(...sorted.map((time) => time.endsAt ?? time.startsAt + durationMs))
+    const detail = { ...(first.detail ?? {}) }
+    delete detail.timeName
+    return {
+      externalId: `plan:${planId}`,
+      planId,
+      startsAt: first.startsAt,
+      endsAt,
+      ...(first.detail === undefined ? {} : { detail }),
+    }
+  })
+  return [...merged, ...loose].sort((a, b) => a.startsAt - b.startsAt)
 }
 
 /** Every paired series. Unpaired ones are not touched. */

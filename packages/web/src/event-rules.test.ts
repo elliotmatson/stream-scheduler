@@ -98,11 +98,14 @@ describe('which week of the month', () => {
 
 describe('reading a stored rule back into the form', () => {
   it('reads no rule as a one-off', () => {
-    expect(parseRrule(null)).toEqual({ repeat: 'once', byday: [] })
+    expect(parseRrule(null)).toMatchObject({ repeat: 'once', byday: [] })
   })
 
   it('reads the weekdays back out of a weekly rule', () => {
-    expect(parseRrule('FREQ=WEEKLY;BYDAY=SU,WE')).toEqual({ repeat: 'weekly', byday: ['SU', 'WE'] })
+    expect(parseRrule('FREQ=WEEKLY;BYDAY=SU,WE')).toMatchObject({
+      repeat: 'weekly',
+      byday: ['SU', 'WE'],
+    })
   })
 
   it('round-trips everything the form itself writes', () => {
@@ -113,12 +116,60 @@ describe('reading a stored rule back into the form', () => {
   })
 
   it.each([
-    'FREQ=WEEKLY;INTERVAL=2;BYDAY=SU',
+    ['FREQ=WEEKLY;INTERVAL=2;BYDAY=SU', { repeat: 'weekly', interval: 2, byday: ['SU'] }],
+    ['FREQ=WEEKLY;BYDAY=SU;UNTIL=20261231T235959', { ends: 'on', until: '2026-12-31' }],
+    ['FREQ=DAILY;COUNT=5', { repeat: 'daily', ends: 'after', count: 5 }],
+    ['FREQ=MONTHLY;BYMONTHDAY=20', { repeat: 'monthly', monthlyBy: 'day' }],
+    ['FREQ=MONTHLY;BYDAY=3SU', { repeat: 'monthly', monthlyBy: 'weekday' }],
+  ])('opens %s in the builder', (rule, expected) => {
+    expect(parseRrule(rule)).toMatchObject(expected)
+  })
+
+  it.each([
     'FREQ=MONTHLY;BYDAY=-1SU',
-    'FREQ=WEEKLY;BYDAY=SU;UNTIL=20261231T000000Z',
-    'FREQ=DAILY;COUNT=5',
+    'FREQ=YEARLY;BYMONTH=12',
+    'FREQ=WEEKLY;BYDAY=SU;BYHOUR=9',
+    'FREQ=DAILY;COUNT=5;UNTIL=20261231',
   ])('leaves %s as the custom rule somebody wrote, rather than rewriting it', (rule) => {
-    expect(parseRrule(rule)).toEqual({ repeat: 'custom', byday: [] })
+    expect(parseRrule(rule).repeat).toBe('custom')
+  })
+})
+
+describe('the builder', () => {
+  it('writes every two weeks', () => {
+    expect(toRrule(draft({ repeat: 'weekly', interval: 2 }), ['SU'])).toBe(
+      'FREQ=WEEKLY;BYDAY=SU;INTERVAL=2',
+    )
+  })
+
+  it('writes the same date each month', () => {
+    expect(toRrule(draft({ repeat: 'monthly', monthlyBy: 'day' }), [])).toBe(
+      'FREQ=MONTHLY;BYMONTHDAY=20',
+    )
+  })
+
+  it('writes an end date as the last moment of that day', () => {
+    expect(toRrule(draft({ repeat: 'daily', ends: 'on', until: '2026-12-31' }), [])).toBe(
+      'FREQ=DAILY;UNTIL=20261231T235959',
+    )
+  })
+
+  it('writes a number of times', () => {
+    expect(toRrule(draft({ repeat: 'weekly', ends: 'after', count: 6 }), ['WE'])).toBe(
+      'FREQ=WEEKLY;BYDAY=WE;COUNT=6',
+    )
+  })
+
+  it('reads back exactly what it wrote', () => {
+    const written = draft({
+      repeat: 'weekly',
+      interval: 3,
+      ends: 'after',
+      count: 4,
+    })
+    const parsed = parseRrule(toRrule(written, ['SU', 'WE']))
+    expect(parsed).toMatchObject({ repeat: 'weekly', interval: 3, ends: 'after', count: 4 })
+    expect(parsed.byday).toEqual(['SU', 'WE'])
   })
 })
 

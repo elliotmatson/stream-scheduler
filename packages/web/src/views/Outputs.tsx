@@ -14,7 +14,7 @@ import {
   type Series,
 } from '../api.ts'
 import { ConfirmButton, Empty, ErrorBanner, Field, TemplateTokens } from '../components.tsx'
-import { clockAt, offsetFrom, timeOf } from '../output-times.ts'
+import { clockAt, offsetFrom } from '../output-times.ts'
 import {
   bitrateHint,
   CUSTOM_VALUE,
@@ -73,7 +73,7 @@ export function Outputs({ series }: { series: Series }): ReactNode {
     <section className="card">
       <div className="page-head" style={{ marginBottom: 12 }}>
         <div>
-          <h2 style={{ margin: 0 }}>Outputs</h2>
+          <h2 style={{ margin: 0 }}>Streams and recordings</h2>
           <p className="muted" style={{ margin: '4px 0 0' }}>
             Each one starts and stops on its own clock inside the event.
           </p>
@@ -192,10 +192,11 @@ function OutputRow(props: RowProps): ReactNode {
     if (!draft.deviceId || !draft.nodeId) return
     props.onSave({
       kind,
-      label: draft.label,
+      label: draft.label.trim() || defaultLabel || (kind === 'stream' ? 'Stream' : 'Recording'),
       offsetMs: offsetFrom(series, draft.startsAt),
       durationMs: draft.minutes * 60_000,
       followsWindow: draft.followsWindow,
+      stopAfterMs: draft.followsWindow ? draft.stopAfter * 60_000 : 0,
       destinationId: draft.destinationId,
       credentialId: draft.credentialId,
       deviceId: draft.deviceId,
@@ -218,87 +219,18 @@ function OutputRow(props: RowProps): ReactNode {
   // each service starts. So an output is placed relative to the service,
   // and a clock box here would only show a made-up time.
   const paired = Boolean(series.planSourceId && series.planGroupId)
+  // Left blank, an output is named after where it goes, or the device it
+  // records on: "Grace Worship", "HyperDeck — archive".
+  const defaultLabel =
+    (kind === 'stream'
+      ? (props.destinations.find((entry) => entry.id === draft.destinationId)?.label ??
+        props.credentials.find((entry) => entry.id === draft.credentialId)?.label)
+      : chosen?.device.label) ?? ''
 
   return (
     <div className="card inner">
-      <div className="row">
-        <Field label="Name">
-          <input
-            value={draft.label}
-            placeholder={kind === 'stream' ? 'Main channel // 9:00' : 'Archive'}
-            onChange={(event) => set('label', event.target.value)}
-          />
-        </Field>
-        {paired ? (
-          <Field label="Starts (min after service start)">
-            <input
-              type="number"
-              min={0}
-              value={Math.round(offset / 60_000)}
-              onChange={(event) =>
-                set('startsAt', clockAt(series, Math.max(0, Number(event.target.value)) * 60_000))
-              }
-            />
-          </Field>
-        ) : (
-          <Field label="Starts">
-            <input
-              type="time"
-              value={draft.startsAt}
-              onChange={(event) => set('startsAt', event.target.value)}
-            />
-          </Field>
-        )}
-        {/* Hidden rather than greyed out: with the box ticked the event's
-            own length decides, and a number here would only mislead. */}
-        {draft.followsWindow ? null : (
-          <Field label="Runs for (min)">
-            <input
-              type="number"
-              min={1}
-              value={draft.minutes}
-              onChange={(event) => set('minutes', Number(event.target.value))}
-            />
-          </Field>
-        )}
-      </div>
-
-      <label className="row" style={{ gap: 8, flexWrap: 'nowrap' }}>
-        <input
-          type="checkbox"
-          checked={draft.followsWindow}
-          onChange={(event) => set('followsWindow', event.target.checked)}
-        />
-        <span>
-          {paired ? 'Run until the service ends' : 'Run until the event ends'}
-          <span className="muted"> — for services that vary in length</span>
-        </span>
-      </label>
-
-      {offset < 0 ? (
-        <div className="banner warn">
-          {paired
-            ? 'That is before the service starts.'
-            : `That is before the event opens at ${timeOf(series)}. Move the event's start, or this one.`}
-        </div>
-      ) : null}
-      {/* An output that follows the window cannot run past it, so the
-          warning below would be nonsense for one. */}
-      {!draft.followsWindow && offset + draft.minutes * 60_000 > series.durationMs ? (
-        <div className="banner warn">
-          This runs past the end of the event's window. It will still run; the event just stays open
-          for it.
-        </div>
-      ) : null}
-      {/* The trap a paired event walks into: the window is a service now,
-          and its length is whatever the plan says that week. */}
-      {!draft.followsWindow && series.planSourceId && series.planGroupId ? (
-        <div className="banner warn">
-          This event follows Planning Center, so its length changes with each plan. A set number of
-          minutes will be wrong whenever a service runs long or short — tick the box above instead.
-        </div>
-      ) : null}
-
+      {/* Where it goes and what it runs on come first: they are the whole
+          of what most outputs need, and everything else has a default. */}
       {kind === 'stream' ? (
         <Field
           label="Streams to"
@@ -335,7 +267,6 @@ function OutputRow(props: RowProps): ReactNode {
           </select>
         </Field>
       ) : null}
-
       {/* Only hardware that can actually do this. A recorder in a stream's
           picker is an invitation to a Sunday-morning failure, and the
           server refuses it anyway. */}
@@ -372,6 +303,106 @@ function OutputRow(props: RowProps): ReactNode {
             </option>
           ))}
         </select>
+      </Field>
+
+      <div className="row">
+        {paired ? (
+          <Field label="Starts">
+            <span className="row" style={{ gap: 6, flexWrap: 'nowrap' }}>
+              <input
+                type="number"
+                min={0}
+                style={{ width: 72 }}
+                aria-label="Minutes"
+                value={Math.abs(Math.round(offset / 60_000))}
+                onChange={(event) =>
+                  set(
+                    'startsAt',
+                    clockAt(
+                      series,
+                      (offset < 0 ? -1 : 1) * Math.abs(Number(event.target.value)) * 60_000,
+                    ),
+                  )
+                }
+              />
+              <select
+                aria-label="Before or after"
+                value={offset < 0 ? 'before' : 'after'}
+                onChange={(event) =>
+                  set(
+                    'startsAt',
+                    clockAt(series, (event.target.value === 'before' ? -1 : 1) * Math.abs(offset)),
+                  )
+                }
+              >
+                <option value="before">min before the service</option>
+                <option value="after">min after it starts</option>
+              </select>
+            </span>
+          </Field>
+        ) : (
+          <Field
+            label="Starts"
+            hint={offset < 0 ? `${Math.round(-offset / 60_000)} min before the event.` : undefined}
+          >
+            <input
+              type="time"
+              value={draft.startsAt}
+              onChange={(event) => set('startsAt', event.target.value)}
+            />
+          </Field>
+        )}
+        {/* Hidden rather than greyed out: with the box ticked the event's
+            own length decides, and a number here would only mislead. */}
+        {draft.followsWindow ? (
+          <Field
+            label={
+              paired ? 'Keeps going after the service (min)' : 'Keeps going after the event (min)'
+            }
+          >
+            <input
+              type="number"
+              min={0}
+              style={{ width: 90 }}
+              value={draft.stopAfter}
+              onChange={(event) => set('stopAfter', Math.max(0, Number(event.target.value)))}
+            />
+          </Field>
+        ) : (
+          <Field label="Runs for (min)">
+            <input
+              type="number"
+              min={1}
+              value={draft.minutes}
+              onChange={(event) => set('minutes', Number(event.target.value))}
+            />
+          </Field>
+        )}
+      </div>
+
+      <label className="row" style={{ gap: 8, flexWrap: 'nowrap' }}>
+        <input
+          type="checkbox"
+          checked={draft.followsWindow}
+          onChange={(event) => set('followsWindow', event.target.checked)}
+        />
+        <span>{paired ? 'Run until the service ends' : 'Run until the event ends'}</span>
+      </label>
+
+      {/* An output that follows the window cannot run past it, so the
+          warning below would be nonsense for one. */}
+      {!draft.followsWindow && offset + draft.minutes * 60_000 > series.durationMs ? (
+        <div className="banner warn">
+          This runs past the end of the event. It will still run; the event just stays open for it.
+        </div>
+      ) : null}
+
+      <Field label="Name" hint="Optional. Shown in the schedule and the event log.">
+        <input
+          value={draft.label}
+          placeholder={defaultLabel || (kind === 'stream' ? 'Main channel' : 'Archive')}
+          onChange={(event) => set('label', event.target.value)}
+        />
       </Field>
 
       <DeviceSettings kind={kind} draft={draft} set={set} device={chosen} />
@@ -490,7 +521,7 @@ function OutputRow(props: RowProps): ReactNode {
       <div className="row">
         <button
           className="primary"
-          disabled={!draft.label || !draft.deviceId || props.saving === true}
+          disabled={!draft.deviceId || props.saving === true}
           onClick={save}
         >
           {props.saving ? 'Saving…' : output ? 'Save' : 'Add'}
@@ -679,6 +710,8 @@ interface RowDraft {
   minutes: number
   /** Run to the end of the window rather than for `minutes`. */
   followsWindow: boolean
+  /** Minutes it keeps going after the window, when it follows it. */
+  stopAfter: number
   destinationId: string | null
   credentialId: string | null
   deviceId: string | null
@@ -706,11 +739,11 @@ function toDraft(
     label: output?.label ?? '',
     startsAt: clockAt(series, output?.offsetMs ?? 0),
     minutes: Math.round((output?.durationMs ?? series.durationMs) / 60_000),
-    // A new output on a paired event follows the window by default: its
-    // length is whatever Planning Center says that week, so a fixed one is
-    // wrong as soon as a service runs long. An existing output keeps
-    // whatever it was set to.
-    followsWindow: output?.followsWindow ?? Boolean(series.planSourceId && series.planGroupId),
+    // A new output follows the event by default: it is what almost every
+    // output wants, and it leaves one fewer number to get right. An
+    // existing output keeps whatever it was set to.
+    followsWindow: output?.followsWindow ?? true,
+    stopAfter: Math.round((output?.stopAfterMs ?? 0) / 60_000),
     destinationId: output?.destinationId ?? null,
     credentialId: output?.credentialId ?? null,
     deviceId: output?.deviceId ?? null,
@@ -843,9 +876,9 @@ export function DraftOutputs({
     <section className="card">
       <div className="page-head" style={{ marginBottom: 12 }}>
         <div>
-          <h2 style={{ margin: 0 }}>Outputs</h2>
+          <h2 style={{ margin: 0 }}>Streams and recordings</h2>
           <p className="muted" style={{ margin: '4px 0 0' }}>
-            What it streams and records. Saved with the event.
+            Saved with the event.
           </p>
         </div>
         <div className="row">

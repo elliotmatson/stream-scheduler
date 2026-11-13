@@ -93,6 +93,7 @@ export function planningCenterSource(options: PlanningCenterOptions): PlanSource
       const times = await (await required()).serviceTimes(groupId)
       return times.map(({ plan, time }) => ({
         externalId: time.id,
+        planId: plan.id,
         startsAt: time.startsAt,
         ...(time.endsAt === undefined ? {} : { endsAt: time.endsAt }),
         detail: {

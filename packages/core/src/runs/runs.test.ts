@@ -41,6 +41,8 @@ interface OutputSpec {
   durationMs?: number
   /** Run to the end of the window rather than for `durationMs`. */
   followsWindow?: boolean
+  /** For one that follows the window: how long it keeps going after. */
+  stopAfterMs?: number
   /** Whether it goes to a service that has to issue a key first. */
   destination?: boolean
   deviceId?: string
@@ -92,8 +94,8 @@ function seedOccurrence(over: SeedOptions = {}): string {
   const insert = db.prepare(
     `INSERT INTO event_output
        (id, series_id, kind, label, position, offset_ms, duration_ms, follows_window,
-        destination_id, device_id, node_id, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)`,
+        stop_after_ms, destination_id, device_id, node_id, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)`,
   )
   ;(over.outputs ?? SUNDAY).forEach((spec, index) => {
     insert.run(
@@ -105,6 +107,7 @@ function seedOccurrence(over: SeedOptions = {}): string {
       spec.offsetMs ?? 0,
       spec.durationMs ?? WINDOW,
       spec.followsWindow ? 1 : 0,
+      spec.stopAfterMs ?? 0,
       spec.destination ? 'svc' : null,
       // Every output names its own hardware now; a stream defaults to the
       // encoder and a recording to the deck.
@@ -661,6 +664,37 @@ describe('RunEngine', () => {
 
     await engine.tick()
     expect(store.getRun(runId).state).toBe('completed')
+  })
+
+  it('starts before the window and keeps going after it, on its own numbers', async () => {
+    // Up ten minutes before the service, and five after it ends.
+    seedOccurrence({
+      outputs: [
+        {
+          label: 'Service',
+          offsetMs: -10 * MINUTE,
+          durationMs: MINUTE,
+          followsWindow: true,
+          stopAfterMs: 5 * MINUTE,
+        },
+      ],
+    })
+    const world = new FakeBroadcastService()
+    const engine = engineFor(plannerFor(world))
+
+    clock.set(START - 30 * MINUTE)
+    await engine.tick()
+    clock.set(START - 10 * MINUTE)
+    await engine.tick()
+    expect(world.log).toEqual(['start Service'])
+
+    clock.set(START + WINDOW)
+    await engine.tick()
+    expect(world.log).not.toContain('stop Service')
+
+    clock.set(START + WINDOW + 5 * MINUTE)
+    await engine.tick()
+    expect(world.log).toContain('stop Service')
   })
 
   it('keeps its offset while following the window', async () => {

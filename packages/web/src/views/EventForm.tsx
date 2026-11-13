@@ -21,6 +21,7 @@ import {
   WEEKDAYS,
   type Repeat,
 } from '../event-rules.ts'
+import { commonZones, zoneChoices, zoneName } from '../zones.ts'
 
 interface Draft {
   label: string
@@ -29,10 +30,16 @@ interface Draft {
   time: string
   durationMinutes: number
   prepareLeadMinutes: number
-  /** Minutes of air before the window opens, and after it closes. */
-  prerollMinutes: number
-  postrollMinutes: number
   repeat: Repeat
+  /** The builder's parts: every how many, which kind of monthly, and when
+   *  it stops. See `toRrule`. */
+  interval: number
+  monthlyBy: 'weekday' | 'day'
+  ends: 'never' | 'on' | 'after'
+  until: string
+  count: number
+  /** For a Planning Center event: one per service time, or one per plan. */
+  planMode: 'time' | 'plan'
   byday: string[]
   /** True once the operator has clicked a day chip themselves. */
   bydayTouched: boolean
@@ -77,6 +84,15 @@ export function EventForm({ series, onDone }: { series?: Series; onDone: () => v
   const set = <K extends keyof Draft>(key: K, value: Draft[K]): void =>
     setDraft((current) => ({ ...current, [key]: value }))
 
+  // A new event is in the install's timezone, set once under Settings,
+  // rather than asking every time.
+  const { data: general } = useResource(() => api.generalSettings(), [])
+  const [zoneTouched, setZoneTouched] = useState(false)
+  useEffect(() => {
+    if (series || zoneTouched || !general?.timezone) return
+    setDraft((current) => ({ ...current, timezone: general.timezone! }))
+  }, [series, zoneTouched, general?.timezone])
+
   // Until the operator picks days themselves, "every week" means the weekday
   // of the first date. Deriving it here rather than freezing it at mount is
   // what stops "Sunday Service, first date the 20th" quietly recurring on
@@ -115,6 +131,7 @@ export function EventForm({ series, onDone }: { series?: Series; onDone: () => v
       templates: templatesOf(draft),
       count: 5,
       outputs: previewOutputs,
+      planMode: draft.planMode,
       ...pairingOf(draft),
     }),
     [draft, rrule, previewOutputs],
@@ -152,14 +169,13 @@ export function EventForm({ series, onDone }: { series?: Series; onDone: () => v
         dtstartLocal: { date: draft.date, time: draft.time },
         durationMs: draft.durationMinutes * 60_000,
         prepareLeadMs: draft.prepareLeadMinutes * 60_000,
-        prerollMs: draft.prerollMinutes * 60_000,
-        postrollMs: draft.postrollMinutes * 60_000,
         templates: templatesOf(draft),
         // Always sent, and null when there is no pairing: "leave it alone"
         // and "unpair it" are different requests and the form has to be
         // able to say the second one.
         planSourceId: draft.repeat === 'plan' ? draft.planSourceId || null : null,
         planGroupId: draft.repeat === 'plan' ? draft.planGroupId || null : null,
+        planMode: draft.planMode,
       }
       if (saved) {
         // Captured before the series moves: re-basing needs the offsets as
@@ -187,43 +203,16 @@ export function EventForm({ series, onDone }: { series?: Series; onDone: () => v
   }
 
   return (
-    <Card title={series ? `Edit ${series.label}` : 'Add an event'}>
+    <Card title={series ? `Edit ${series.label}` : undefined}>
       <ErrorBanner error={error} />
       <div className="split">
         <div className="stack">
-          <Field label="Name" hint="What you will call it here, e.g. “Sunday Service”.">
+          <Field label="Name">
             <input
               value={draft.label}
               placeholder="Sunday Service"
               onChange={(event) => set('label', event.target.value)}
             />
-          </Field>
-
-          <Field label="Timezone" hint="A 9am service stays at 9am across a clock change.">
-            <select
-              value={draft.timezone}
-              onChange={(event) => set('timezone', event.target.value)}
-            >
-              {/* The few anybody here means first, then the rest. A list of
-                  418 starting at Africa/Abidjan is not a choice, it is a
-                  scroll. */}
-              <optgroup label="Common">
-                {commonZones(draft.timezone).map((zone) => (
-                  <option key={zone} value={zone}>
-                    {zoneName(zone)}
-                  </option>
-                ))}
-              </optgroup>
-              <optgroup label="Everywhere else">
-                {zoneChoices(draft.timezone)
-                  .filter((zone) => !commonZones(draft.timezone).includes(zone))
-                  .map((zone) => (
-                    <option key={zone} value={zone}>
-                      {zone.replace(/_/g, ' ')}
-                    </option>
-                  ))}
-              </optgroup>
-            </select>
           </Field>
 
           <Field label="Repeats">
@@ -232,34 +221,43 @@ export function EventForm({ series, onDone }: { series?: Series; onDone: () => v
               onChange={(event) => set('repeat', event.target.value as Repeat)}
             >
               <option value="once">Does not repeat</option>
-              <option value="daily">Every day</option>
-              <option value="weekly">Every week</option>
-              <option value="monthly">Every month, on the same weekday</option>
+              <option value="daily">Daily</option>
+              <option value="weekly">Weekly</option>
+              <option value="monthly">Monthly</option>
+              <option value="plan">From Planning Center</option>
               <option value="custom">Custom rule</option>
-              <option value="plan">Whenever Planning Center says</option>
             </select>
           </Field>
 
           {draft.repeat === 'plan' ? (
-            <PlanPairing
-              sourceId={draft.planSourceId}
-              groupId={draft.planGroupId}
-              onChange={(next) =>
-                setDraft((current) => ({
-                  ...current,
-                  planSourceId: next.sourceId,
-                  planGroupId: next.groupId,
-                }))
-              }
-            />
+            <>
+              <PlanPairing
+                sourceId={draft.planSourceId}
+                groupId={draft.planGroupId}
+                onChange={(next) =>
+                  setDraft((current) => ({
+                    ...current,
+                    planSourceId: next.sourceId,
+                    planGroupId: next.groupId,
+                  }))
+                }
+              />
+              <Field label="Make an event for">
+                <select
+                  value={draft.planMode}
+                  onChange={(event) => set('planMode', event.target.value as 'time' | 'plan')}
+                >
+                  <option value="time">Each service time</option>
+                  <option value="plan">Each plan, from its first time to its last</option>
+                </select>
+              </Field>
+            </>
           ) : null}
 
           <div className="row">
             {/* A paired event does not run at a time this form decides:
-                Planning Center supplies the date and the start, and one of
-                them is not even the same week to week. So the two boxes go
-                away rather than sitting there greyed out — which is why the
-                choice of how it repeats comes first. */}
+                Planning Center supplies the date and the start. So the two
+                boxes go away rather than sitting there greyed out. */}
             {fromPlan ? null : (
               <>
                 <Field label="First date">
@@ -280,11 +278,9 @@ export function EventForm({ series, onDone }: { series?: Series; onDone: () => v
             )}
             <Field
               label="Length (min)"
-              // Still here on a paired event: a plan time is allowed to have
-              // no end, and this is what fills in.
               hint={
                 fromPlan
-                  ? 'Only used for a service time with no end time in the plan.'
+                  ? 'For a service time with no end in the plan.'
                   : `Ends at ${clockPlus(draft.time, draft.durationMinutes)}.`
               }
             >
@@ -349,10 +345,69 @@ export function EventForm({ series, onDone }: { series?: Series; onDone: () => v
             </div>
           ) : null}
 
+          {['daily', 'weekly', 'monthly'].includes(draft.repeat) ? (
+            <div className="row">
+              <Field label="Every">
+                <span className="row" style={{ gap: 6, flexWrap: 'nowrap' }}>
+                  <input
+                    type="number"
+                    min={1}
+                    max={99}
+                    style={{ width: 72 }}
+                    value={draft.interval}
+                    onChange={(event) => set('interval', Math.max(1, Number(event.target.value)))}
+                  />
+                  <span>{unitOf(draft.repeat, draft.interval)}</span>
+                </span>
+              </Field>
+              {draft.repeat === 'monthly' ? (
+                <Field label="On">
+                  <select
+                    value={draft.monthlyBy}
+                    onChange={(event) => set('monthlyBy', event.target.value as 'weekday' | 'day')}
+                  >
+                    <option value="weekday">The {ordinalWeekday(draft.date)}</option>
+                    <option value="day">Day {Number(draft.date.split('-')[2])}</option>
+                  </select>
+                </Field>
+              ) : null}
+              <Field label="Ends">
+                <select
+                  value={draft.ends}
+                  onChange={(event) => set('ends', event.target.value as 'never' | 'on' | 'after')}
+                >
+                  <option value="never">Never</option>
+                  <option value="on">On a date</option>
+                  <option value="after">After a number of times</option>
+                </select>
+              </Field>
+              {draft.ends === 'on' ? (
+                <Field label="Last date">
+                  <input
+                    type="date"
+                    value={draft.until}
+                    onChange={(event) => set('until', event.target.value)}
+                  />
+                </Field>
+              ) : null}
+              {draft.ends === 'after' ? (
+                <Field label="Times">
+                  <input
+                    type="number"
+                    min={1}
+                    style={{ width: 80 }}
+                    value={draft.count}
+                    onChange={(event) => set('count', Math.max(1, Number(event.target.value)))}
+                  />
+                </Field>
+              ) : null}
+            </div>
+          ) : null}
+
           {draft.repeat === 'custom' ? (
             <Field
               label="Custom rule"
-              hint="An RFC 5545 RRULE, without the DTSTART line. e.g. FREQ=WEEKLY;BYDAY=SU,WE"
+              hint="An iCalendar RRULE, e.g. FREQ=YEARLY;BYMONTH=12;BYMONTHDAY=24"
             >
               <input
                 value={draft.customRrule}
@@ -361,85 +416,81 @@ export function EventForm({ series, onDone }: { series?: Series; onDone: () => v
             </Field>
           ) : null}
 
-          {/* Padding around the window, which is the setting people reach
-              for when the schedule comes from somewhere else: a Planning
-              Center plan says 9:00 to 10:15, and the stream wants to be up
-              before the first word and stay up through the last song. */}
-          <div className="row">
-            <Field
-              label="Start early (min)"
-              hint={
-                fromPlan
-                  ? 'Air before each service starts.'
-                  : `On air from ${clockPlus(draft.time, -draft.prerollMinutes)}.`
-              }
-            >
-              <input
-                type="number"
-                min={0}
-                value={draft.prerollMinutes}
-                onChange={(event) => set('prerollMinutes', Number(event.target.value))}
-              />
-            </Field>
-            <Field
-              label="Keep going after (min)"
-              hint={
-                fromPlan
-                  ? 'Air after each service ends.'
-                  : `Off air at ${clockPlus(draft.time, draft.durationMinutes + draft.postrollMinutes)}.`
-              }
-            >
-              <input
-                type="number"
-                min={0}
-                value={draft.postrollMinutes}
-                onChange={(event) => set('postrollMinutes', Number(event.target.value))}
-              />
-            </Field>
-          </div>
+          {/* Everything a volunteer can leave alone. */}
+          <details className="more-options">
+            <summary>More options</summary>
+            <div className="stack" style={{ marginTop: 10 }}>
+              <Field
+                label="Time zone"
+                hint="Set once for everything under Settings. Change it here only for an event somewhere else."
+              >
+                <select
+                  value={draft.timezone}
+                  onChange={(event) => {
+                    setZoneTouched(true)
+                    set('timezone', event.target.value)
+                  }}
+                >
+                  <optgroup label="Common">
+                    {commonZones(draft.timezone).map((zone) => (
+                      <option key={zone} value={zone}>
+                        {zoneName(zone)}
+                      </option>
+                    ))}
+                  </optgroup>
+                  <optgroup label="Everywhere else">
+                    {zoneChoices(draft.timezone)
+                      .filter((zone) => !commonZones(draft.timezone).includes(zone))
+                      .map((zone) => (
+                        <option key={zone} value={zone}>
+                          {zone.replace(/_/g, ' ')}
+                        </option>
+                      ))}
+                  </optgroup>
+                </select>
+              </Field>
 
-          <Field
-            label="Prepare early (min)"
-            hint={
-              fromPlan
-                ? 'Creates the broadcast on YouTube or Twitch this long before each service, so its link can go out. Nothing goes on air. "Prepare now" on the event does it by hand.'
-                : `Creates the broadcast on YouTube or Twitch at ${clockPlus(draft.time, -draft.prepareLeadMinutes)}, so its link can go out. Nothing goes on air. "Prepare now" on the event does it by hand.`
-            }
-          >
-            <input
-              type="number"
-              min={0}
-              value={draft.prepareLeadMinutes}
-              onChange={(event) => set('prepareLeadMinutes', Number(event.target.value))}
-            />
-          </Field>
+              <Field
+                label="Prepare early (min)"
+                hint={
+                  fromPlan
+                    ? 'Creates the broadcast on YouTube or Twitch this long before each service, so its link can go out. Nothing goes on air. "Prepare now" on the event does it by hand.'
+                    : `Creates the broadcast on YouTube or Twitch at ${clockPlus(draft.time, -draft.prepareLeadMinutes)}, so its link can go out. Nothing goes on air. "Prepare now" on the event does it by hand.`
+                }
+              >
+                <input
+                  type="number"
+                  min={0}
+                  value={draft.prepareLeadMinutes}
+                  onChange={(event) => set('prepareLeadMinutes', Number(event.target.value))}
+                />
+              </Field>
 
-          <h3>Default names</h3>
-          <p className="muted" style={{ margin: 0 }}>
-            What every stream and recording is called unless it says otherwise.
-          </p>
-          <TemplateTokens plan={draft.repeat === 'plan'} />
-          <Field label="Broadcast title">
-            <input
-              value={draft.title}
-              placeholder={'{{event.name}} — {{date "MMMM d, yyyy"}}'}
-              onChange={(event) => set('title', event.target.value)}
-            />
-          </Field>
-          <Field label="Description">
-            <textarea
-              rows={3}
-              value={draft.description}
-              onChange={(event) => set('description', event.target.value)}
-            />
-          </Field>
-          <Field label="Filename" hint="For recordings. The device adds its own extension.">
-            <input
-              value={draft.filename}
-              placeholder={'{{date "yyyy-MM-dd"}} {{event.name}}'}
-              onChange={(event) => set('filename', event.target.value)}
-            />
-          </Field>
+              <strong>Names</strong>
+              <TemplateTokens plan={draft.repeat === 'plan'} />
+              <Field label="Broadcast title">
+                <input
+                  value={draft.title}
+                  placeholder="{{event.name}}"
+                  onChange={(event) => set('title', event.target.value)}
+                />
+              </Field>
+              <Field label="Description">
+                <textarea
+                  rows={3}
+                  value={draft.description}
+                  onChange={(event) => set('description', event.target.value)}
+                />
+              </Field>
+              <Field label="Filename" hint="For recordings. The device adds its own extension.">
+                <input
+                  value={draft.filename}
+                  placeholder={'{{date "yyyy-MM-dd"}} {{event.name}}'}
+                  onChange={(event) => set('filename', event.target.value)}
+                />
+              </Field>
+            </div>
+          </details>
 
           {saved ? (
             <div className="row">
@@ -455,14 +506,7 @@ export function EventForm({ series, onDone }: { series?: Series; onDone: () => v
           ) : null}
         </div>
 
-        <PreviewPanel
-          request={request}
-          timezone={draft.timezone}
-          padding={{
-            prerollMs: draft.prerollMinutes * 60_000,
-            postrollMs: draft.postrollMinutes * 60_000,
-          }}
-        />
+        <PreviewPanel request={request} timezone={draft.timezone} />
       </div>
 
       {saved ? (
@@ -511,13 +555,9 @@ export function EventForm({ series, onDone }: { series?: Series; onDone: () => v
 function PreviewPanel({
   request,
   timezone,
-  padding,
 }: {
   request: Parameters<typeof api.schedulePreview>[0]
   timezone: string
-  /** Air either side of each occurrence's window, so the preview can show
-   *  what actually goes out rather than only what is scheduled. */
-  padding: { prerollMs: number; postrollMs: number }
 }): ReactNode {
   const [preview, setPreview] = useState<SchedulePreview>()
   const [problem, setProblem] = useState<string>()
@@ -568,16 +608,6 @@ function PreviewPanel({
                   <strong>{occurrence.localDate}</strong> {timeIn(occurrence.start, timezone)}{' '}
                   <span className="muted">{shortZone(occurrence.start, timezone)}</span>
                 </div>
-                {/* Padding is invisible otherwise until Sunday: the times
-                    above are the event's window, and what actually goes out
-                    is wider. Said here, where the rest of the checking
-                    happens. */}
-                {padding.prerollMs > 0 || padding.postrollMs > 0 ? (
-                  <div className="muted">
-                    On air {timeIn(occurrence.start - padding.prerollMs, timezone)} –{' '}
-                    {timeIn(occurrence.end + padding.postrollMs, timezone)}
-                  </div>
-                ) : null}
                 {/* A clock change landing on this occurrence is worth saying
                     out loud rather than resolving quietly. */}
                 {occurrence.resolution !== 'exact' ? (
@@ -664,12 +694,16 @@ function toDraft(series: Series | undefined): Draft {
     time: timeInZone(start, zone),
     durationMinutes: Math.round((series?.durationMs ?? 90 * 60_000) / 60_000),
     prepareLeadMinutes: Math.round((series?.prepareLeadMs ?? 30 * 60_000) / 60_000),
-    prerollMinutes: Math.round((series?.prerollMs ?? 0) / 60_000),
-    postrollMinutes: Math.round((series?.postrollMs ?? 0) / 60_000),
     // A pairing wins over whatever rule is stored: the rule is kept so
     // unpairing has something to fall back to, but it is not what runs.
     repeat: series?.planSourceId && series.planGroupId ? 'plan' : parsed.repeat,
     byday: parsed.byday,
+    interval: parsed.interval,
+    monthlyBy: parsed.monthlyBy,
+    ends: parsed.ends,
+    until: parsed.until,
+    count: parsed.count,
+    planMode: series?.planMode ?? 'time',
     // An existing series already says which days it runs; a new one follows
     // the first date until told otherwise.
     bydayTouched: parsed.byday.length > 0,
@@ -802,40 +836,19 @@ function timeInZone(instant: number, timeZone: string): string {
   }).format(instant)
 }
 
-const US_ZONES = [
-  'America/New_York',
-  'America/Chicago',
-  'America/Denver',
-  'America/Phoenix',
-  'America/Los_Angeles',
-  'America/Anchorage',
-  'Pacific/Honolulu',
-]
-
-/** This browser's zone, the one already chosen, and the US zones. */
-function commonZones(current: string): string[] {
-  const here = Intl.DateTimeFormat().resolvedOptions().timeZone
-  return [...new Set([current, here, ...US_ZONES])]
+/** "day", "weeks" — the unit beside the "Every" box. */
+function unitOf(repeat: Repeat, interval: number): string {
+  const unit = repeat === 'daily' ? 'day' : repeat === 'weekly' ? 'week' : 'month'
+  return interval === 1 ? unit : `${unit}s`
 }
 
-/** "America/Chicago" as "Central — Chicago", where there is a short name. */
-function zoneName(zone: string): string {
-  const city = zone.split('/').pop()?.replace(/_/g, ' ') ?? zone
-  try {
-    const name = new Intl.DateTimeFormat('en-US', { timeZone: zone, timeZoneName: 'long' })
-      .formatToParts(new Date())
-      .find((part) => part.type === 'timeZoneName')?.value
-    return name ? `${city} (${name.replace(/ (Standard|Daylight) Time$/, '')})` : city
-  } catch {
-    return city
-  }
-}
-
-/** Every zone the browser knows, with the current one guaranteed present. */
-function zoneChoices(current: string): string[] {
-  const supported =
-    typeof Intl.supportedValuesOf === 'function'
-      ? Intl.supportedValuesOf('timeZone')
-      : [Intl.DateTimeFormat().resolvedOptions().timeZone]
-  return supported.includes(current) ? supported : [current, ...supported]
+/** "third Sunday" for a date, for the monthly choice. */
+function ordinalWeekday(date: string): string {
+  const day = Number(date.split('-')[2])
+  const nth = ['first', 'second', 'third', 'fourth', 'fifth'][Math.floor((day - 1) / 7)] ?? 'last'
+  const weekday = new Date(`${date}T12:00:00Z`).toLocaleDateString('en-US', {
+    weekday: 'long',
+    timeZone: 'UTC',
+  })
+  return `${nth} ${weekday}`
 }
