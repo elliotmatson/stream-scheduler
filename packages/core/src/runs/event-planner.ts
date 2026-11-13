@@ -447,17 +447,26 @@ export class EventPlanner implements RunPlanner {
               // takes its quality here: there is no stream target to hang
               // it on.
               ...(output.settings.quality ? { quality: output.settings.quality } : {}),
+              ...(output.settings.iso === undefined ? {} : { iso: output.settings.iso }),
             },
             {
               what: 'Recording',
               expected:
                 `active as ${filename}` +
-                (output.settings.quality ? ` at ${output.settings.quality}` : ''),
+                (output.settings.quality ? ` at ${output.settings.quality}` : '') +
+                (output.settings.iso === undefined
+                  ? ''
+                  : output.settings.iso
+                    ? ', every input separately'
+                    : ', programme only'),
               // A deck spinning up media takes a moment, and reports the
               // transport status only once it has.
               satisfiedBy: (state) =>
                 state.recording?.active === true &&
-                (!output.settings.quality || qualityMatches(state, output.settings.quality)),
+                (!output.settings.quality || qualityMatches(state, output.settings.quality)) &&
+                (output.settings.iso === undefined ||
+                  state.recording.iso === undefined ||
+                  state.recording.iso === output.settings.iso),
               settleMs: 10_000,
             },
           )

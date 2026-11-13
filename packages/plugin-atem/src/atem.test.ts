@@ -94,6 +94,11 @@ class FakeAtem implements AtemClient {
     }
   }
 
+  async setEnableISORecording(enabled: boolean): Promise<void> {
+    this.record('setEnableISORecording')
+    if (this.state?.recording) this.state.recording.recordAllInputs = enabled
+  }
+
   async startRecording(): Promise<void> {
     this.record('startRecording')
     this.setRecordingStatus(Enums.RecordingStatus.Recording)
@@ -456,6 +461,42 @@ describe('encoder quality', () => {
     expect((await atem.invoke('record', 'readState'))?.options?.quality?.current).toBe(
       'HyperDeck High',
     )
+  })
+
+  describe('ISO recording', () => {
+    it('turns on recording every input when asked, on a model that can', async () => {
+      const client = new FakeAtem({
+        recording: { ...recordingBlock(), recordAllInputs: false },
+      } as Partial<AtemState>)
+      const atem = await connect(client)
+      expect((await atem.invoke('record', 'readState'))?.recording?.iso).toBe(false)
+
+      await atem.invoke('record', 'startRecording', { filename: 'service', iso: true })
+      // Set before the recording starts, so the files are made from the top.
+      expect(client.calls.indexOf('setEnableISORecording')).toBeLessThan(
+        client.calls.indexOf('startRecording'),
+      )
+      expect((await atem.invoke('record', 'readState'))?.recording?.iso).toBe(true)
+    })
+
+    it('leaves it alone when the recording does not say', async () => {
+      const client = new FakeAtem({
+        recording: { ...recordingBlock(), recordAllInputs: true },
+      } as Partial<AtemState>)
+      const atem = await connect(client)
+      await atem.invoke('record', 'startRecording', { filename: 'service' })
+      expect(client.calls).not.toContain('setEnableISORecording')
+    })
+
+    it('says nothing about ISO on a model that cannot, and refuses to pretend', async () => {
+      const client = new FakeAtem({ recording: recordingBlock() } as Partial<AtemState>)
+      const atem = await connect(client)
+      expect((await atem.invoke('record', 'readState'))?.recording?.iso).toBeUndefined()
+      await expect(
+        atem.invoke('record', 'startRecording', { filename: 'service', iso: true }),
+      ).rejects.toThrow(/cannot record each input/)
+      expect(client.calls).not.toContain('startRecording')
+    })
   })
 
   // One H.264 encoder feeds the stream and the recording, so the bitrate is

@@ -504,6 +504,15 @@ describe('starting before the event', () => {
   })
 })
 
+describe('ISO recording', () => {
+  it('stores whether a recording takes every camera separately', async () => {
+    const { outputId, seriesId } = await seedEverything()
+    expect((await patch(`/api/outputs/${outputId}`, { settings: { iso: true } })).status).toBe(200)
+    const { outputs } = (await get(`/api/series/${seriesId}/outputs`)).json
+    expect(outputs[0].settings.iso).toBe(true)
+  })
+})
+
 describe('the calendar', () => {
   it('says which devices each date uses, so it can be narrowed to one', async () => {
     const { deviceId } = await seedEverything()

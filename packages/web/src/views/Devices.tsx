@@ -499,6 +499,8 @@ function NodeControls({ device, node }: { device: Device; node: DeviceNode }): R
   const [busy, setBusy] = useState<string>()
   const [error, setError] = useState<string>()
   const [filename, setFilename] = useState('')
+  /** ISO for a recording started here; follows the device until changed. */
+  const [iso, setIso] = useState<boolean>()
   const live = useLive()
 
   // Devices push their state as it changes — a deck notifies on transport
@@ -584,6 +586,7 @@ function NodeControls({ device, node }: { device: Device; node: DeviceNode }): R
               // Only where the quality box belongs to the recorder: on a
               // node that streams, the same box is part of pointing it.
               ...(quality && !canStream ? { quality } : {}),
+              ...(iso === undefined ? {} : { iso }),
             }
           : {},
       ),
@@ -902,6 +905,16 @@ function NodeControls({ device, node }: { device: Device; node: DeviceNode }): R
 
             {canRecord ? (
               <div className="row" style={{ gap: 10, alignItems: 'flex-end' }}>
+                {state?.recording?.iso !== undefined ? (
+                  <label className="row" style={{ gap: 8, flexWrap: 'nowrap' }}>
+                    <input
+                      type="checkbox"
+                      checked={iso ?? state.recording.iso}
+                      onChange={(event) => setIso(event.target.checked)}
+                    />
+                    <span>Every camera separately (ISO)</span>
+                  </label>
+                ) : null}
                 <Field label="Filename" hint="For a recording started here. Events name their own.">
                   <input
                     value={filename}

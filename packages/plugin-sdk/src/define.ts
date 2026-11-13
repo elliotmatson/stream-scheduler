@@ -109,6 +109,7 @@ export function defineDevice(spec: DeviceSpec): DeviceInstance {
             // which case the quality has to be set on the way in rather
             // than with a stream target the recording does not have.
             ...(typeof args.quality === 'string' && args.quality ? { quality: args.quality } : {}),
+            ...(typeof args.iso === 'boolean' ? { iso: args.iso } : {}),
           })
           break
         case 'selectSlot': {

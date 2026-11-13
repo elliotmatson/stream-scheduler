@@ -126,6 +126,12 @@ export interface NodeState {
   recording?: {
     active: boolean
     filename?: string
+    /**
+     * Whether every input is recorded to a file of its own (ISO), on a
+     * device that can. Absent on one that cannot, which is how a form knows
+     * whether to offer the choice at all.
+     */
+    iso?: boolean
     /** How long this recording has been going, where the device counts it
      *  for itself. A deck does not, so the host falls back to when its own
      *  start step landed. */
@@ -285,7 +291,13 @@ export interface NodeActions {
   stopStreaming?(): Promise<void>
   /** `slot` is which card or disk to write to, where the device has more
    *  than one. Absent means whichever it is already on. */
-  startRecording?(options: { filename: string; slot?: number; quality?: string }): Promise<void>
+  startRecording?(options: {
+    filename: string
+    slot?: number
+    quality?: string
+    /** Record every input to its own file as well. Absent: leave as it is. */
+    iso?: boolean
+  }): Promise<void>
   /** Put the device on a card without recording to it yet. A recording
    *  names its own slot; this is for an operator standing at the app. */
   selectSlot?(options: { slot: number }): Promise<void>
