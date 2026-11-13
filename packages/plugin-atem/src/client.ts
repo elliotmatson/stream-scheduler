@@ -31,6 +31,8 @@ export interface AtemClient {
   startStreaming(): Promise<void>
   stopStreaming(): Promise<void>
   setRecordingSettings(props: { filename?: string }): Promise<void>
+  /** ISO: every input to its own file, on a model that can. */
+  setEnableISORecording(enabled: boolean): Promise<void>
   startRecording(): Promise<void>
   stopRecording(): Promise<void>
   setAuxSource(source: number, bus?: number): Promise<void>

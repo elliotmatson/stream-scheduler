@@ -65,6 +65,9 @@ export interface OutputSettings {
   broadcast?: { privacy?: 'public' | 'unlisted' | 'private'; playlistId?: string }
   /** Encoder quality profile, in the device's own vocabulary. */
   quality?: string
+  /** Record every input to its own file too, on a device that can (ISO).
+   *  Absent leaves the device as it is. */
+  iso?: boolean
   /** Which slot or disk a recorder writes to. */
   slot?: number
   /**
@@ -194,6 +197,7 @@ function parseSettings(raw: string): OutputSettings {
       if (Object.keys(kept).length > 0) out.broadcast = kept
     }
     if (typeof parsed.quality === 'string' && parsed.quality) out.quality = parsed.quality
+    if (typeof parsed.iso === 'boolean') out.iso = parsed.iso
     if (typeof parsed.slot === 'number' && Number.isInteger(parsed.slot)) out.slot = parsed.slot
     // Shape only. Whether a given number *means* anything is retention's
     // own question — a keepDays of zero parses fine and is rejected there,

@@ -1056,6 +1056,7 @@ function registerRoutes(fastify: FastifyInstance, app: Application): void {
           })
           .optional(),
         quality: z.string().min(1).optional(),
+        iso: z.boolean().optional(),
         slot: z.number().int().positive().optional(),
         // Bounded rather than free: a keepDays of 0 would make every
         // recording eligible the moment it finished.

@@ -140,6 +140,8 @@ export interface NodeState {
   recording?: {
     active: boolean
     filename?: string
+    /** Every input to its own file (ISO). Absent on a device that cannot. */
+    iso?: boolean
     remainingMs?: number
     slots?: StorageSlot[]
     rollover?: boolean
@@ -490,6 +492,8 @@ export interface OutputSettings {
   /** This stream's own broadcast choices, over its account's defaults. */
   broadcast?: { privacy?: 'public' | 'unlisted' | 'private'; playlistId?: string }
   quality?: string
+  /** Every input to its own file too, on a device that can. */
+  iso?: boolean
   slot?: number
   /** How long this output's recordings are worth keeping. Absent means
    *  forever, which is the default. */

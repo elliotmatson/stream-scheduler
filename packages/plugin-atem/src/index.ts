@@ -356,7 +356,7 @@ class AtemDevice {
             await session.close().catch(() => {})
           }
         },
-        startRecording: async ({ filename, quality }) => {
+        startRecording: async ({ filename, quality, iso }) => {
           // The ATEM records to its own media with a filename it is given
           // beforehand, unlike the HyperDeck where the name rides along with
           // the record command.
@@ -370,6 +370,24 @@ class AtemDevice {
           const bitrates = quality === undefined ? undefined : parseQuality(quality)
           if (bitrates) {
             await this.guard(() => this.client.setStreamingService({ bitrates }))
+          }
+          // ISO, where asked for. Only the ISO models report the setting at
+          // all; asking one that does not is refused here rather than
+          // recording the programme alone and calling it done.
+          if (iso !== undefined) {
+            if (this.client.state?.recording?.recordAllInputs === undefined) {
+              throw new DeviceError(
+                'iso-unsupported',
+                'This switcher cannot record each input separately (ISO).',
+                {
+                  retryable: false,
+                  remediation: 'Turn off "Record every camera separately" on this recording.',
+                },
+              )
+            }
+            if (this.client.state.recording.recordAllInputs !== iso) {
+              await this.guard(() => this.client.setEnableISORecording(iso))
+            }
           }
           await this.guard(() => this.client.setRecordingSettings({ filename }))
           await this.guard(() => this.client.startRecording())
@@ -415,6 +433,8 @@ class AtemDevice {
         recording: {
           active: recording?.status?.state === Enums.RecordingStatus.Recording,
           ...(recording?.properties.filename ? { filename: recording.properties.filename } : {}),
+          // Only an ISO model has this at all.
+          ...(recording?.recordAllInputs === undefined ? {} : { iso: recording.recordAllInputs }),
           ...(recording?.status === undefined
             ? {}
             : { remainingMs: recording.status.recordingTimeAvailable * 1000 }),

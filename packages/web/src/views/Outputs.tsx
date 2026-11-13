@@ -495,7 +495,13 @@ function OutputRow(props: RowProps): ReactNode {
         </div>
       ) : null}
 
-      <DeviceSettings kind={kind} draft={draft} set={set} device={chosen} />
+      <DeviceSettings
+        kind={kind}
+        draft={draft}
+        set={set}
+        device={chosen}
+        changedIso={isChanged('iso')}
+      />
 
       {/* Its own name only when asked for: most outputs are named after the
           event, and a box of template tokens on every one was most of
@@ -660,11 +666,13 @@ function DeviceSettings({
   draft,
   set,
   device,
+  changedIso,
 }: {
   kind: 'stream' | 'recording'
   draft: RowDraft
   set: <K extends keyof RowDraft>(key: K, value: RowDraft[K]) => void
   device: { device: Device; node: DeviceNode } | undefined
+  changedIso?: boolean
 }): ReactNode {
   const [state, setState] = useState<NodeState | null>()
   // Set when the operator asks to type a figure the list does not offer.
@@ -701,7 +709,9 @@ function DeviceSettings({
   const freeform = quality?.freeform
   const current = quality?.current
   const slots = state?.recording?.slots ?? []
-  if (!quality && slots.length === 0) return null
+  // Only a device that reports it can record each input separately.
+  const canIso = kind === 'recording' && state?.recording?.iso !== undefined
+  if (!quality && slots.length === 0 && !canIso) return null
   const listId = `quality-${device.device.id}-${device.node.id}`
   // Also on when what is already stored is a figure rather than a preset —
   // otherwise reopening an output would show "leave as it is" over a
@@ -774,6 +784,25 @@ function DeviceSettings({
           </Field>
         ) : null}
 
+        {canIso ? (
+          <Field
+            label="Record every camera separately (ISO)"
+            hint="A file for each input as well as the programme, for editing afterwards. Uses far more space."
+            changed={changedIso}
+          >
+            <select
+              value={draft.iso}
+              onChange={(event) => set('iso', event.target.value as RowDraft['iso'])}
+            >
+              <option value="">
+                {LEAVE_AS_IS} ({state?.recording?.iso ? 'on' : 'off'})
+              </option>
+              <option value="on">On</option>
+              <option value="off">Off, programme only</option>
+            </select>
+          </Field>
+        ) : null}
+
         {kind === 'recording' && slots.length > 0 ? (
           <>
             <Field label="Record to" hint="The slot this recording is written to.">
@@ -822,6 +851,8 @@ interface RowDraft {
   filename: string
   /** Blank means "leave the device as it is". */
   quality: string
+  /** ISO recording: blank leaves the device as it is. */
+  iso: '' | 'on' | 'off'
   slot: string
   /** Blank means recordings are kept forever, which is the default. */
   keepDays: string
@@ -855,6 +886,7 @@ function toDraft(
     description: output?.templates.description ?? '',
     filename: output?.templates.filename ?? '',
     quality: output?.settings.quality ?? '',
+    iso: output?.settings.iso === undefined ? '' : output.settings.iso ? 'on' : 'off',
     slot: output?.settings.slot === undefined ? '' : String(output.settings.slot),
     keepDays:
       output?.settings.retention?.keepDays === undefined
@@ -882,6 +914,7 @@ function settingsOf(draft: RowDraft): OutputSettings {
     }
   }
   if (draft.quality) out.quality = draft.quality
+  if (draft.iso) out.iso = draft.iso === 'on'
   if (draft.slot) out.slot = Number(draft.slot)
 
   // Only sent when there is a limit to go on. Without one nothing is ever
