@@ -580,6 +580,15 @@ export interface PreviewOccurrence {
   description?: string
   filename?: string
   error?: string
+  /** Each output on that date, when the request listed them. */
+  outputs?: {
+    label: string
+    kind: 'stream' | 'recording'
+    startsAt: number
+    title?: string
+    filename?: string
+    error?: string
+  }[]
 }
 
 export interface SchedulePreviewRequest {
@@ -592,6 +601,12 @@ export interface SchedulePreviewRequest {
   count?: number
   planSourceId?: string
   planGroupId?: string
+  outputs?: {
+    label: string
+    kind: 'stream' | 'recording'
+    offsetMs: number
+    templates: Record<string, string>
+  }[]
 }
 
 export interface SchedulePreview {

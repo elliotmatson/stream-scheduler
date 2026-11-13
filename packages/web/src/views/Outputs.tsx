@@ -172,6 +172,10 @@ interface RowProps {
 function OutputRow(props: RowProps): ReactNode {
   const { output, kind, series } = props
   const [draft, setDraft] = useState(() => toDraft(output, kind, series))
+  const [customName, setCustomName] = useState(
+    () => draft.title !== '' || draft.description !== '' || draft.filename !== '',
+  )
+  const [cleanup, setCleanup] = useState(() => draft.keepDays !== '' || draft.minFreeHours !== '')
   const set = <K extends keyof RowDraft>(key: K, value: RowDraft[K]): void =>
     setDraft((current) => ({ ...current, [key]: value }))
 
@@ -372,13 +376,24 @@ function OutputRow(props: RowProps): ReactNode {
 
       <DeviceSettings kind={kind} draft={draft} set={set} device={chosen} />
 
-      <details>
-        <summary>Its own name{kind === 'stream' ? ' and description' : ''}</summary>
-        <div className="stack" style={{ marginTop: 8 }}>
-          <p className="muted" style={{ margin: 0 }}>
-            Left blank, this uses the event's default. Two services on one morning usually want
-            different titles.
-          </p>
+      {/* Its own name only when asked for: most outputs are named after the
+          event, and a box of template tokens on every one was most of
+          the form. */}
+      <label className="row" style={{ gap: 8, flexWrap: 'nowrap' }}>
+        <input
+          type="checkbox"
+          checked={customName}
+          onChange={(event) => {
+            setCustomName(event.target.checked)
+            if (!event.target.checked) {
+              setDraft((current) => ({ ...current, title: '', description: '', filename: '' }))
+            }
+          }}
+        />
+        <span>{kind === 'stream' ? 'Custom name and description' : 'Custom filename'}</span>
+      </label>
+      {customName ? (
+        <div className="stack">
           <TemplateTokens plan={Boolean(series.planSourceId && series.planGroupId)} />
           {kind === 'stream' ? (
             <>
@@ -398,22 +413,40 @@ function OutputRow(props: RowProps): ReactNode {
               </Field>
             </>
           ) : (
-            <>
-              <Field label="Filename" hint="The device adds its own extension.">
-                <input
-                  value={draft.filename}
-                  placeholder={series.templates.filename ?? '{{date "yyyy-MM-dd"}} {{event.name}}'}
-                  onChange={(event) => set('filename', event.target.value)}
-                />
-              </Field>
+            <Field label="Filename" hint="The device adds its own extension.">
+              <input
+                value={draft.filename}
+                placeholder={series.templates.filename ?? '{{date "yyyy-MM-dd"}} {{event.name}}'}
+                onChange={(event) => set('filename', event.target.value)}
+              />
+            </Field>
+          )}
+        </div>
+      ) : null}
 
-              {/* A policy this scheduler keeps, not a setting on the deck:
-                  the device has no notion of how long a file is worth. */}
+      {/* A policy this scheduler keeps, not a setting on the deck: the
+          device has no notion of how long a file is worth. */}
+      {kind === 'recording' ? (
+        <>
+          <label className="row" style={{ gap: 8, flexWrap: 'nowrap' }}>
+            <input
+              type="checkbox"
+              checked={cleanup}
+              onChange={(event) => {
+                setCleanup(event.target.checked)
+                setDraft((current) =>
+                  event.target.checked
+                    ? { ...current, keepDays: current.keepDays || '30' }
+                    : { ...current, keepDays: '', minFreeHours: '', keepLast: '' },
+                )
+              }}
+            />
+            <span>Delete old recordings from the card</span>
+          </label>
+          {cleanup ? (
+            <>
               <div className="row" style={{ gap: 18, alignItems: 'flex-start' }}>
-                <Field
-                  label="Keep for (days)"
-                  hint="Leave blank to keep recordings forever, which is the default."
-                >
+                <Field label="Delete after (days)">
                   <input
                     type="number"
                     min={1}
@@ -423,10 +456,7 @@ function OutputRow(props: RowProps): ReactNode {
                     onChange={(event) => set('keepDays', event.target.value)}
                   />
                 </Field>
-                <Field
-                  label="Sweep early below (hours free)"
-                  hint="When the card has less recording time left than this. Leave blank to go by age alone."
-                >
+                <Field label="Or when under (hours free)" hint="Optional.">
                   <input
                     type="number"
                     min={1}
@@ -436,10 +466,7 @@ function OutputRow(props: RowProps): ReactNode {
                     onChange={(event) => set('minFreeHours', event.target.value)}
                   />
                 </Field>
-                <Field
-                  label="Always keep the newest"
-                  hint="However old they are, and however full the card is."
-                >
+                <Field label="Always keep the newest">
                   <input
                     type="number"
                     min={0}
@@ -452,14 +479,13 @@ function OutputRow(props: RowProps): ReactNode {
                 </Field>
               </div>
               <p className="muted" style={{ margin: 0, fontSize: 12 }}>
-                {draft.keepDays || draft.minFreeHours
-                  ? 'Enforced every hour, on its own. Never while this device is recording or an event is mid-run, and never on files this scheduler did not record.'
-                  : 'With both blank, nothing is ever deleted. Setting either one turns on an hourly sweep that enforces it.'}
+                Checked every hour. Never while recording, and never files this scheduler did not
+                make.
               </p>
             </>
-          )}
-        </div>
-      </details>
+          ) : null}
+        </>
+      ) : null}
 
       <div className="row">
         <button

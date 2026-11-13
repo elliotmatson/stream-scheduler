@@ -1074,6 +1074,14 @@ input[type='checkbox'] {
 .field {
   display: grid;
   gap: 5px;
+  /* Label, box, hint, top to bottom, always from the top. */
+  align-content: start;
+}
+
+/* Fields side by side line up by their labels. Centred, a field with a
+   hint under it sat higher than its neighbours without one. */
+.row > .field {
+  align-self: flex-start;
 }
 
 .field-label {
@@ -1988,6 +1996,17 @@ button.link:hover {
   background: var(--accent-hover);
 }
 
+/* The same, looking like an ordinary button rather than the main one. */
+.button-link.secondary {
+  background: var(--surface);
+  border-color: var(--border-strong);
+  color: var(--text);
+  box-shadow: none;
+}
+.button-link.secondary:hover {
+  background: var(--surface-2);
+}
+
 /* A figure that is fine, beside the ones that are not. */
 .ok-text {
   color: var(--ok);
@@ -2112,4 +2131,11 @@ button.link:hover {
     bottom: auto;
     top: calc(100% + 6px);
   }
+}
+
+/* A date's streams and recordings in the event form's preview. */
+.preview-outputs {
+  margin: 2px 0 0;
+  padding-left: 16px;
+  font-size: 12.5px;
 }

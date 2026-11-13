@@ -56,7 +56,7 @@ const NAV = [
   { to: '/events', label: 'Events', icon: <IconEvents /> },
   { to: '/devices', label: 'Devices', icon: <IconDevices /> },
   { to: '/services', label: 'Services', icon: <IconServices /> },
-  { to: '/runs', label: 'Runs', icon: <IconRuns /> },
+  { to: '/runs', label: 'Event logs', icon: <IconRuns /> },
   { to: '/notifications', label: 'Notifications', icon: <IconNotifications /> },
   { to: '/settings', label: 'Settings', icon: <IconSettings /> },
 ]
