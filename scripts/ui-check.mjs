@@ -601,7 +601,7 @@ async function oneDateOfAnEvent(browser, base, seriesId) {
     .locator('label.field', { has: page.locator('span.field-label:text-is("Called")') })
     .locator('input')
   await called.fill('Easter Sunday')
-  await page.getByRole('button', { name: 'Save just this one' }).click()
+  await page.getByRole('button', { name: /^Save .* to this date$/ }).click()
   await page.locator('h1', { hasText: 'Easter Sunday' }).waitFor({ timeout: TIMEOUT })
   check('a rename shows straight away', true)
 
