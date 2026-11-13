@@ -49,7 +49,9 @@ export function DeviceFiles({
   ).map((entry) => entry.id)
   const [chosen, setChosen] = useState<number>()
   const slot = chosen ?? slots[0]
-  const [open, setOpen] = useState(false)
+  // Read as soon as the panel opens: what is on the card is what somebody
+  // came to see. Hide is still there for a slow deck.
+  const [open, setOpen] = useState(true)
   const [picked, setPicked] = useState<Set<string>>(new Set())
   const [sort, setSort] = useState<'name' | 'size' | 'recorded'>('recorded')
   // Undefined is "wherever the recordings are", which is where this opens
@@ -116,11 +118,7 @@ export function DeviceFiles({
       <PageHead
         level={2}
         title="Files"
-        subtitle={
-          open
-            ? 'Everything on the media, including what this scheduler did not record.'
-            : 'Everything on the media, including what this scheduler did not record. Reading a card takes a moment, so this asks only when you want it to.'
-        }
+        subtitle="Everything on the card, including what this scheduler did not record."
         actions={
           <>
             {slots.length > 1 ? (
@@ -146,7 +144,7 @@ export function DeviceFiles({
                 setResult(undefined)
               }}
             >
-              {open ? 'Hide' : 'Read the media'}
+              {open ? 'Hide' : 'Show'}
             </button>
           </>
         }
