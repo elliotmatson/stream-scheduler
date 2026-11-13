@@ -351,13 +351,9 @@ function factsOf(app: Application, connection: Connection): DeviceFact[] {
 
     const signal = signalFact(state)
     if (signal) add(signal)
-
-    // What it is set to record or stream at. Wrong on the day is a whole
-    // service in the wrong codec, and it is invisible until then. Named
-    // in the value, because "ProRes422HQ" beside a device label reads as a
-    // model number and "standard" reads as nothing at all.
-    const quality = state.options?.quality?.current
-    if (quality !== undefined) add({ label: 'Quality', value: readableQuality(quality) })
+    // The quality it is set to is left to the device's own page: it is
+    // setup rather than state, and beside "23h left" and "1080p59.94" it
+    // made every row three facts long.
   }
 
   // Always something, even for a device that reports nothing at all.
@@ -403,9 +399,7 @@ function storageFact(state: NodeState): DeviceFact | undefined {
   const recording = state.recording
   if (recording === undefined) return undefined
 
-  if (recording.remainingMs !== undefined) {
-    return { label: 'Card', value: `${describeSpan(recording.remainingMs)} left` }
-  }
+  if (recording.remainingMs !== undefined) return spaceLeft(recording.remainingMs)
 
   const slots = recording.slots ?? []
   if (slots.length === 0) return undefined
@@ -424,7 +418,18 @@ function storageFact(state: NodeState): DeviceFact | undefined {
       value: `${mounted.length} card${mounted.length === 1 ? '' : 's'}`,
     }
   }
-  return { label: 'Card', value: `${describeSpan(best.remainingMs)} left` }
+  return spaceLeft(best.remainingMs)
+}
+
+/**
+ * Time left on the card, or that there is none.
+ *
+ * "0m left" read as a figure to skim past, on a deck that could not record
+ * a second. Nothing left is a problem and says so.
+ */
+function spaceLeft(remainingMs: number): DeviceFact {
+  if (remainingMs < 60_000) return { label: 'Card', value: 'full', tone: 'bad' }
+  return { label: 'Card', value: `${describeSpan(remainingMs)} left` }
 }
 
 const MOUNTED = new Set(['mounted', 'ready', 'ok'])
@@ -434,8 +439,22 @@ function signalFact(state: NodeState): DeviceFact | undefined {
   const input = state.input
   if (input === undefined) return undefined
   if (!input.present) return { label: 'Input', value: 'no signal', tone: 'bad' }
-  const source = input.source ? ` on ${input.source}` : ''
-  return { label: 'Input', value: `${input.format ?? 'signal'}${source}` }
+  // Which connector it arrives on is on the device's own page; here it
+  // only lengthened every row.
+  return { label: 'Input', value: input.format ? readableFormat(input.format) : 'signal' }
+}
+
+/**
+ * `1080p5994` as `1080p59.94`, the way a frame rate is written.
+ *
+ * Decks report the rate with its decimal point taken out, which on a
+ * status line reads as a four-digit frame rate.
+ */
+export function readableFormat(raw: string): string {
+  const match = /^(\d+[pi])(\d{4})$/.exec(raw)
+  if (!match) return raw
+  const rate = (Number(match[2]) / 100).toString()
+  return `${match[1]}${rate}`
 }
 
 /** `3h 12m`, for a fact that has no room for a sentence. */
@@ -464,7 +483,7 @@ function describeDevice(app: Application, deviceId: string): string | null {
  * Everything worth somebody's attention, worst first. Empty is the answer
  * this screen should usually give.
  */
-function attention(app: Application, now: number): DashboardAttention[] {
+export function attention(app: Application, now: number): DashboardAttention[] {
   const items: DashboardAttention[] = []
   const limits = app.thresholds.get()
   const mediaWarningMs = app.thresholds.mediaWarningMs

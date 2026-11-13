@@ -39,7 +39,7 @@ const check = (name, condition, detail = '') => tally.check(name, condition, det
 
 /** Every screen, and something to see on each that is not just "no error". */
 const SCREENS = [
-  { route: '/', name: 'Now', sees: 'h1:text-is("Now")' },
+  { route: '/', name: 'Home', sees: 'h1:text-is("Home")' },
   { route: '/schedule', name: 'Schedule', sees: '.calendar' },
   { route: '/events', name: 'Events', sees: 'h1:text-is("Events")' },
   { route: '/devices', name: 'Devices', sees: 'h1:text-is("Devices")' },
@@ -171,7 +171,7 @@ async function themeBehaves(browser, base) {
   const fresh = await browser.newContext({ colorScheme: 'dark' })
   const first = await fresh.newPage()
   await first.goto(`${base}/#/`)
-  await first.locator('h1:text-is("Now")').waitFor({ timeout: TIMEOUT })
+  await first.locator('h1:text-is("Home")').waitFor({ timeout: TIMEOUT })
   const untouched = await applied(first)
   const stored = await first.evaluate(() => window.localStorage.getItem('scheduler.theme'))
   check('a fresh install follows the system', untouched.attribute === null && untouched.dark)
@@ -183,7 +183,7 @@ async function themeBehaves(browser, base) {
   await first.waitForFunction(() => document.documentElement.dataset.theme === 'light')
   const lightBackground = (await applied(first)).background
   await first.reload()
-  await first.locator('h1:text-is("Now")').waitFor({ timeout: TIMEOUT })
+  await first.locator('h1:text-is("Home")').waitFor({ timeout: TIMEOUT })
   const afterReload = await applied(first)
   check('an explicit choice survives a reload', afterReload.attribute === 'light')
   check('and is applied before first paint', afterReload.background === lightBackground)
@@ -754,7 +754,7 @@ async function signingIn(browser, base) {
 
   await password.fill(PASSWORD)
   await page.getByRole('button', { name: 'Sign in' }).click()
-  await page.locator('h1:text-is("Now")').waitFor({ timeout: TIMEOUT })
+  await page.locator('h1:text-is("Home")').waitFor({ timeout: TIMEOUT })
   check('the right one lands on the app', true)
   await context.close()
 }

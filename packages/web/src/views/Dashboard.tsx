@@ -49,7 +49,7 @@ export function Dashboard({ navigate }: { navigate: (path: string) => void }): R
   return (
     <>
       <PageHead
-        title="Now"
+        title="Home"
         subtitle={
           data.onAir.length === 0
             ? 'Nothing on air.'
@@ -70,22 +70,6 @@ export function Dashboard({ navigate }: { navigate: (path: string) => void }): R
       <ErrorBanner error={error} />
 
       <div className="stack">
-        {data.attention.length > 0 ? (
-          <Card title="Needs attention">
-            <div className="stack" style={{ gap: 6 }}>
-              {data.attention.map((item) => (
-                <button
-                  key={`${item.kind}-${item.message}`}
-                  className={`banner ${item.kind === 'media' || item.kind === 'security' ? 'warn' : 'error'} banner-action`}
-                  onClick={() => navigate(item.href)}
-                >
-                  {item.message}
-                </button>
-              ))}
-            </div>
-          </Card>
-        ) : null}
-
         {data.onAir.map((run) => (
           <Card key={run.runId}>
             {/* The event states itself once, at the top: its name, when its
@@ -123,8 +107,6 @@ export function Dashboard({ navigate }: { navigate: (path: string) => void }): R
           </Card>
         ))}
 
-        <WeekStrip next={data.next} now={data.now} onOpen={() => navigate('/schedule')} />
-
         <Card title="Up next">
           {data.next.length === 0 ? (
             <Empty>
@@ -147,7 +129,14 @@ export function Dashboard({ navigate }: { navigate: (path: string) => void }): R
                 <tbody>
                   {data.next.map((entry) => (
                     <tr key={entry.occurrenceId}>
-                      <td>{entry.seriesLabel}</td>
+                      <td>
+                        <button
+                          className="linkish"
+                          onClick={() => navigate(`/occurrences/${entry.occurrenceId}`)}
+                        >
+                          {entry.seriesLabel}
+                        </button>
+                      </td>
                       <td className="muted">
                         {dateTimeIn(entry.scheduledStart, entry.timezone)}
                         {isForeignZone(entry.timezone)
@@ -279,7 +268,7 @@ function SweepButton({
   return (
     <span className="row" style={{ gap: 8 }}>
       <span className="warn-text" title={names.join(', ')}>
-        {count} past the keep-by date
+        {count} due for deletion
       </span>
 
       {plan === undefined ? (
@@ -292,7 +281,7 @@ function SweepButton({
             })
           }
         >
-          {busy ? 'Checking…' : 'Clean up old recordings…'}
+          {busy ? 'Checking…' : 'Delete now…'}
         </button>
       ) : (
         <>
@@ -326,12 +315,12 @@ function summarisePolicy(entry: RetentionReport): string {
   const parts = []
   if (entry.policy.keepDays !== undefined) parts.push(`${entry.policy.keepDays} days`)
   if (entry.policy.minFreeHours !== undefined) {
-    parts.push(`under ${entry.policy.minFreeHours}h free`)
+    parts.push(`once the card is under ${entry.policy.minFreeHours}h free`)
   }
-  if (parts.length === 0) return 'kept forever'
+  if (parts.length === 0) return 'never deleted'
   // The number the server actually applied, not this screen's guess at
   // what the default is.
-  return `${parts.join(' or ')}, newest ${entry.effectiveKeepLast} always`
+  return `deleted after ${parts.join(' or ')}, newest ${entry.effectiveKeepLast} kept`
 }
 
 /** The same thing spelled out, for the tooltip. */
@@ -375,18 +364,11 @@ function Recordings(): ReactNode {
     <Card>
       <PageHead
         level={2}
-        title="Recordings"
-        subtitle={
-          open
-            ? 'What is on the cards, and what cleanup will remove.'
-            : // One line, not two. The subtitle and the body used to say
-              // overlapping things, which read as the card explaining
-              // itself twice before it had shown anybody anything.
-              'What is on the cards, and what cleanup will remove.'
-        }
+        title="Recording cleanup"
+        subtitle="Old recordings are deleted from the cards by each recording's keep-for setting."
         actions={
           <button onClick={() => setOpen((was) => !was)}>
-            {open ? 'Hide' : 'Ask the devices'}
+            {open ? 'Hide' : 'Show what would be deleted'}
           </button>
         }
       />
@@ -406,7 +388,7 @@ function Recordings(): ReactNode {
               <div className="onair-actions" />
               <div className="onair-meta muted">
                 <span>
-                  {entry.kept.length} recording{entry.kept.length === 1 ? '' : 's'} of ours
+                  {entry.kept.length} recording{entry.kept.length === 1 ? '' : 's'} made here
                 </span>
                 <span title={describePolicy(entry)}>{summarisePolicy(entry)}</span>
                 {entry.underPressure ? (
@@ -436,10 +418,10 @@ function Recordings(): ReactNode {
 
           <p className="muted" style={{ margin: 0, fontSize: 12 }}>
             {configured.length === 0
-              ? 'No output has a keep-for policy, so nothing is ever deleted.'
+              ? 'No recording has a keep-for setting, so nothing is deleted.'
               : eligible === 0
-                ? 'Nothing is past its keep-by date. Outputs with a policy are swept every hour.'
-                : `${eligible} recording${eligible === 1 ? '' : 's'} past the policy. The hourly sweep will remove ${eligible === 1 ? 'it' : 'them'}, or you can do it now.`}
+                ? 'Nothing is due for deletion. Cleanup runs every hour.'
+                : `${eligible} recording${eligible === 1 ? ' is' : 's are'} due for deletion. Cleanup runs every hour, or delete now.`}
           </p>
         </div>
       )}
@@ -521,59 +503,6 @@ function Output({ output, now }: { output: DashboardOutput; now: number }): Reac
           </span>
         ) : null}
       </div>
-    </div>
-  )
-}
-
-/**
- * The next seven days at a glance, a dot on each day with something on.
- *
- * Read before the table below it: "is there anything this week, and when"
- * is the first question, and a row of days answers it without reading.
- */
-function WeekStrip({
-  next,
-  now,
-  onOpen,
-}: {
-  next: { scheduledStart: number }[]
-  now: number
-  onOpen: () => void
-}): ReactNode {
-  const today = new Date(now)
-  const days = Array.from(
-    { length: 7 },
-    (_, index) => new Date(today.getFullYear(), today.getMonth(), today.getDate() + index),
-  )
-  const keyOf = (date: Date): string => `${date.getFullYear()}-${date.getMonth()}-${date.getDate()}`
-  const busy = new Map<string, number>()
-  for (const item of next) {
-    const key = keyOf(new Date(item.scheduledStart))
-    busy.set(key, (busy.get(key) ?? 0) + 1)
-  }
-
-  return (
-    <div className="week-strip card" role="list" aria-label="The next seven days">
-      {days.map((day, index) => {
-        const count = busy.get(keyOf(day)) ?? 0
-        return (
-          <button
-            key={keyOf(day)}
-            role="listitem"
-            className={`week-strip-day${index === 0 ? ' today' : ''}`}
-            onClick={onOpen}
-            aria-label={`${day.toLocaleDateString(undefined, { weekday: 'long' })}: ${
-              count === 0 ? 'nothing' : `${count} event${count === 1 ? '' : 's'}`
-            }`}
-          >
-            <span className="muted small">
-              {day.toLocaleDateString(undefined, { weekday: 'short' })}
-            </span>
-            <strong>{day.getDate()}</strong>
-            <span className={count > 0 ? 'week-strip-dot' : 'week-strip-dot empty'} />
-          </button>
-        )
-      })}
     </div>
   )
 }

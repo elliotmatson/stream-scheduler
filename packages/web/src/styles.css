@@ -2060,40 +2060,56 @@ button.link:hover {
   background: var(--bad, #e5484d);
 }
 
-/* The next seven days on Now. */
-.week-strip {
-  display: grid;
-  grid-template-columns: repeat(7, 1fr);
-  gap: 4px;
-  padding: 8px;
+/* What needs somebody: a count on every screen, the list on a click. */
+.bell {
+  /* Static, so the panel is placed against the sidebar itself (which is
+     sticky, and so positioned) rather than against this small button. */
+  position: static;
+  align-self: flex-start;
 }
-.week-strip {
-  align-items: start;
+.bell-button {
+  position: relative;
+  display: inline-grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  padding: 0;
 }
-.week-strip-day {
+.bell-count {
+  position: absolute;
+  top: -5px;
+  right: -6px;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 18px;
+  color: #fff;
+  background: var(--live-fill);
+}
+.bell-count.warn {
+  color: #fff;
+  background: #8f4f06;
+}
+/* Opens beside the sidebar on a desktop, under the bar on a phone. */
+.bell-panel {
+  position: absolute;
+  left: calc(100% + 10px);
+  bottom: 0;
+  z-index: 20;
+  width: min(360px, calc(100vw - 32px));
   display: flex;
   flex-direction: column;
-  align-items: center;
-  justify-content: flex-start;
-  gap: 2px;
-  height: auto;
-  min-height: 0;
-  padding: 6px 0;
-  background: transparent;
-  border: 0;
+  gap: 10px;
+  box-shadow: var(--shadow);
 }
-.week-strip-day > * {
-  flex: none;
-}
-.week-strip-day.today strong {
-  color: var(--accent);
-}
-.week-strip-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--accent);
-}
-.week-strip-dot.empty {
-  background: transparent;
+@media (max-width: 760px) {
+  .bell-panel {
+    left: auto;
+    right: 8px;
+    bottom: auto;
+    top: calc(100% + 6px);
+  }
 }
