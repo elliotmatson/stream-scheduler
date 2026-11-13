@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import type { ReactNode } from 'react'
-import { api, type TaggableKind } from './api.ts'
+import { api, useResource, type TaggableKind } from './api.ts'
 
 /**
  * Labels on a thing, edited in place.
@@ -22,6 +22,13 @@ export function TagEditor({
 }): ReactNode {
   const [draft, setDraft] = useState('')
   const [busy, setBusy] = useState(false)
+  // Tags already in use on this kind of thing, offered as you type, so
+  // "AND" and "And" do not both end up on the list.
+  const { data: known } = useResource(() => api.tags(kind), [kind])
+  const suggestions = (known?.tags ?? [])
+    .map((entry) => entry.tag)
+    .filter((tag) => !tags.includes(tag))
+  const listId = `tags-${kind}-${id}`
   const [problem, setProblem] = useState<string>()
 
   const save = async (next: string[]): Promise<void> => {
@@ -68,6 +75,7 @@ export function TagEditor({
           value={draft}
           placeholder="Add a tag"
           aria-label="Add a tag"
+          list={listId}
           disabled={busy}
           onChange={(event) => setDraft(event.target.value)}
           onKeyDown={(event) => {
@@ -81,6 +89,11 @@ export function TagEditor({
             if (draft.trim() !== '') void save([...tags, draft])
           }}
         />
+        <datalist id={listId}>
+          {suggestions.map((tag) => (
+            <option key={tag} value={tag} />
+          ))}
+        </datalist>
       </span>
 
       {problem ? <span className="bad">{problem}</span> : null}

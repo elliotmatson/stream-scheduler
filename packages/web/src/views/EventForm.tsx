@@ -89,6 +89,22 @@ export function EventForm({ series, onDone }: { series?: Series; onDone: () => v
   /** True when the schedule comes from a plan, so the fields the plan
    *  supplies can say so rather than sitting there looking editable. */
   const fromPlan = draft.repeat === 'plan'
+  // What each date sends out, for the preview: the saved event's outputs,
+  // or the ones being added to a new one.
+  const { data: savedOutputs } = useResource(
+    () => (saved ? api.outputs(saved.id) : Promise.resolve(undefined)),
+    [saved?.id, saved?.version],
+  )
+  const previewOutputs = useMemo(
+    () =>
+      (saved ? (savedOutputs?.outputs ?? []) : draftOutputs).map((output) => ({
+        label: output.label,
+        kind: output.kind,
+        offsetMs: output.offsetMs ?? 0,
+        templates: output.templates ?? {},
+      })),
+    [saved, savedOutputs, draftOutputs],
+  )
   const request = useMemo(
     () => ({
       label: draft.label || 'Untitled event',
@@ -98,9 +114,10 @@ export function EventForm({ series, onDone }: { series?: Series; onDone: () => v
       durationMs: draft.durationMinutes * 60_000,
       templates: templatesOf(draft),
       count: 5,
+      outputs: previewOutputs,
       ...pairingOf(draft),
     }),
-    [draft, rrule],
+    [draft, rrule, previewOutputs],
   )
 
   // What moving the start time would do to the outputs sitting inside the
@@ -385,8 +402,8 @@ export function EventForm({ series, onDone }: { series?: Series; onDone: () => v
             label="Prepare early (min)"
             hint={
               fromPlan
-                ? 'Broadcasts are made this long before each service.'
-                : `Broadcasts are made at ${clockPlus(draft.time, -draft.prepareLeadMinutes)}. Nothing goes on air then.`
+                ? 'Creates the broadcast on YouTube or Twitch this long before each service, so its link can go out. Nothing goes on air. "Prepare now" on the event does it by hand.'
+                : `Creates the broadcast on YouTube or Twitch at ${clockPlus(draft.time, -draft.prepareLeadMinutes)}, so its link can go out. Nothing goes on air. "Prepare now" on the event does it by hand.`
             }
           >
             <input
@@ -531,7 +548,7 @@ function PreviewPanel({
 
   return (
     <aside className="preview">
-      <h3 style={{ marginTop: 0 }}>What this does</h3>
+      <h3 style={{ marginTop: 0 }}>Preview</h3>
       {/* The rule and the names, as the server would actually resolve them. */}
       {problem ? <div className="banner error">{problem}</div> : null}
       {preview ? (
@@ -573,8 +590,28 @@ function PreviewPanel({
                 {occurrence.error ? (
                   <div style={{ color: 'var(--bad)' }}>{occurrence.error}</div>
                 ) : null}
-                {occurrence.title ? <div>{occurrence.title}</div> : null}
-                {occurrence.filename ? <div className="muted">{occurrence.filename}</div> : null}
+                {occurrence.outputs && occurrence.outputs.length > 0 ? (
+                  // What actually goes out that day, each under its own
+                  // name, which is what gets checked before a Sunday.
+                  <ul className="preview-outputs">
+                    {occurrence.outputs.map((output, index) => (
+                      <li key={`${output.label}-${index}`}>
+                        <span className="muted">{timeIn(output.startsAt, timezone)}</span>{' '}
+                        {output.kind === 'stream' ? 'Stream' : 'Recording'}:{' '}
+                        {output.kind === 'stream'
+                          ? (output.title ?? output.label)
+                          : (output.filename ?? output.label)}
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <>
+                    {occurrence.title ? <div>{occurrence.title}</div> : null}
+                    {occurrence.filename ? (
+                      <div className="muted">{occurrence.filename}</div>
+                    ) : null}
+                  </>
+                )}
               </li>
             ))}
           </ol>
@@ -640,9 +677,12 @@ function toDraft(series: Series | undefined): Draft {
     planSourceId: series?.planSourceId ?? '',
     planGroupId: series?.planGroupId ?? '',
     priorRrule: series?.rrule ?? null,
-    title: series?.templates.title ?? '',
+    // A new event is named after itself until somebody says otherwise.
+    // The filename carries the date too, so one week's recording does not
+    // land on top of the last on the same card.
+    title: series ? (series.templates.title ?? '') : '{{event.name}}',
     description: series?.templates.description ?? '',
-    filename: series?.templates.filename ?? '',
+    filename: series ? (series.templates.filename ?? '') : '{{date "yyyy-MM-dd"}} {{event.name}}',
   }
 }
 

@@ -44,7 +44,7 @@ const SCREENS = [
   { route: '/events', name: 'Events', sees: 'h1:text-is("Events")' },
   { route: '/devices', name: 'Devices', sees: 'h1:text-is("Devices")' },
   { route: '/services', name: 'Services', sees: 'h1:text-is("Services")' },
-  { route: '/runs', name: 'Runs', sees: 'h1:text-is("Runs")' },
+  { route: '/runs', name: 'Event logs', sees: 'h1:text-is("Event logs")' },
   { route: '/notifications', name: 'Notifications', sees: 'h1:text-is("Notifications")' },
   { route: '/settings', name: 'Settings', sees: 'h1:text-is("Settings")' },
 ]

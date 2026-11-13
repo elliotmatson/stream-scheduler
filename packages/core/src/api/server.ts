@@ -735,6 +735,9 @@ function registerRoutes(fastify: FastifyInstance, app: Application): void {
         // would show times that are never going to happen.
         planSourceId: z.string().optional(),
         planGroupId: z.string().optional(),
+        /** What each date sends out, so the preview can list it under the
+         *  date with its own names rendered. */
+        outputs: z.array(PREVIEW_OUTPUT).default([]),
       })
       .parse(request.body)
 
@@ -769,7 +772,7 @@ function registerRoutes(fastify: FastifyInstance, app: Application): void {
         // 'skipped' or 'ambiguous' means this one falls in a DST gap or
         // repeat, and the UI flags it rather than quietly shifting the time.
         resolution: occurrence.resolution,
-        ...renderNames(body.templates, {
+        ...namesFor(body, occurrence.start, {
           occurrenceStart: occurrence.start,
           timezone: body.timezone,
           event: { name: body.label },
@@ -1965,6 +1968,44 @@ function renderNames(
   return out
 }
 
+/** One output as the preview needs it: when it starts, and its own names. */
+const PREVIEW_OUTPUT = z.object({
+  label: z.string(),
+  kind: z.enum(['stream', 'recording']),
+  offsetMs: z.number().int().default(0),
+  templates: z.record(z.string()).default({}),
+})
+
+/**
+ * One date's names, and each output's under it.
+ *
+ * An output's own template wins over the event's for that output, which is
+ * how two services on one morning get different titles.
+ */
+function namesFor(
+  body: { templates: Record<string, string>; outputs: z.infer<typeof PREVIEW_OUTPUT>[] },
+  start: number,
+  context: Parameters<typeof renderTemplate>[1],
+): ReturnType<typeof renderNames> & {
+  outputs?: (ReturnType<typeof renderNames> & {
+    label: string
+    kind: 'stream' | 'recording'
+    startsAt: number
+  })[]
+} {
+  const names = renderNames(body.templates, context)
+  if (body.outputs.length === 0) return names
+  return {
+    ...names,
+    outputs: body.outputs.map((output) => ({
+      label: output.label,
+      kind: output.kind,
+      startsAt: start + output.offsetMs,
+      ...renderNames({ ...body.templates, ...output.templates }, context),
+    })),
+  }
+}
+
 /**
  * The preview for a series whose schedule comes from a plan source.
  *
@@ -1986,6 +2027,7 @@ async function previewFromPlan(
     count: number
     planSourceId?: string | undefined
     planGroupId?: string | undefined
+    outputs: z.infer<typeof PREVIEW_OUTPUT>[]
   },
 ): Promise<unknown> {
   const source = app.planSources.get(body.planSourceId!)
@@ -2013,7 +2055,7 @@ async function previewFromPlan(
       end: service.endsAt ?? service.startsAt + body.durationMs,
       localDate: localDateAt(service.startsAt, body.timezone),
       resolution: 'exact' as const,
-      ...renderNames(body.templates, {
+      ...namesFor(body, service.startsAt, {
         occurrenceStart: service.startsAt,
         timezone: body.timezone,
         event: { name: body.label },

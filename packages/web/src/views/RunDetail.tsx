@@ -16,13 +16,12 @@ import {
   Empty,
   ErrorBanner,
   Fact,
-  IconButton,
   PageHead,
   StatusPill,
 } from '../components.tsx'
 import { Chart, type Point } from '../chart.tsx'
 import { clockTimeIn, dateTimeIn, duration, relative } from '../format.ts'
-import { IconExternal } from '../icons.tsx'
+import { controlRoomOf, siteOf } from '../watch-links.ts'
 
 /**
  * The run timeline.
@@ -294,24 +293,30 @@ function OutputDetail({
               own further down, which listed the same links a second time. */}
           {output.watchUrl ? (
             <>
-              <IconButton label="Watch" href={output.watchUrl} icon={<IconExternal />} />
+              <a
+                className="button-link secondary"
+                href={output.watchUrl}
+                target="_blank"
+                rel="noreferrer"
+              >
+                Watch on {siteOf(output.watchUrl)}
+              </a>
+              {controlRoomOf(output.watchUrl) ? (
+                <a
+                  className="button-link secondary"
+                  href={controlRoomOf(output.watchUrl)}
+                  target="_blank"
+                  rel="noreferrer"
+                  title="YouTube Studio's live control room: stream health, chat, and ending it."
+                >
+                  Control room
+                </a>
+              ) : null}
               <CopyButton value={output.watchUrl} label="Copy the watch link" icon />
             </>
           ) : null}
         </div>
       </div>
-
-      {output.watchUrl ? (
-        <a
-          className="muted watch-url"
-          href={output.watchUrl}
-          target="_blank"
-          rel="noreferrer"
-          title="Where this broadcast can be watched."
-        >
-          {output.watchUrl}
-        </a>
-      ) : null}
 
       {now === undefined ? (
         <p className="muted" style={{ margin: 0 }}>
@@ -506,7 +511,7 @@ export function Runs({ navigate }: { navigate: (path: string) => void }): ReactN
 
   return (
     <>
-      <PageHead title="Runs" subtitle="Every event the scheduler has taken on, newest first." />
+      <PageHead title="Event logs" subtitle="Every event that has run, newest first." />
       <ErrorBanner error={error ?? actionError} />
       <Card>
         {all.length > 1 ? (

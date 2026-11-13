@@ -1280,6 +1280,30 @@ describe('schedule preview', () => {
     expect(preview.json.occurrences[1].title).toBe('Sunday Service — March 15, 2026')
   })
 
+  it('lists each date’s streams and recordings under their own names', async () => {
+    const preview = await post('/api/schedule/preview', {
+      ...base,
+      count: 1,
+      templates: { title: '{{event.name}}', filename: '{{date "yyyy-MM-dd"}} {{event.name}}' },
+      outputs: [
+        { label: 'Main', kind: 'stream', offsetMs: 0 },
+        // Its own title wins over the event's for this one output.
+        { label: '11:00', kind: 'stream', offsetMs: 120 * MINUTE, templates: { title: 'Late' } },
+        { label: 'Archive', kind: 'recording', offsetMs: 0 },
+      ],
+    })
+    const [first] = preview.json.occurrences
+    expect(first.outputs).toEqual([
+      expect.objectContaining({ label: 'Main', startsAt: first.start, title: 'Sunday Service' }),
+      expect.objectContaining({
+        label: '11:00',
+        startsAt: first.start + 120 * MINUTE,
+        title: 'Late',
+      }),
+      expect.objectContaining({ label: 'Archive', filename: '2026-03-08 Sunday Service' }),
+    ])
+  })
+
   it('reports a bad token inline rather than failing the whole preview', async () => {
     const preview = await post('/api/schedule/preview', {
       ...base,

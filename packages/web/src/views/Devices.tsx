@@ -401,7 +401,7 @@ function DevicePanel({
             />
           ) : null}
           <Fact
-            label="Can do"
+            label="Capabilities"
             value={describeFeatures(device.capabilities?.features ?? []) || 'nothing yet'}
             tip="What this model told us it supports. An event can only ask for these."
           />

@@ -183,9 +183,7 @@ function ProviderSection({
         <ul className="plain">
           {clients.map((client) => (
             <li key={client.id} className="row" style={{ justifyContent: 'space-between' }}>
-              <span>
-                {client.label} <span className="muted">{client.clientId}</span>
-              </span>
+              <span>{client.label}</span>
               <button
                 disabled={busy}
                 title={`Opens ${provider.displayName} in a new tab to sign in. Nothing is scheduled until an account is connected.`}
