@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import type { ReactNode } from 'react'
 import {
   api,
@@ -14,8 +14,9 @@ import {
   type NodeState,
   type Series,
 } from '../api.ts'
-import { ConfirmButton, Empty, ErrorBanner, Field, TemplateTokens } from '../components.tsx'
+import { ConfirmButton, Empty, ErrorBanner, Field, Switch, TemplateTokens } from '../components.tsx'
 import { clockAt, offsetFrom } from '../output-times.ts'
+import { changedKeys, changesLabel, useUnsavedGuard } from '../unsaved.ts'
 import {
   bitrateHint,
   CUSTOM_VALUE,
@@ -172,7 +173,21 @@ interface RowProps {
 
 function OutputRow(props: RowProps): ReactNode {
   const { output, kind, series } = props
-  const [draft, setDraft] = useState(() => toDraft(output, kind, series))
+  // What is saved, to compare against and to go back to.
+  const original = useMemo(() => toDraft(output, kind, series), [output, kind, series])
+  const [draft, setDraft] = useState(original)
+  // A save comes back as a new saved version; the boxes follow it. Keyed
+  // on the values, not the object: the rows of an unsaved event get a fresh
+  // object every render, and following that would undo every keystroke.
+  const originalKey = JSON.stringify(original)
+  useEffect(() => setDraft(original), [originalKey]) // eslint-disable-line react-hooks/exhaustive-deps
+  const changed = output ? changedKeys(original, draft) : []
+  const isChanged = (...keys: (keyof RowDraft)[]): boolean =>
+    keys.some((key) => changed.includes(key))
+  // An output being added is unsaved by definition; a saved one, once edited.
+  useUnsavedGuard(output ? changed.length > 0 : true)
+  // A saved output starts as one line; a new one opens to be filled in.
+  const [expanded, setExpanded] = useState(!output)
   const [customName, setCustomName] = useState(
     () => draft.title !== '' || draft.description !== '' || draft.filename !== '',
   )
@@ -189,7 +204,12 @@ function OutputRow(props: RowProps): ReactNode {
       ? `credential:${draft.credentialId}`
       : ''
 
-  const save = (): void => {
+  const save = (patch: Partial<RowDraft> = {}): void => {
+    const draft_ = { ...draft, ...patch }
+    if (!draft_.deviceId || !draft_.nodeId) return
+    saveDraft(draft_)
+  }
+  const saveDraft = (draft: RowDraft): void => {
     if (!draft.deviceId || !draft.nodeId) return
     props.onSave({
       kind,
@@ -229,13 +249,77 @@ function OutputRow(props: RowProps): ReactNode {
         props.credentials.find((entry) => entry.id === draft.credentialId)?.label)
       : chosen?.device.label) ?? ''
 
+  const where =
+    kind === 'stream'
+      ? chosenDestination
+        ? `${chosenDestination.label} (${providerName(chosenDestination.providerId)})`
+        : props.credentials.find((entry) => entry.id === draft.credentialId)?.label
+      : chosen?.device.label
+  const when = paired
+    ? offset === 0
+      ? 'with the service'
+      : `${Math.abs(Math.round(offset / 60_000))} min ${offset < 0 ? 'before' : 'after'} the service`
+    : `from ${draft.startsAt}`
+
+  if (!expanded) {
+    // One line: enough to tell outputs apart and see which are on, with the
+    // whole form a click away.
+    return (
+      <div className="card inner output-summary">
+        <button
+          className="output-summary-open"
+          aria-expanded={false}
+          onClick={() => setExpanded(true)}
+        >
+          <span aria-hidden>▸</span>
+          <strong>{draft.label || defaultLabel}</strong>
+          <span className="muted">
+            {kind === 'stream' ? 'Stream' : 'Recording'}
+            {where ? ` to ${where}` : ''} · {when}
+            {draft.followsWindow ? ', to the end' : `, ${draft.minutes} min`}
+          </span>
+        </button>
+        <Switch
+          checked={draft.enabled}
+          label={`${draft.label || defaultLabel || 'This output'} on or off`}
+          disabled={props.saving === true}
+          onChange={(next) => {
+            set('enabled', next)
+            // Saved straight away from here: there is no form open to
+            // press Save in.
+            save({ enabled: next })
+          }}
+        />
+      </div>
+    )
+  }
+
   return (
     <div className="card inner">
-      {/* Where it goes and what it runs on come first: they are the whole
-          of what most outputs need, and everything else has a default. */}
+      {/* What it is called, and whether it runs at all, side by side: the
+          two things somebody scanning a list of outputs is looking for. */}
+      <div className="row output-head">
+        <Field label="Name" changed={isChanged('label')}>
+          <input
+            value={draft.label}
+            placeholder={defaultLabel || (kind === 'stream' ? 'Main channel' : 'Archive')}
+            onChange={(event) => set('label', event.target.value)}
+          />
+        </Field>
+        <span className="row" style={{ gap: 8 }}>
+          <Switch
+            checked={draft.enabled}
+            label={`${draft.label || defaultLabel || 'This output'} on or off`}
+            onChange={(next) => set('enabled', next)}
+          />
+          <span className="muted">{draft.enabled ? 'On' : 'Off'}</span>
+        </span>
+      </div>
+
       {kind === 'stream' ? (
         <Field
           label="Streams to"
+          changed={isChanged('destinationId', 'credentialId')}
           // Once one is picked the hint has done its job, and a page with
           // four outputs on it would otherwise say this four times.
           hint={
@@ -283,6 +367,7 @@ function OutputRow(props: RowProps): ReactNode {
           server refuses it anyway. */}
       <Field
         label="Runs on"
+        changed={isChanged('deviceId', 'nodeId')}
         hint={
           capable.length === 0
             ? `No connected device offers ${kind === 'recording' ? 'recording' : 'streaming'}. Add or connect one first.`
@@ -318,7 +403,7 @@ function OutputRow(props: RowProps): ReactNode {
 
       <div className="row">
         {paired ? (
-          <Field label="Starts">
+          <Field label="Starts" changed={isChanged('startsAt')}>
             <span className="row" style={{ gap: 6, flexWrap: 'nowrap' }}>
               <input
                 type="number"
@@ -354,6 +439,7 @@ function OutputRow(props: RowProps): ReactNode {
         ) : (
           <Field
             label="Starts"
+            changed={isChanged('startsAt')}
             hint={offset < 0 ? `${Math.round(-offset / 60_000)} min before the event.` : undefined}
           >
             <input
@@ -367,6 +453,7 @@ function OutputRow(props: RowProps): ReactNode {
             own length decides, and a number here would only mislead. */}
         {draft.followsWindow ? (
           <Field
+            changed={isChanged('stopAfter')}
             label={
               paired ? 'Keeps going after the service (min)' : 'Keeps going after the event (min)'
             }
@@ -380,7 +467,7 @@ function OutputRow(props: RowProps): ReactNode {
             />
           </Field>
         ) : (
-          <Field label="Runs for (min)">
+          <Field label="Runs for (min)" changed={isChanged('minutes')}>
             <input
               type="number"
               min={1}
@@ -408,14 +495,6 @@ function OutputRow(props: RowProps): ReactNode {
         </div>
       ) : null}
 
-      <Field label="Name" hint="Optional. Shown in the schedule and the event log.">
-        <input
-          value={draft.label}
-          placeholder={defaultLabel || (kind === 'stream' ? 'Main channel' : 'Archive')}
-          onChange={(event) => set('label', event.target.value)}
-        />
-      </Field>
-
       <DeviceSettings kind={kind} draft={draft} set={set} device={chosen} />
 
       {/* Its own name only when asked for: most outputs are named after the
@@ -439,14 +518,14 @@ function OutputRow(props: RowProps): ReactNode {
           <TemplateTokens plan={Boolean(series.planSourceId && series.planGroupId)} />
           {kind === 'stream' ? (
             <>
-              <Field label="Broadcast title">
+              <Field label="Broadcast title" changed={isChanged('title')}>
                 <input
                   value={draft.title}
                   placeholder={series.templates.title ?? '{{event.name}}'}
                   onChange={(event) => set('title', event.target.value)}
                 />
               </Field>
-              <Field label="Description">
+              <Field label="Description" changed={isChanged('description')}>
                 <textarea
                   rows={2}
                   value={draft.description}
@@ -455,7 +534,11 @@ function OutputRow(props: RowProps): ReactNode {
               </Field>
             </>
           ) : (
-            <Field label="Filename" hint="The device adds its own extension.">
+            <Field
+              label="Filename"
+              hint="The device adds its own extension."
+              changed={isChanged('filename')}
+            >
               <input
                 value={draft.filename}
                 placeholder={series.templates.filename ?? '{{date "yyyy-MM-dd"}} {{event.name}}'}
@@ -488,7 +571,7 @@ function OutputRow(props: RowProps): ReactNode {
           {cleanup ? (
             <>
               <div className="row" style={{ gap: 18, alignItems: 'flex-start' }}>
-                <Field label="Delete after (days)">
+                <Field label="Delete after (days)" changed={isChanged('keepDays')}>
                   <input
                     type="number"
                     min={1}
@@ -498,7 +581,11 @@ function OutputRow(props: RowProps): ReactNode {
                     onChange={(event) => set('keepDays', event.target.value)}
                   />
                 </Field>
-                <Field label="Or when under (hours free)" hint="Optional.">
+                <Field
+                  label="Or when under (hours free)"
+                  hint="Optional."
+                  changed={isChanged('minFreeHours')}
+                >
                   <input
                     type="number"
                     min={1}
@@ -508,7 +595,7 @@ function OutputRow(props: RowProps): ReactNode {
                     onChange={(event) => set('minFreeHours', event.target.value)}
                   />
                 </Field>
-                <Field label="Always keep the newest">
+                <Field label="Always keep the newest" changed={isChanged('keepLast')}>
                   <input
                     type="number"
                     min={0}
@@ -529,26 +616,26 @@ function OutputRow(props: RowProps): ReactNode {
         </>
       ) : null}
 
-      <div className="row">
+      <div className="save-bar">
         <button
           className="primary"
-          disabled={!draft.deviceId || props.saving === true}
-          onClick={save}
+          disabled={!draft.deviceId || props.saving === true || (output && changed.length === 0)}
+          onClick={() => save()}
         >
-          {props.saving ? 'Saving…' : output ? 'Save' : 'Add'}
+          {props.saving
+            ? 'Saving…'
+            : !output
+              ? 'Add'
+              : changed.length > 0
+                ? `Save ${changesLabel(changed.length)}`
+                : 'Saved'}
         </button>
-        <label
-          className="row"
-          style={{ gap: 8 }}
-          title="Off keeps it here but skips it when the event runs."
-        >
-          <input
-            type="checkbox"
-            checked={draft.enabled}
-            onChange={(event) => set('enabled', event.target.checked)}
-          />
-          <span>On</span>
-        </label>
+        {output && changed.length > 0 ? (
+          <button onClick={() => setDraft(original)}>Revert</button>
+        ) : null}
+        {output && changed.length === 0 ? (
+          <button onClick={() => setExpanded(false)}>Close</button>
+        ) : null}
         {props.onCancel ? <button onClick={props.onCancel}>Cancel</button> : null}
         {props.onRemove ? <ConfirmButton label="Remove" onConfirm={props.onRemove} /> : null}
       </div>

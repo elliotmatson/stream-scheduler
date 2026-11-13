@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import type { ReactNode } from 'react'
 import { api, useResource, type OccurrenceDetail as Detail } from '../api.ts'
 import { draftOf, editOf, type Draft } from '../occurrence-edit.ts'
+import { changedKeys, changesLabel, useUnsavedGuard } from '../unsaved.ts'
 import {
   Card,
   ConfirmButton,
@@ -278,9 +279,10 @@ function EditOne({
   const set = <K extends keyof Draft>(key: K, value: Draft[K]): void =>
     setDraft((current) => ({ ...current, [key]: value }))
 
-  const changed = (Object.keys(original) as (keyof Draft)[]).some(
-    (key) => draft[key] !== original[key],
-  )
+  const changedList = changedKeys(original, draft)
+  const changed = changedList.length > 0
+  const isChanged = (key: keyof Draft): boolean => changedList.includes(key)
+  useUnsavedGuard(changed)
 
   const save = (): void => {
     onProblem(undefined)
@@ -309,26 +311,30 @@ function EditOne({
         Changes only this date. Every other one keeps following the event.
       </p>
       <div className="stack">
-        <Field label="Called" hint="What this one morning is called, if it is not the usual.">
+        <Field
+          label="Called"
+          hint="What this one morning is called, if it is not the usual."
+          changed={isChanged('label')}
+        >
           <input value={draft.label} onChange={(event) => set('label', event.target.value)} />
         </Field>
 
         <div className="row" style={{ gap: 18, alignItems: 'flex-start' }}>
-          <Field label="Date">
+          <Field label="Date" changed={isChanged('date')}>
             <input
               type="date"
               value={draft.date}
               onChange={(event) => set('date', event.target.value)}
             />
           </Field>
-          <Field label="Starts" hint={`In ${detail.timezone}.`}>
+          <Field label="Starts" hint={`In ${detail.timezone}.`} changed={isChanged('time')}>
             <input
               type="time"
               value={draft.time}
               onChange={(event) => set('time', event.target.value)}
             />
           </Field>
-          <Field label="Runs for (minutes)">
+          <Field label="Runs for (minutes)" changed={isChanged('minutes')}>
             <input
               type="number"
               min={1}
@@ -341,24 +347,36 @@ function EditOne({
 
         <TemplateTokens plan={detail.fromPlan === true} />
 
-        <Field label="Stream title" hint="Left blank, the outputs use the event's own template.">
+        <Field
+          label="Stream title"
+          hint="Left blank, the outputs use the event's own template."
+          changed={isChanged('title')}
+        >
           <input value={draft.title} onChange={(event) => set('title', event.target.value)} />
         </Field>
-        <Field label="Description">
+        <Field label="Description" changed={isChanged('description')}>
           <textarea
             value={draft.description}
             onChange={(event) => set('description', event.target.value)}
           />
         </Field>
-        <Field label="Recording filename" hint="The device adds its own extension.">
+        <Field
+          label="Recording filename"
+          hint="The device adds its own extension."
+          changed={isChanged('filename')}
+        >
           <input value={draft.filename} onChange={(event) => set('filename', event.target.value)} />
         </Field>
 
-        <div className="row">
+        <div className="save-bar">
           <button className="primary" disabled={!changed || saving} onClick={save}>
-            {saving ? 'Saving…' : 'Save just this one'}
+            {saving
+              ? 'Saving…'
+              : changed
+                ? `Save ${changesLabel(changedList.length)} to this date`
+                : 'Saved'}
           </button>
-          {changed ? <button onClick={() => setDraft(original)}>Cancel</button> : null}
+          {changed ? <button onClick={() => setDraft(original)}>Revert</button> : null}
           {changed && !detail.detached ? (
             <span className="muted" style={{ fontSize: 12 }}>
               Saving detaches this date: later changes to the event will leave it alone.

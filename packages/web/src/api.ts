@@ -600,6 +600,7 @@ export interface PreviewOccurrence {
     label: string
     kind: 'stream' | 'recording'
     startsAt: number
+    endsAt: number
     title?: string
     filename?: string
     error?: string
@@ -621,6 +622,9 @@ export interface SchedulePreviewRequest {
     label: string
     kind: 'stream' | 'recording'
     offsetMs: number
+    durationMs?: number
+    followsWindow?: boolean
+    stopAfterMs?: number
     templates: Record<string, string>
   }[]
 }

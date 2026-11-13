@@ -1375,7 +1375,13 @@ describe('schedule preview', () => {
     })
     const [first] = preview.json.occurrences
     expect(first.outputs).toEqual([
-      expect.objectContaining({ label: 'Main', startsAt: first.start, title: 'Sunday Service' }),
+      expect.objectContaining({
+        label: 'Main',
+        startsAt: first.start,
+        // No length of its own, so it runs with the event.
+        endsAt: first.end,
+        title: 'Sunday Service',
+      }),
       expect.objectContaining({
         label: '11:00',
         startsAt: first.start + 120 * MINUTE,

@@ -83,6 +83,15 @@ async function main() {
     check('the app boots and seeds', Boolean(ids.sundayId && started.runId))
 
     browser = await chromium.launch(BROWSER ? { executablePath: BROWSER } : {})
+    // "Leave without saving?" is answered yes everywhere: these checks move
+    // between screens on purpose, and a prompt nobody answers would stop
+    // them where they stand.
+    const newContext = browser.newContext.bind(browser)
+    browser.newContext = async (options) => {
+      const context = await newContext(options)
+      context.on('page', (page) => page.on('dialog', (dialog) => void dialog.accept()))
+      return context
+    }
 
     // Each section stands alone: one broken screen should not hide the
     // state of every screen after it.

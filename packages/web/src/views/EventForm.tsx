@@ -22,6 +22,7 @@ import {
   type Repeat,
 } from '../event-rules.ts'
 import { commonZones, zoneChoices, zoneName } from '../zones.ts'
+import { changedKeys, changesLabel, useUnsavedGuard } from '../unsaved.ts'
 
 interface Draft {
   label: string
@@ -81,6 +82,15 @@ export function EventForm({ series, onDone }: { series?: Series; onDone: () => v
   // place, so the flow is one screen either way.
   const [saved, setSaved] = useState<Series | undefined>(series)
 
+  // What is saved, to show what has changed and to go back to. A new event
+  // has nothing saved, so it counts as changed once anything is typed.
+  const original = useMemo(() => (saved ? toDraft(saved) : undefined), [saved])
+  const changed: (keyof Draft)[] = original
+    ? changedKeys(original, draft).filter((key) => key !== 'bydayTouched')
+    : []
+  const isChanged = (...keys: (keyof Draft)[]): boolean => keys.some((key) => changed.includes(key))
+  useUnsavedGuard(saved ? changed.length > 0 : draft.label !== '' || draftOutputs.length > 0)
+
   const set = <K extends keyof Draft>(key: K, value: Draft[K]): void =>
     setDraft((current) => ({ ...current, [key]: value }))
 
@@ -117,6 +127,9 @@ export function EventForm({ series, onDone }: { series?: Series; onDone: () => v
         label: output.label,
         kind: output.kind,
         offsetMs: output.offsetMs ?? 0,
+        durationMs: output.durationMs,
+        followsWindow: output.followsWindow ?? false,
+        stopAfterMs: output.stopAfterMs ?? 0,
         templates: output.templates ?? {},
       })),
     [saved, savedOutputs, draftOutputs],
@@ -188,12 +201,17 @@ export function EventForm({ series, onDone }: { series?: Series; onDone: () => v
         setKeepOutputTimes(false)
         setSaved({ ...saved, ...input, dtstart: saved.dtstart })
         const fresh = (await api.series()).find((row) => row.id === saved.id)
-        if (fresh) setSaved(fresh)
+        if (fresh) {
+          setSaved(fresh)
+          // The boxes follow what was stored, so nothing reads as unsaved.
+          setDraft(toDraft(fresh))
+        }
       } else {
         const created = await api.createSeries({ ...input, outputs: draftOutputs })
         setDraftOutputs([])
         const fresh = (await api.series()).find((row) => row.id === created.id)
         setSaved(fresh)
+        if (fresh) setDraft(toDraft(fresh))
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
@@ -207,7 +225,7 @@ export function EventForm({ series, onDone }: { series?: Series; onDone: () => v
       <ErrorBanner error={error} />
       <div className="split">
         <div className="stack">
-          <Field label="Name">
+          <Field label="Name" changed={isChanged('label')}>
             <input
               value={draft.label}
               placeholder="Sunday Service"
@@ -215,7 +233,7 @@ export function EventForm({ series, onDone }: { series?: Series; onDone: () => v
             />
           </Field>
 
-          <Field label="Repeats">
+          <Field label="Repeats" changed={isChanged('repeat', 'customRrule')}>
             <select
               value={draft.repeat}
               onChange={(event) => set('repeat', event.target.value as Repeat)}
@@ -242,7 +260,7 @@ export function EventForm({ series, onDone }: { series?: Series; onDone: () => v
                   }))
                 }
               />
-              <Field label="Make an event for">
+              <Field label="Make an event for" changed={isChanged('planMode')}>
                 <select
                   value={draft.planMode}
                   onChange={(event) => set('planMode', event.target.value as 'time' | 'plan')}
@@ -260,14 +278,14 @@ export function EventForm({ series, onDone }: { series?: Series; onDone: () => v
                 boxes go away rather than sitting there greyed out. */}
             {fromPlan ? null : (
               <>
-                <Field label="First date">
+                <Field label="First date" changed={isChanged('date')}>
                   <input
                     type="date"
                     value={draft.date}
                     onChange={(event) => set('date', event.target.value)}
                   />
                 </Field>
-                <Field label="Start time">
+                <Field label="Start time" changed={isChanged('time')}>
                   <input
                     type="time"
                     value={draft.time}
@@ -278,6 +296,7 @@ export function EventForm({ series, onDone }: { series?: Series; onDone: () => v
             )}
             <Field
               label="Length (min)"
+              changed={isChanged('durationMinutes')}
               hint={
                 fromPlan
                   ? 'For a service time with no end in the plan.'
@@ -347,7 +366,7 @@ export function EventForm({ series, onDone }: { series?: Series; onDone: () => v
 
           {['daily', 'weekly', 'monthly'].includes(draft.repeat) ? (
             <div className="row">
-              <Field label="Every">
+              <Field label="Every" changed={isChanged('interval')}>
                 <span className="row" style={{ gap: 6, flexWrap: 'nowrap' }}>
                   <input
                     type="number"
@@ -361,7 +380,7 @@ export function EventForm({ series, onDone }: { series?: Series; onDone: () => v
                 </span>
               </Field>
               {draft.repeat === 'monthly' ? (
-                <Field label="On">
+                <Field label="On" changed={isChanged('monthlyBy')}>
                   <select
                     value={draft.monthlyBy}
                     onChange={(event) => set('monthlyBy', event.target.value as 'weekday' | 'day')}
@@ -371,7 +390,7 @@ export function EventForm({ series, onDone }: { series?: Series; onDone: () => v
                   </select>
                 </Field>
               ) : null}
-              <Field label="Ends">
+              <Field label="Ends" changed={isChanged('ends')}>
                 <select
                   value={draft.ends}
                   onChange={(event) => set('ends', event.target.value as 'never' | 'on' | 'after')}
@@ -382,7 +401,7 @@ export function EventForm({ series, onDone }: { series?: Series; onDone: () => v
                 </select>
               </Field>
               {draft.ends === 'on' ? (
-                <Field label="Last date">
+                <Field label="Last date" changed={isChanged('until')}>
                   <input
                     type="date"
                     value={draft.until}
@@ -391,7 +410,7 @@ export function EventForm({ series, onDone }: { series?: Series; onDone: () => v
                 </Field>
               ) : null}
               {draft.ends === 'after' ? (
-                <Field label="Times">
+                <Field label="Times" changed={isChanged('count')}>
                   <input
                     type="number"
                     min={1}
@@ -407,6 +426,7 @@ export function EventForm({ series, onDone }: { series?: Series; onDone: () => v
           {draft.repeat === 'custom' ? (
             <Field
               label="Custom rule"
+              changed={isChanged('customRrule')}
               hint="An iCalendar RRULE, e.g. FREQ=YEARLY;BYMONTH=12;BYMONTHDAY=24"
             >
               <input
@@ -422,6 +442,7 @@ export function EventForm({ series, onDone }: { series?: Series; onDone: () => v
             <div className="stack" style={{ marginTop: 10 }}>
               <Field
                 label="Time zone"
+                changed={isChanged('timezone')}
                 hint="Set once for everything under Settings. Change it here only for an event somewhere else."
               >
                 <select
@@ -452,6 +473,7 @@ export function EventForm({ series, onDone }: { series?: Series; onDone: () => v
 
               <Field
                 label="Prepare early (min)"
+                changed={isChanged('prepareLeadMinutes')}
                 hint={
                   fromPlan
                     ? 'Creates the broadcast on YouTube or Twitch this long before each service, so its link can go out. Nothing goes on air. "Prepare now" on the event does it by hand.'
@@ -468,21 +490,25 @@ export function EventForm({ series, onDone }: { series?: Series; onDone: () => v
 
               <strong>Names</strong>
               <TemplateTokens plan={draft.repeat === 'plan'} />
-              <Field label="Broadcast title">
+              <Field label="Broadcast title" changed={isChanged('title')}>
                 <input
                   value={draft.title}
                   placeholder="{{event.name}}"
                   onChange={(event) => set('title', event.target.value)}
                 />
               </Field>
-              <Field label="Description">
+              <Field label="Description" changed={isChanged('description')}>
                 <textarea
                   rows={3}
                   value={draft.description}
                   onChange={(event) => set('description', event.target.value)}
                 />
               </Field>
-              <Field label="Filename" hint="For recordings. The device adds its own extension.">
+              <Field
+                label="Filename"
+                hint="For recordings. The device adds its own extension."
+                changed={isChanged('filename')}
+              >
                 <input
                   value={draft.filename}
                   placeholder={'{{date "yyyy-MM-dd"}} {{event.name}}'}
@@ -493,14 +519,21 @@ export function EventForm({ series, onDone }: { series?: Series; onDone: () => v
           </details>
 
           {saved ? (
-            <div className="row">
+            <div className="save-bar">
               <button
                 className="primary"
-                disabled={saving || !draft.label}
+                disabled={saving || !draft.label || changed.length === 0}
                 onClick={() => void save()}
               >
-                {saving ? 'Saving…' : 'Save'}
+                {saving
+                  ? 'Saving…'
+                  : changed.length > 0
+                    ? `Save ${changesLabel(changed.length)}`
+                    : 'Saved'}
               </button>
+              {changed.length > 0 && original ? (
+                <button onClick={() => setDraft(original)}>Revert</button>
+              ) : null}
               <button onClick={onDone}>Done</button>
             </div>
           ) : null}
@@ -605,7 +638,8 @@ function PreviewPanel({
             {preview.occurrences.map((occurrence) => (
               <li key={occurrence.start}>
                 <div>
-                  <strong>{occurrence.localDate}</strong> {timeIn(occurrence.start, timezone)}{' '}
+                  <strong>{occurrence.localDate}</strong> {timeIn(occurrence.start, timezone)}–
+                  {timeIn(occurrence.end, timezone)}{' '}
                   <span className="muted">{shortZone(occurrence.start, timezone)}</span>
                 </div>
                 {/* A clock change landing on this occurrence is worth saying
@@ -626,7 +660,9 @@ function PreviewPanel({
                   <ul className="preview-outputs">
                     {occurrence.outputs.map((output, index) => (
                       <li key={`${output.label}-${index}`}>
-                        <span className="muted">{timeIn(output.startsAt, timezone)}</span>{' '}
+                        <span className="muted">
+                          {timeIn(output.startsAt, timezone)}–{timeIn(output.endsAt, timezone)}
+                        </span>{' '}
                         {output.kind === 'stream' ? 'Stream' : 'Recording'}:{' '}
                         {output.kind === 'stream'
                           ? (output.title ?? output.label)
